@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Build
+dist/
+web-build/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# React Native
+
+# React Native
+android/
+ios/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Database
+*.db

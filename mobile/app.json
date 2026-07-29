@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Market Intelligence",
+    "slug": "logan-market-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "loganmarket",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#090B10"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ]
+  }
+}
