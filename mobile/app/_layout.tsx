@@ -18,6 +18,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="ask" options={{ title: "Ask Logan" }} />
         <Stack.Screen name="memory" options={{ title: "Memory" }} />
+        <Stack.Screen name="demo" options={{ title: "Logan Demo" }} />
       </Stack>
     </>
   );

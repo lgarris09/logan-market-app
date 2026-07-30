@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .data import DEMO_OPPORTUNITIES
+from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .memory_engine import MemoryEngine
 from .memory_models import CategoryContext, MemoryConfirm, MemoryCreate, MemoryDecision, MemoryRecord
 from .models import AskRequest, AskResponse, BriefingResponse, Opportunity
@@ -79,6 +80,15 @@ def confirm_memory(memory_id: str, request: MemoryConfirm) -> MemoryRecord:
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory not found")
     return memory
+
+
+@app.post("/v1/demo/tesla", response_model=TeslaDemoResponse)
+def demo_tesla() -> TeslaDemoResponse:
+    """Runs the logan_core Tesla scenario (simulated data) end-to-end and returns the
+    generated opportunity card, confidence, policy result, and an execution trace
+    summary. Demo/proof-of-connectivity endpoint -- see ADR-022.
+    """
+    return run_tesla_demo()
 
 
 @app.post("/v1/ask", response_model=AskResponse)

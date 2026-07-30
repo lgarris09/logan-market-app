@@ -122,6 +122,10 @@ export default function HomeScreen() {
         <Pressable style={styles.secondaryButton} onPress={() => router.push("/memory")}>
           <Text style={styles.secondaryButtonText}>Memory inbox</Text>
         </Pressable>
+
+        <Pressable style={styles.secondaryButton} onPress={() => router.push("/demo")}>
+          <Text style={styles.secondaryButtonText}>Run Logan Demo</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );

@@ -1,0 +1,82 @@
+import math
+from datetime import datetime, timezone
+
+from logan_core.contracts import EnrichedEvent, EvidenceTrust, NormalizedSignal
+
+# V1 static source reputation registry (0.0-1.0). Extension point: dynamic
+# reputation learning, updated only by the Learning System per the spec.
+SOURCE_REPUTATION_REGISTRY: dict[str, float] = {
+    "reuters_wire": 0.95,
+    "company_press_release": 0.90,
+    "bloomberg_terminal": 0.93,
+    "sec_filing": 0.98,
+    "sportsbook_feed": 0.85,
+    "polymarket_api": 0.80,
+    "social_aggregator": 0.55,
+    "unverified_forum": 0.30,
+}
+
+RECENCY_HALF_LIFE_HOURS = 6.0
+
+MANIPULATION_PENALTY = {"low": 1.0, "medium": 0.75, "high": 0.40}
+
+
+class EvidenceTrustEngine:
+    """Layer 4a — evaluates credibility of an EnrichedEvent. Runs in parallel with
+    Community Intelligence. Forbidden per spec: reading User Model, applying personal
+    relevance, modifying event content.
+    """
+
+    def __init__(self, registry: dict[str, float] | None = None) -> None:
+        self._registry = registry if registry is not None else SOURCE_REPUTATION_REGISTRY
+
+    def _recency_score(self, occurred_at: datetime, now: datetime) -> float:
+        hours_elapsed = max((now - occurred_at).total_seconds() / 3600.0, 0.0)
+        return math.exp(-hours_elapsed / RECENCY_HALF_LIFE_HOURS)
+
+    def evaluate(
+        self, event: EnrichedEvent, signals: list[NormalizedSignal], now: datetime | None = None
+    ) -> EvidenceTrust:
+        now = now or datetime.now(timezone.utc)
+        occurred_at = event.occurred_at
+        if occurred_at.tzinfo is None:
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+
+        source_scores = [self._registry.get(s.source_id, 0.5) for s in signals] or [0.5]
+        source_score = sum(source_scores) / len(source_scores)
+
+        distinct_sources = {s.source_id for s in signals}
+        corroboration = len(distinct_sources) - 1 if len(distinct_sources) > 0 else 0
+        corroboration = max(corroboration, len(event.supporting))
+        corroboration_norm = min(corroboration / 3, 1.0)
+
+        recency_score = self._recency_score(occurred_at, now)
+
+        contradiction_flag = bool(event.contradicting)
+
+        completeness_fields = [event.summary, event.entities, event.occurred_at]
+        completeness = sum(1 for f in completeness_fields if f) / len(completeness_fields)
+
+        manipulation_risk = "low"
+        if corroboration == 0 and completeness < 1.0:
+            manipulation_risk = "medium"
+
+        trust_score = (
+            source_score * 0.35
+            + corroboration_norm * 0.25
+            + recency_score * 0.20
+            + completeness * 0.20
+        ) * MANIPULATION_PENALTY[manipulation_risk]
+        trust_score = max(0.0, min(1.0, trust_score))
+
+        return EvidenceTrust(
+            event_id=event.event_id,
+            source_score=source_score,
+            corroboration=corroboration,
+            recency_score=recency_score,
+            contradiction_flag=contradiction_flag,
+            manipulation_risk=manipulation_risk,
+            completeness=completeness,
+            trust_score=trust_score,
+            evaluated_at=now,
+        )
