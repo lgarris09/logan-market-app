@@ -139,7 +139,8 @@ Reference {
 ## Applied corrections
 
 Per [DECISIONS.md](../DECISIONS.md):
-- `RawSignal.domain` / `NormalizedSignal.domain` gain a fifth value, `"news"` ([ADR-020](../DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor)).
+- `RawSignal.domain` / `NormalizedSignal.domain` gain a fifth value, `"news"` ([ADR-020](../DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor)),
+  and a sixth, `"crypto"` ([ADR-024](../DECISIONS.md#adr-024-crypto-added-as-a-sixth-domain)).
 - `ReasoningResult.personal_relevance` → `personal_relevance_narrative` ([ADR-021](../DECISIONS.md#adr-021-package-internal-documentation-fixes)) —
   do not confuse with `Dimensions.personal_relevance`, which keeps its name and stays a float score.
 - Operational History's writer is now explicit: the System Orchestrator, not Memory System or World

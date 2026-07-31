@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-Domain = Literal["stocks", "sports", "poly", "social", "news"]
+Domain = Literal["stocks", "sports", "poly", "social", "news", "crypto"]
 EntityType = Literal["ticker", "team", "contract", "topic", "person"]
 
 

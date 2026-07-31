@@ -6,18 +6,31 @@ from logan_core.contracts import Delta, EnrichedEvent, Entity, NormalizedSignal
 DEDUP_WINDOW = timedelta(hours=1)
 
 # V1 downstream-effect mapping — a small static relationship graph that lets the
-# "ripple" concept (one event affecting related entities) show up even before
-# real causal-link inference exists. Extension point per Layer 3 spec.
+# ripple concept (one event affecting related entities) show up even before real
+# causal-link inference exists. Extension point per Layer 3 spec. Deliberately
+# leaves some demo entities (AAPL, OIL, NFL, MUSIC, POLY) unconnected, the same way
+# not every real opportunity ripples into every other one.
 DOWNSTREAM_EFFECTS: dict[str, list[str]] = {
-    "TSLA": ["NVDA", "SMH", "AI_INFRA_ETF"],
-    "NVDA": ["SMH", "AI_INFRA_ETF", "TSLA"],
+    "TSLA": ["NVDA", "MARKETS", "AI_SECTOR"],
+    "NVDA": ["MARKETS", "AI_SECTOR", "TSLA"],
+    "AI_SECTOR": ["TSLA", "NVDA"],
+    "FED": ["MARKETS", "BTC"],
+    "MARKETS": ["FED", "TSLA", "NVDA"],
+    "BTC": ["FED"],
 }
 
 ENTITY_DISPLAY_NAMES: dict[str, str] = {
     "TSLA": "Tesla",
     "NVDA": "NVIDIA",
-    "SMH": "Semiconductor ETF (SMH)",
-    "AI_INFRA_ETF": "AI Infrastructure ETF",
+    "AAPL": "Apple",
+    "MARKETS": "Markets",
+    "OIL": "Oil",
+    "BTC": "Bitcoin",
+    "FED": "Federal Reserve",
+    "NFL": "NFL",
+    "MUSIC": "Music",
+    "POLY": "Polymarket",
+    "AI_SECTOR": "AI Sector",
 }
 
 
@@ -30,7 +43,11 @@ class WorldModel:
 
     def __init__(self) -> None:
         self._entity_graph: dict[str, Entity] = {}
-        self._dedup_index: dict[tuple[str, str, int], UUID] = {}
+        # Sliding window per (entity_id, signal_type): last signal's captured_at and
+        # the event it belongs to. A fixed calendar-aligned bucket would let two
+        # signals a few minutes apart land in different buckets purely by landing on
+        # opposite sides of an hour boundary -- this tracks recency directly instead.
+        self._recent: dict[tuple[str, str], tuple[datetime, UUID]] = {}
         self._prior_values: dict[tuple[str, str], object] = {}
         self._events: dict[UUID, EnrichedEvent] = {}
 
@@ -47,17 +64,16 @@ class WorldModel:
             self._entity_graph[entity_id] = entity
         return entity
 
-    def _dedup_bucket(self, captured_at: datetime) -> int:
-        return int(captured_at.timestamp() // DEDUP_WINDOW.total_seconds())
-
     def process(self, signal: NormalizedSignal) -> EnrichedEvent:
         entity = self._get_or_create_entity(signal.entity_id, signal.entity_type, signal.domain)
         downstream = DOWNSTREAM_EFFECTS.get(signal.entity_id, [])
         for downstream_id in downstream:
             self._get_or_create_entity(downstream_id, "ticker", signal.domain)
 
-        dedup_key = (signal.entity_id, signal.signal_type, self._dedup_bucket(signal.captured_at))
-        prior_event_id = self._dedup_index.get(dedup_key)
+        dedup_key = (signal.entity_id, signal.signal_type)
+        recent = self._recent.get(dedup_key)
+        within_window = recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW
+        prior_event_id = recent[1] if within_window else None
 
         if prior_event_id is None:
             # First time this entity+signal_type has been seen in this time window —
@@ -79,7 +95,6 @@ class WorldModel:
             self._prior_values[value_key] = signal.value
 
             event_id = uuid4()
-            self._dedup_index[dedup_key] = event_id
             summary = f"{entity.display_name}: {signal.signal_type.replace('_', ' ')} ({signal.value})"
             event = EnrichedEvent(
                 event_id=event_id,
@@ -109,5 +124,6 @@ class WorldModel:
                 }
             )
 
+        self._recent[dedup_key] = (signal.captured_at, event.event_id)
         self._events[event.event_id] = event
         return event

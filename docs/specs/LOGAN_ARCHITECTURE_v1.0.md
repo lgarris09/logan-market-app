@@ -6,6 +6,8 @@ Interface Specification v1.0), reconciled against the rest of `docs/` on 2026-07
 each tracked in [DECISIONS.md](../DECISIONS.md):
 
 - News added as a fifth Domain Receptor ([ADR-020](../DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor)) — appears throughout as `domain: "news"`.
+- Crypto added as a sixth Domain Receptor ([ADR-024](../DECISIONS.md#adr-024-crypto-added-as-a-sixth-domain)) — appears throughout as `domain: "crypto"`.
+- The Opportunity Wheel is renamed the Opportunity Field ([ADR-023](../DECISIONS.md#adr-023-opportunity-wheel-renamed-to-opportunity-field)) — read `"wheel"` surface values and prose below as the Field.
 - `ReasoningResult.personal_relevance` renamed to `personal_relevance_narrative` ([ADR-021](../DECISIONS.md#adr-021-package-internal-documentation-fixes)).
 - Operational History is written by the System Orchestrator, not left ownerless ([ADR-016](../DECISIONS.md#adr-016-orchestrator-owns-writing-operational-history)).
 - Mental Model Engine is confirmed in Phase 1 build scope as a pass-through slot ([ADR-015](../DECISIONS.md#adr-015-mental-model-engine-built-as-a-v1-pass-through-slot-in-phase-1)).
@@ -233,7 +235,7 @@ Source configuration (API endpoints, credentials, polling intervals).
 **Output** — `RawSignal`:
 ```
 schema_version   "1.0"
-domain           "stocks" | "sports" | "poly" | "social" | "news"
+domain           "stocks" | "sports" | "poly" | "social" | "news" | "crypto"
 source_id        string
 source_name      string
 raw_value        any
@@ -247,7 +249,7 @@ metadata         { feed_type, region, asset_class, ... }
 
 **Forbidden**: Write to Memory. Read from Memory. Read User Model. Send notifications. Modify World Model.
 
-**V1 scope**: Five receptors — Stocks, Sports Betting, Poly Markets, Social Trends, News. Phase 1 uses
+**V1 scope**: Six receptors — Stocks, Sports Betting, Poly Markets, Social Trends, News, Crypto. Phase 1 uses
 **simulated data only**; polling/webhook ingestion against live APIs is explicitly deferred (see
 [LOGAN_IMPLEMENTATION_PLAN.md](LOGAN_IMPLEMENTATION_PLAN.md)).
 
@@ -286,7 +288,7 @@ normalized_at    timestamp
 **Forbidden**: Write to Memory. Read User Model. Apply trust or confidence scores. Filter or rank
 signals.
 
-**V1 scope**: Schema mappings for all five domains. Validation and null handling.
+**V1 scope**: Schema mappings for all six domains. Validation and null handling.
 
 **Signal Type Registry (V1)**:
 ```
@@ -300,8 +302,11 @@ Social   trend_emerging · velocity_spike · influencer_post ·
          viral_threshold · sentiment_flip · topic_spike
 News     breaking_news · analysis_published · correction_issued ·
          developing_story · headline_shift
+Crypto   price_change · volume_spike · volatility_spike ·
+         exchange_flow · regulatory_news
 ```
-(News row added per [ADR-020](../DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor).)
+(News row added per [ADR-020](../DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor); Crypto row
+added per [ADR-024](../DECISIONS.md#adr-024-crypto-added-as-a-sixth-domain).)
 
 **Extension points**: New domains added by registering a new schema mapping.
 

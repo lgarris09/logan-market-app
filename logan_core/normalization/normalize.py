@@ -43,6 +43,14 @@ SIGNAL_TYPE_REGISTRY: dict[str, set[str]] = {
         "developing_story",
         "headline_shift",
     },
+    # Crypto added as a sixth domain per ADR-024.
+    "crypto": {
+        "price_change",
+        "volume_spike",
+        "volatility_spike",
+        "exchange_flow",
+        "regulatory_news",
+    },
 }
 
 

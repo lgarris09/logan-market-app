@@ -312,6 +312,58 @@ code lands. Every non-obvious technical, product, or process choice belongs here
 - Consequences: `docs/ROADMAP.md` uses the 8-phase breakdown. Contract code uses
   `personal_relevance_narrative`.
 
+## ADR-023: "Opportunity Wheel" renamed to "Opportunity Field"
+- Date: 2026-07-31
+- Status: Accepted — supersedes the naming used in [ADR-011](#adr-011-opportunity-wheel--living-ripple-ui-is-a-required-mvp-differentiator)
+- Context: The visual direction for the MVP differentiator evolved past a fixed circular menu into a
+  looser, living node layout with a central "Logan core" and organic connections — a real reference
+  render now exists. "Wheel" implies a rigid circular structure the design no longer matches.
+- Decision: The feature is called the **Opportunity Field** everywhere going forward — code, docs, UI
+  copy. ADR-011's substance (technically simplified for Phase 1, no advanced physics/particle animation)
+  still holds; only the name changes.
+- Consequences: New code uses `OpportunityField`/`field` naming, not `Wheel`. Historical references to
+  "Wheel" in earlier ADRs are left as written (historical record) but should be read as referring to what
+  is now the Opportunity Field.
+
+## ADR-024: `crypto` added as a sixth domain
+- Date: 2026-07-31
+- Status: Accepted
+- Context: Bitcoin is an explicit Phase 1 demo entity, and doesn't fit any existing domain
+  (`stocks | sports | poly | social | news`) — it isn't a stock, a prediction-market contract, or news.
+  Mistyping it under `stocks` would be inaccurate and would set a bad precedent for the next crypto asset.
+- Decision: Add `crypto` as a sixth `Domain` value, following the same pattern as
+  [ADR-020](#adr-020-news-added-as-a-fifth-domain-receptor) (News). Signal Type Registry gets a `crypto`
+  row (e.g. `price_change · volume_spike · volatility_spike · exchange_flow · regulatory_news`).
+- Consequences: `docs/specs/LOGAN_ARCHITECTURE_v1.0.md` and `LOGAN_DATA_CONTRACTS_v1.0.md` updated
+  alongside the contract code change. A sixth simulated receptor is added for Phase 1 demo purposes.
+
+## ADR-025: Frontend dependencies approved for the Opportunity Field UI
+- Date: 2026-07-31
+- Status: Accepted
+- Context: Reproducing the reference render's connection lines, orbital rings, glow, glass panels, and
+  sparklines with plain React Native `View`/`StyleSheet` would look noticeably flatter than the product
+  direction calls for. `@expo/vector-icons` (already installed) covers icon/symbol needs without new
+  dependencies, but line-drawing, gradients, and blur have no existing equivalent in the project.
+- Decision: Add `react-native-svg` (connection lines, orbital rings, sparklines), `expo-linear-gradient`,
+  and `expo-blur` (glow and glass-panel effects). All three are Expo-first-party or Expo-recommended,
+  widely used, low-risk additions.
+- Consequences: First UI-library dependency additions since the original prototype. No icon libraries
+  were added — the existing `@expo/vector-icons` (FontAwesome5 brand + solid sets) covers the
+  logo/ticker/initials/category-icon fallback chain in the symbol resolver.
+
+## ADR-026: Opportunity Field ships Field-only for Phase 1; full tab bar deferred
+- Date: 2026-07-31
+- Status: Accepted
+- Context: The reference render shows a 5-tab bottom bar (Field/Watchlist/Insights/Alerts/Profile), but
+  the agreed Phase 1 deliverables only cover the Field screen itself plus preserving existing screens for
+  comparison — Watchlist/Insights/Alerts/Profile have no defined content yet.
+- Decision: Phase 1 ships the Opportunity Field as the home screen with a simple menu (behind the
+  hamburger icon) linking to the preserved legacy screens (classic briefing, Ask Logan, Memory Inbox,
+  Tesla-only demo) for comparison/fallback. The full 5-tab bottom bar is deferred until the other four
+  tabs have real content, not built as inert placeholders.
+- Consequences: Matches the mockup's core identity (the Field) without committing to unbuilt navigation
+  surface area. Revisit once Watchlist/Insights/Alerts/Profile are actually scoped.
+
 ## ADR-022: `logan_core` bridged into the historical backend via a demo endpoint, not a real API design
 - Date: 2026-07-31
 - Status: Accepted

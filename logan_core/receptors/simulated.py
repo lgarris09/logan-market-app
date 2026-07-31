@@ -24,7 +24,11 @@ class SimulatedReceptor:
 
 
 def tesla_ai_partnership_signal(now: datetime | None = None) -> RawSignal:
-    """The first operational test scenario: 'Tesla announces a major AI chip partnership.'"""
+    """The original operational test scenario: 'Tesla announces a major AI chip
+    partnership.' Kept as its own function since it's referenced directly by tests
+    and the single-event Tesla demo endpoint, in addition to being entity_fixtures()'s
+    "stocks:TSLA" entry.
+    """
     now = now or datetime.now(timezone.utc)
     receptor = SimulatedReceptor("stocks")
     return receptor.emit(
@@ -60,29 +64,114 @@ def tesla_ai_partnership_corroboration(now: datetime | None = None) -> RawSignal
 
 
 def simulated_fixtures(now: datetime | None = None) -> dict[str, RawSignal]:
-    """One representative RawSignal per domain, for broader receptor coverage beyond
-    the primary Tesla test scenario.
+    """One representative RawSignal per entity_id, for demo/feed purposes. Keyed by
+    entity_id (not domain) since several entities share a domain (five different
+    stocks entities, for example).
     """
     now = now or datetime.now(timezone.utc)
     return {
-        "stocks": tesla_ai_partnership_signal(now),
-        "sports": SimulatedReceptor("sports").emit(
+        "TSLA": tesla_ai_partnership_signal(now),
+        "NVDA": SimulatedReceptor("stocks").emit(
+            source_id="bloomberg_terminal",
+            source_name="Bloomberg",
+            raw_value={
+                "entity_id": "NVDA",
+                "entity_type": "ticker",
+                "signal_type": "earnings_signal",
+                "value": "NVIDIA data-center demand guidance raised",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "AAPL": SimulatedReceptor("stocks").emit(
+            source_id="bloomberg_terminal",
+            source_name="Bloomberg",
+            raw_value={
+                "entity_id": "AAPL",
+                "entity_type": "ticker",
+                "signal_type": "earnings_signal",
+                "value": "Apple earnings call scheduled, analysts watching services growth",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "MARKETS": SimulatedReceptor("stocks").emit(
+            source_id="bloomberg_terminal",
+            source_name="Bloomberg",
+            raw_value={
+                "entity_id": "MARKETS",
+                "entity_type": "ticker",
+                "signal_type": "technical_breakout",
+                "value": "Broad market breadth turns bullish across sectors",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "OIL": SimulatedReceptor("stocks").emit(
+            source_id="bloomberg_terminal",
+            source_name="Bloomberg",
+            raw_value={
+                "entity_id": "OIL",
+                "entity_type": "ticker",
+                "signal_type": "price_change",
+                "value": "Crude supply tightens on refinery outages",
+                "unit": "USD/barrel",
+            },
+            captured_at=now,
+        ),
+        "BTC": SimulatedReceptor("crypto").emit(
+            source_id="social_aggregator",
+            source_name="Simulated Crypto Feed",
+            raw_value={
+                "entity_id": "BTC",
+                "entity_type": "ticker",
+                "signal_type": "volatility_spike",
+                "value": "Bitcoin volatility spikes on ETF flow data",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "FED": SimulatedReceptor("news").emit(
+            source_id="reuters_wire",
+            source_name="Reuters",
+            raw_value={
+                "entity_id": "FED",
+                "entity_type": "topic",
+                "signal_type": "breaking_news",
+                "value": "Federal Reserve rate decision expected this week",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "NFL": SimulatedReceptor("sports").emit(
             source_id="sportsbook_feed",
             source_name="Simulated Sportsbook Feed",
             raw_value={
-                "entity_id": "NFL_TEAM_A",
+                "entity_id": "NFL",
                 "entity_type": "team",
                 "signal_type": "line_move",
-                "value": "Spread moved from -3.5 to -5.0",
+                "value": "Week 7 spreads moving sharply across the board",
                 "unit": "points",
             },
             captured_at=now,
         ),
-        "poly": SimulatedReceptor("poly").emit(
+        "MUSIC": SimulatedReceptor("social").emit(
+            source_id="social_aggregator",
+            source_name="Simulated Social Aggregator",
+            raw_value={
+                "entity_id": "MUSIC",
+                "entity_type": "topic",
+                "signal_type": "viral_threshold",
+                "value": "New single crosses viral engagement threshold",
+                "unit": None,
+            },
+            captured_at=now,
+        ),
+        "POLY": SimulatedReceptor("poly").emit(
             source_id="polymarket_api",
             source_name="Simulated Polymarket Feed",
             raw_value={
-                "entity_id": "ELECTION_CONTRACT_1",
+                "entity_id": "POLY",
                 "entity_type": "contract",
                 "signal_type": "price_spike",
                 "value": "Contract price moved from 0.42 to 0.51",
@@ -90,26 +179,14 @@ def simulated_fixtures(now: datetime | None = None) -> dict[str, RawSignal]:
             },
             captured_at=now,
         ),
-        "social": SimulatedReceptor("social").emit(
+        "AI_SECTOR": SimulatedReceptor("social").emit(
             source_id="social_aggregator",
             source_name="Simulated Social Aggregator",
             raw_value={
-                "entity_id": "AI_INFRA_ETF",
+                "entity_id": "AI_SECTOR",
                 "entity_type": "topic",
                 "signal_type": "trend_emerging",
                 "value": "AI infrastructure discussion volume rising",
-                "unit": None,
-            },
-            captured_at=now,
-        ),
-        "news": SimulatedReceptor("news").emit(
-            source_id="reuters_wire",
-            source_name="Reuters",
-            raw_value={
-                "entity_id": "NVDA",
-                "entity_type": "ticker",
-                "signal_type": "breaking_news",
-                "value": "NVIDIA supply constraints reported ahead of earnings",
                 "unit": None,
             },
             captured_at=now,

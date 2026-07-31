@@ -44,4 +44,4 @@ def test_downstream_ripple_includes_related_entities(now):
     event = world_model.process(n1)
 
     assert "NVDA" in event.downstream
-    assert "SMH" in event.downstream
+    assert "MARKETS" in event.downstream

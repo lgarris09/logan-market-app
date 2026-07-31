@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
+from .logan_feed import DemoFeedResponse, run_demo_feed
 from .memory_engine import MemoryEngine
 from .memory_models import CategoryContext, MemoryConfirm, MemoryCreate, MemoryDecision, MemoryRecord
 from .models import AskRequest, AskResponse, BriefingResponse, Opportunity
@@ -89,6 +90,16 @@ def demo_tesla() -> TeslaDemoResponse:
     summary. Demo/proof-of-connectivity endpoint -- see ADR-022.
     """
     return run_tesla_demo()
+
+
+@app.get("/v1/demo/feed", response_model=DemoFeedResponse)
+def demo_feed() -> DemoFeedResponse:
+    """Runs all five simulated domain fixtures through logan_core on one shared
+    Orchestrator and returns a multi-item feed, ranked by priority and annotated with
+    cross-item ripple connections, for the mobile Opportunity Wheel. Demo/proof-of-
+    connectivity endpoint -- see ADR-022.
+    """
+    return run_demo_feed()
 
 
 @app.post("/v1/ask", response_model=AskResponse)
