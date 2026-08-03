@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +9,8 @@ import {
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
+import { FadeIn } from "../components/FadeIn";
+import { PressableScale } from "../components/PressableScale";
 
 type Memory = {
   id: string;
@@ -24,6 +25,7 @@ type Memory = {
 export default function MemoryInboxScreen() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -40,12 +42,17 @@ export default function MemoryInboxScreen() {
   }, []);
 
   const confirm = async (id: string, confirmed: boolean) => {
-    await fetch(`${API_BASE_URL}/v1/memories/${id}/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmed }),
-    });
-    await load();
+    setPendingId(id);
+    try {
+      await fetch(`${API_BASE_URL}/v1/memories/${id}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmed }),
+      });
+      await load();
+    } finally {
+      setPendingId(null);
+    }
   };
 
   if (loading) {
@@ -71,23 +78,44 @@ export default function MemoryInboxScreen() {
           </Text>
         </View>
       ) : (
-        memories.map((memory) => (
-          <View style={styles.card} key={memory.id}>
-            <Text style={styles.branch}>{memory.primary_branch}</Text>
-            <Text style={styles.contentText}>{memory.content}</Text>
-            <Text style={styles.meta}>
-              Importance {memory.importance} · Confidence {memory.confidence}
-            </Text>
-            <View style={styles.actions}>
-              <Pressable style={styles.reject} onPress={() => confirm(memory.id, false)}>
-                <Text style={styles.rejectText}>Reject</Text>
-              </Pressable>
-              <Pressable style={styles.confirm} onPress={() => confirm(memory.id, true)}>
-                <Text style={styles.confirmText}>Confirm</Text>
-              </Pressable>
-            </View>
-          </View>
-        ))
+        memories.map((memory, index) => {
+          const isPending = pendingId === memory.id;
+          return (
+            <FadeIn key={memory.id} delay={index * 60}>
+              <View style={[styles.card, isPending && styles.cardPending]}>
+                <Text style={styles.branch}>{memory.primary_branch}</Text>
+                <Text style={styles.contentText}>{memory.content}</Text>
+                <Text style={styles.meta}>
+                  Importance {memory.importance} · Confidence {memory.confidence}
+                </Text>
+                <View style={styles.actions}>
+                  <PressableScale
+                    style={styles.reject}
+                    onPress={() => confirm(memory.id, false)}
+                    disabled={isPending}
+                  >
+                    {isPending ? (
+                      <ActivityIndicator color={theme.text} size="small" />
+                    ) : (
+                      <Text style={styles.rejectText}>Reject</Text>
+                    )}
+                  </PressableScale>
+                  <PressableScale
+                    style={styles.confirm}
+                    onPress={() => confirm(memory.id, true)}
+                    disabled={isPending}
+                  >
+                    {isPending ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Text style={styles.confirmText}>Confirm</Text>
+                    )}
+                  </PressableScale>
+                </View>
+              </View>
+            </FadeIn>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -115,6 +143,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     padding: 18,
     marginBottom: 12,
+  },
+  cardPending: {
+    opacity: 0.6,
   },
   branch: { color: theme.accent, fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
   contentText: { color: theme.text, fontSize: 17, lineHeight: 24, fontWeight: "700", marginTop: 10 },

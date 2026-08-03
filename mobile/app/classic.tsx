@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -14,6 +13,8 @@ import { router } from "expo-router";
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
 import { Opportunity, OpportunityCard } from "../components/OpportunityCard";
+import { FadeIn } from "../components/FadeIn";
+import { PressableScale } from "../components/PressableScale";
 
 type Briefing = {
   greeting: string;
@@ -113,21 +114,23 @@ export default function ClassicBriefingScreen() {
           </View>
         )}
 
-        {briefing?.opportunities.map((item) => (
-          <OpportunityCard key={item.id} item={item} />
+        {briefing?.opportunities.map((item, index) => (
+          <FadeIn key={item.id} delay={index * 60}>
+            <OpportunityCard item={item} />
+          </FadeIn>
         ))}
 
-        <Pressable style={styles.primaryButton} onPress={() => router.push("/ask")}>
+        <PressableScale style={styles.primaryButton} onPress={() => router.push("/ask")}>
           <Text style={styles.primaryButtonText}>Ask Logan</Text>
-        </Pressable>
+        </PressableScale>
 
-        <Pressable style={styles.secondaryButton} onPress={() => router.push("/memory")}>
+        <PressableScale style={styles.secondaryButton} onPress={() => router.push("/memory")}>
           <Text style={styles.secondaryButtonText}>Memory inbox</Text>
-        </Pressable>
+        </PressableScale>
 
-        <Pressable style={styles.secondaryButton} onPress={() => router.push("/demo")}>
+        <PressableScale style={styles.secondaryButton} onPress={() => router.push("/demo")}>
           <Text style={styles.secondaryButtonText}>Run Logan Demo</Text>
-        </Pressable>
+        </PressableScale>
       </ScrollView>
     </SafeAreaView>
   );

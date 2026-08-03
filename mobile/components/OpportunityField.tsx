@@ -3,19 +3,55 @@ import { Animated, StyleSheet, View, useWindowDimensions } from "react-native";
 import Svg, { Circle, Line } from "react-native-svg";
 
 import { LoganCore } from "./LoganCore";
-import { NODE_SIZE, OpportunityNode } from "./OpportunityNode";
+import { NODE_SIZE, NodeEmphasis, OpportunityNode } from "./OpportunityNode";
+import { clusterMembersOf, computeFieldLayout } from "../lib/fieldLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const NODE_WRAPPER_WIDTH = 92;
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+function ConnectionPulse({
+  from,
+  to,
+  delay,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  delay: number;
+}) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(progress, { toValue: 1, duration: 1600, delay, useNativeDriver: false }),
+        Animated.timing(progress, { toValue: 0, duration: 0, useNativeDriver: false }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [progress, delay]);
+
+  const cx = progress.interpolate({ inputRange: [0, 1], outputRange: [from.x, to.x] });
+  const cy = progress.interpolate({ inputRange: [0, 1], outputRange: [from.y, to.y] });
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.1, 0.9, 1],
+    outputRange: [0, 0.85, 0.85, 0],
+  });
+
+  return <AnimatedCircle cx={cx} cy={cy} r={2.6} fill="#E8B95C" opacity={opacity} />;
+}
 
 export function OpportunityField({
   items,
   selectedId,
   onSelect,
+  pulseKey,
 }: {
   items: FeedItem[];
   selectedId: string | null;
   onSelect: (item: FeedItem) => void;
+  pulseKey?: string | number;
 }) {
   const { width } = useWindowDimensions();
   const fieldSize = Math.min(width - 24, 420);
@@ -23,30 +59,29 @@ export function OpportunityField({
   const innerRadius = 92;
   const outerRadius = fieldSize / 2 - NODE_SIZE / 2 - 10;
 
-  // Radial position: higher priority_score -> smaller radius -> closer to the
-  // Logan core. Angle: evenly distributed, starting at the top, going clockwise.
-  const positions = useMemo(() => {
-    const map = new Map<string, { x: number; y: number }>();
-    if (items.length === 0) return map;
+  const positions = useMemo(
+    () => computeFieldLayout(items, center, innerRadius, outerRadius),
+    [items, center, innerRadius, outerRadius]
+  );
 
-    const scores = items.map((i) => i.priority_score);
-    const min = Math.min(...scores);
-    const max = Math.max(...scores);
-    const range = max - min || 1;
+  const clusterMembers = useMemo(
+    () => (selectedId ? clusterMembersOf(items, selectedId) : null),
+    [items, selectedId]
+  );
 
-    items.forEach((item, index) => {
-      const t = (item.priority_score - min) / range;
-      const radius = outerRadius - t * (outerRadius - innerRadius);
-      const angle = -Math.PI / 2 + (index / items.length) * Math.PI * 2;
-      map.set(item.event_id, {
-        x: center + radius * Math.cos(angle),
-        y: center + radius * Math.sin(angle),
-      });
-    });
-    return map;
-  }, [items, center, innerRadius, outerRadius]);
+  const directEdgesOfSelected = useMemo(() => {
+    if (!selectedId) return new Set<string>();
+    const selectedItem = items.find((i) => i.event_id === selectedId);
+    return new Set(selectedItem?.connected_event_ids ?? []);
+  }, [items, selectedId]);
 
-  // Ripple connections between related entities, deduped so each pair draws once.
+  const emphasisFor = (item: FeedItem): NodeEmphasis => {
+    if (!selectedId || !clusterMembers) return "related";
+    if (item.event_id === selectedId) return "focused";
+    return clusterMembers.has(item.event_id) ? "related" : "dimmed";
+  };
+
+  // Ripple connections, deduped so each pair draws once.
   const connectionPairs = useMemo(() => {
     const seen = new Set<string>();
     const pairs: [string, string][] = [];
@@ -79,20 +114,11 @@ export function OpportunityField({
   return (
     <View style={{ width: fieldSize, height: fieldSize }}>
       <Svg width={fieldSize} height={fieldSize} style={StyleSheet.absoluteFill}>
-        <Circle cx={center} cy={center} r={innerRadius} stroke="#232B36" strokeWidth={1} fill="none" />
-        <Circle
-          cx={center}
-          cy={center}
-          r={(innerRadius + outerRadius) / 2}
-          stroke="#1A2028"
-          strokeWidth={1}
-          fill="none"
-        />
-        <Circle cx={center} cy={center} r={outerRadius} stroke="#1A2028" strokeWidth={1} fill="none" />
-
         {items.map((item) => {
           const pos = positions.get(item.event_id);
           if (!pos) return null;
+          const emphasis = emphasisFor(item);
+          const opacity = emphasis === "focused" ? 0.55 : emphasis === "related" ? 0.32 : 0.1;
           return (
             <Line
               key={`core-${item.event_id}`}
@@ -102,7 +128,7 @@ export function OpportunityField({
               y2={pos.y}
               stroke="#3A3220"
               strokeWidth={1}
-              opacity={0.5}
+              opacity={opacity}
             />
           );
         })}
@@ -111,6 +137,16 @@ export function OpportunityField({
           const posA = positions.get(a);
           const posB = positions.get(b);
           if (!posA || !posB) return null;
+
+          const isDirect =
+            !!selectedId &&
+            ((a === selectedId && directEdgesOfSelected.has(b)) ||
+              (b === selectedId && directEdgesOfSelected.has(a)));
+          const touchesCluster = !!clusterMembers && clusterMembers.has(a) && clusterMembers.has(b);
+
+          const opacity = isDirect ? 0.55 : touchesCluster ? 0.22 : 0.08;
+          const strokeWidth = isDirect ? 1.6 : 1;
+
           return (
             <Line
               key={`${a}-${b}`}
@@ -119,15 +155,30 @@ export function OpportunityField({
               x2={posB.x}
               y2={posB.y}
               stroke="#E8B95C"
-              strokeWidth={1.5}
-              opacity={0.4}
+              strokeWidth={strokeWidth}
+              opacity={opacity}
+            />
+          );
+        })}
+
+        {Array.from(directEdgesOfSelected).map((otherId, index) => {
+          if (!selectedId) return null;
+          const from = positions.get(selectedId);
+          const to = positions.get(otherId);
+          if (!from || !to) return null;
+          return (
+            <ConnectionPulse
+              key={`pulse-${selectedId}-${otherId}`}
+              from={from}
+              to={to}
+              delay={index * 220}
             />
           );
         })}
       </Svg>
 
       <View style={[StyleSheet.absoluteFill, styles.centerWrap]} pointerEvents="none">
-        <LoganCore />
+        <LoganCore pulseKey={pulseKey} />
       </View>
 
       {items.map((item, index) => {
@@ -147,8 +198,10 @@ export function OpportunityField({
           >
             <OpportunityNode
               item={item}
-              selected={selectedId === item.event_id}
+              emphasis={emphasisFor(item)}
               onPress={() => onSelect(item)}
+              floatPhase={pos.floatPhase}
+              floatFreq={pos.floatFreq}
             />
           </Animated.View>
         );

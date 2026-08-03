@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +11,8 @@ import {
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
+import { FadeIn } from "../components/FadeIn";
+import { PressableScale } from "../components/PressableScale";
 
 export default function AskScreen() {
   const [message, setMessage] = useState("");
@@ -56,7 +57,9 @@ export default function AskScreen() {
     >
       <View style={styles.answerCard}>
         <Text style={styles.label}>LOGAN</Text>
-        <Text style={styles.answer}>{answer}</Text>
+        <FadeIn key={answer} distance={6}>
+          <Text style={styles.answer}>{answer}</Text>
+        </FadeIn>
       </View>
 
       <View style={styles.composer}>
@@ -68,13 +71,13 @@ export default function AskScreen() {
           multiline
           style={styles.input}
         />
-        <Pressable style={styles.send} onPress={submit}>
+        <PressableScale style={styles.send} onPress={submit} disabled={loading}>
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={styles.sendText}>SEND</Text>
           )}
-        </Pressable>
+        </PressableScale>
       </View>
     </KeyboardAvoidingView>
   );

@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
 import { LoganOpportunityCard } from "../components/LoganOpportunityCard";
+import { FadeIn } from "../components/FadeIn";
+import { PressableScale } from "../components/PressableScale";
 import { TeslaDemoResponse } from "../types/loganDemo";
 
 export default function DemoScreen() {
@@ -36,26 +38,28 @@ export default function DemoScreen() {
         18-layer logan_core pipeline on simulated data, live against the backend.
       </Text>
 
-      <Pressable style={styles.button} onPress={runDemo} disabled={loading}>
+      <PressableScale style={styles.button} onPress={runDemo} disabled={loading}>
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
           <Text style={styles.buttonText}>Run Logan Demo</Text>
         )}
-      </Pressable>
+      </PressableScale>
 
       {!!error && (
-        <View style={styles.error}>
-          <Text style={styles.errorTitle}>Backend not connected</Text>
-          <Text style={styles.errorText}>{error}</Text>
-          <Text style={styles.errorText}>
-            Start FastAPI and set your computer IP in constants/config.ts.
-          </Text>
-        </View>
+        <FadeIn>
+          <View style={styles.error}>
+            <Text style={styles.errorTitle}>Backend not connected</Text>
+            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>
+              Start FastAPI and set your computer IP in constants/config.ts.
+            </Text>
+          </View>
+        </FadeIn>
       )}
 
       {result && (
-        <>
+        <FadeIn distance={14}>
           <LoganOpportunityCard item={result.delivered_item} />
 
           <View style={styles.detailsCard}>
@@ -85,7 +89,7 @@ export default function DemoScreen() {
             </Text>
             <Text style={styles.detailsSubtext}>{result.execution_trace.layers.join(" -> ")}</Text>
           </View>
-        </>
+        </FadeIn>
       )}
     </ScrollView>
   );
