@@ -383,3 +383,63 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   [ARCHITECTURE.md](ARCHITECTURE.md#open-questions). Don't extend this endpoint into a general-purpose
   API by accretion; when the real API design happens, this demo route should likely be replaced, not
   grown.
+
+## ADR-027: Opportunity Field's interaction model replaced — depth-of-focus "Attention Field" instead of a radial multi-node layout
+- Date: 2026-08-03
+- Status: Accepted — supersedes the interaction model (not the name — see open question below) described
+  in [ADR-023](#adr-023-opportunity-wheel-renamed-to-opportunity-field)
+- Context: The radial field (all entities visible at once around a central "Logan core," built
+  2026-07-31) shipped and type-checked cleanly, but repeated design critique converged on a deeper
+  problem than any single visual tweak could fix: showing every entity at equal visual weight
+  simultaneously reads as a dashboard/graph, asks the user to scan and rank things themselves, and gives
+  Logan no way to assert "this is what matters most right now" before any text is read.
+- Decision: Replaced the radial layout with a depth-of-focus model — one entity held in clear focus at a
+  time (large, legible, holding real content), everything else present only as soft, unlabeled ambient
+  light, the way a camera holds one plane of a scene sharp while the rest recedes. Swiping or tapping a
+  background entity shifts focus, with a real transition (the outgoing entity recedes into ambient
+  presence, the incoming one clarifies), not a hard cut. Went through two further internal iterations
+  after initial critique (a persistent `FocusSubject` card was tried and rejected as still feeling like "a
+  modal sitting on top of the visualization" — see the 2026-08-03 session note for the full critique
+  trail) before landing on the current architecture: every entity, focused or not, renders through one
+  shared `Vessel` component with three disclosure states (dormant/glance/detail), so information visibly
+  condenses out of and recedes back into the same material rather than a separate object appearing on top
+  of a background.
+- Consequences: `OpportunityField`/`OpportunityNode`/`LoganCore`/`fieldLayout.ts` are preserved unchanged
+  at `app/field-legacy.tsx`, reachable via the menu — nothing was deleted, per the project's standing
+  preserve-don't-delete pattern for superseded screens. New code lives in `AttentionField.tsx`,
+  `Vessel.tsx`, `attentionLayout.ts`. **Open question, not resolved by this ADR**: whether the
+  product-facing name should also change from "Opportunity Field" to "Attention Field" — the user's own
+  reference mockups from this session label it "THE ATTENTION FIELD," and the code now uses
+  `AttentionField` throughout, but nobody has explicitly decided this the way ADR-023 explicitly decided
+  the Wheel→Field rename. Revisit and either ratify or reject explicitly; don't let it stay ambiguous.
+
+## ADR-028: Atmosphere-first visual language adopted; rendering migrates to Skia for this component
+- Date: 2026-08-03
+- Status: Accepted
+- Context: Following ADR-027's interaction redesign, an extended visual-language exploration (three
+  divergent concepts, then roughly nine iterative passes on the chosen direction, all via disposable
+  Artifact mockups — see the session note for the full trail) converged on: the medium itself is the
+  interface, entities are regions where the atmosphere becomes coherent enough to hold information (not
+  discrete objects placed on a background), no cards, no perfect circles, no hard boundaries, and —
+  after an explicit correction mid-exploration — coherence (structured, ring-artifact density) rather than
+  glow (additive light/brightness) as the visual expression of confidence and resolution. Reproducing this
+  faithfully requires real fractal-noise turbulence and proper blur, neither of which `react-native-svg`
+  (the existing dependency, approved in ADR-025) supports at all.
+- Decision: Adopt `@shopify/react-native-skia` (paired with `react-native-reanimated` +
+  `react-native-worklets`, its standard animation-driving companions) for the Sprint 1 "Atmosphere" layer
+  and, presumptively, future rendering of this screen. This was explicitly decided with the user after
+  laying out the real cost: Skia is a native module, so **Expo Go can no longer run this app** — testing
+  moves to an EAS development-client build from this point forward. The user chose this over staying on
+  the existing SVG+Animated stack (which could approximate the visual language but not the true turbulence
+  texture, and carried real risk of not holding 60fps with many simultaneously-animated soft-blurred
+  layers).
+- Consequences: New dependencies: `@shopify/react-native-skia`, `react-native-reanimated`,
+  `react-native-worklets`, `expo-dev-client`; new config: `babel.config.js` (didn't exist before, required
+  for the Reanimated/Worklets babel transform), `eas.json`. Getting a working iOS development-client build
+  additionally required enrolling in the paid Apple Developer Program ($99/year, Individual) — a real
+  monetary cost and a multi-day Apple-side activation delay, not a technical blocker on our side. Day-to-
+  day development workflow changes: `npx expo start --dev-client --tunnel` instead of plain `expo start`,
+  and the dev client must be rebuilt via `eas build` whenever a native dependency changes (pure JS/TS
+  changes still hot-reload normally). `OpportunityField`/`Vessel`-based screens are unaffected — this
+  applies to the new `AtmosphereField` component and whatever supersedes the current screen once Sprint 2+
+  wires real data into it.

@@ -1,3 +1,8 @@
+> **Update, 2026-08-03**: the next session's notes went to
+> [`docs/sessions/2026-08-03-attention-field-atmosphere-skia.md`](docs/sessions/2026-08-03-attention-field-atmosphere-skia.md)
+> instead of here — resolving (by precedent, not an explicit decision) the inconsistency flagged below in
+> favor of `docs/sessions/`. Future notes should go there.
+
 # Session Notes — 2026-07-31
 
 Note: an earlier, more detailed dated note from the first half of today's work also exists at
