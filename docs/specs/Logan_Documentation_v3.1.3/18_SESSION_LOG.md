@@ -29,6 +29,58 @@ This file is the institutional memory of the project.
 
 ---
 
+### 2026-08-05 — Sprint 2 Code Foundations (first code pass on the v3.1.3 package)
+`[VERIFIED]`
+
+**What was accomplished:**
+- Owner explicitly approved ADR-036, ADR-037, and ADR-038 as drafted; status updated from Proposed to
+  Accepted in `docs/DECISIONS.md`.
+- First code-level implementation pass on `logan_core/`, following the documentation-only v3.1.3
+  reconciliation. Before any code change, inspected existing contracts, call sites, fixtures, and the
+  full 28-test baseline (all passing) to confirm compatibility.
+- Implemented, with tests (40 passing, up from 28):
+  1. `MemoryRecord.user_id` — required, non-empty, validated (ADR-033). Threaded through
+     `LearningEngine.process_feedback()` and the Orchestrator's `run_feedback_loop()`/
+     `run_memory_inbox_confirm()`/`run_memory_inbox_reject()`, none of which previously took a user_id at
+     all. `LOCAL_FOUNDER_USER_ID = "demo_user"` added to `contracts/common.py` — the identifier already
+     used informally everywhere, now named.
+  2. `FeedbackSignal.interaction_type` gains `"watch"` and `"remind"`; `FeedbackEngine.interpret()` maps
+     both deterministically.
+  3. Reserved, non-functional ML model-version metadata on `EvidenceTrust` and `ConclusionConfidence`
+     (ADR-032) — `"deterministic-baseline"` default, zero scoring change.
+  4. `OutcomeRecord` redesigned to schema_version "2.0" per ADR-036 — resolvability, invalidation status,
+     verification quality, evaluation horizon, observed result, source contribution replace the win/loss
+     framing; `result`/`expected`/`accuracy` kept as deprecated compatibility fields. A validator enforces
+     `observed_result` is set if and only if `resolvability == "resolved"`.
+  5. New `SourceObservation` contract (ADR-032's future source-reliability calibration input) — not wired
+     into `EvidenceTrustEngine`, cannot affect current trust scores.
+  6. `LearningEngine.process_outcome()` added as an explicit `NotImplementedError` stub — typed and
+     reviewable, but deliberately fails loudly rather than implying a learning scheduler exists.
+- Ran the full test suite (`pytest`, 40/40 passing) plus targeted greps for missing `user_id` call sites,
+  stale `OutcomeRecord` construction, unsupported interaction types, and public `priority_score` — no
+  gaps found in the new code. mypy/ruff/black are named in `docs/STANDARDS.md` as the intended tools but
+  have no config or declared dependency in this repo; not installed without approval (reported, not run).
+- **Found, flagged, not fixed (outside this pass's authorized scope):** `opportunity/engine.py` still lets
+  `community.momentum_score` influence `priority_score`, a pre-existing conflict with ADR-034 predating
+  that ADR. `backend/app/logan_feed.py` publicly exposes and sorts by `priority_score`, a live instance of
+  ADR-029's "never returned via any public API." Both require touching scoring behavior or the untouched
+  historical prototype — deferred to a dedicated follow-up pass pending an owner decision.
+- Updated `23_CURRENT_IMPLEMENTATION_STATE.md`, `28_PACKAGE_MANIFEST.md`, and created
+  `V3.1.3_IMPLEMENTATION_SUMMARY.md`; rebuilt `Logan_Documentation_v3.1.3.zip`.
+
+**Major decisions made:** None new — this session implemented already-accepted ADRs (029, 032, 033, 034,
+036) rather than making new product/architecture decisions.
+
+**What's next / left open:**
+- The two flagged `priority_score`/`community_momentum` findings above need an explicit owner decision
+  before any fix.
+- `LearningEngine.process_outcome()` remains an interface stub — a real delayed-outcome scheduler is
+  later-phase work (`UNRESOLVED_QUESTIONS.md` #4).
+- `TRIGGER_REGISTRY_NEWS.md`, a News domain color, and culture/personal_finance in the running `Domain`
+  literal all remain open from the prior session.
+
+---
+
 ### 2026-08-04/05 — v3.1.3 Reconciliation and ML Foundation
 `[VERIFIED]`
 

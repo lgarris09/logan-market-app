@@ -80,6 +80,7 @@
 |------|---------|--------|-------|
 | DOCUMENTATION_CHANGELOG_v3.1.2.md | 3.1.2 | WRITTEN | Full v3.1 → v3.1.2 delta — historical record, not updated for v3.1.3 |
 | DOCUMENTATION_REFERENCE_AUDIT.md | 3.1.2 | WRITTEN | Cross-reference check across all docs — not re-run this session |
+| V3.1.3_IMPLEMENTATION_SUMMARY.md | 3.1.3 | WRITTEN | New (2026-08-05) — records the first code-level pass on `logan_core/` following this doc package; see file for full detail |
 | source_material/ | 1.3 FINAL | PRESERVED | Original spec (2026-07-31); 10 files; ground truth for tech specs — untouched |
 
 ---
@@ -89,8 +90,8 @@
 - **Core files:** 29 numbered documents (00–28)
 - **TriggerEvent framework:** 13 files listed (12 written + 1 missing/flagged: TRIGGER_REGISTRY_NEWS.md)
 - **ML Foundation:** 6 new files
-- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + source_material/ (10 files)
-- **Total:** 59 files present (29 + 12 + 6 + 2 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
+- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + V3.1.3_IMPLEMENTATION_SUMMARY + source_material/ (10 files)
+- **Total:** 60 files present (29 + 12 + 6 + 3 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
 
 ---
 
@@ -110,6 +111,7 @@
 *Logan Intelligence Package Manifest — v3.1.2 | 2026-08-03*
 *v3.1.2 changes: All 29 core document entries updated from v3.1 to v3.1.2 with change summaries. TriggerEvent Framework section added (12 new files). DOCUMENTATION_REFERENCE_AUDIT.md added to Supporting Files. Total count updated from 40 to 55. TRIGGER_REGISTRY_GLOBAL.md added to regularly-updated files list.*
 *v3.1.3 changes: Rebuilt to reflect the actual v3.1.3 package. Per-file Version column now reflects each file's real last-touched version rather than a blanket bump — most files remain honestly labeled 3.1.2 (bulk-copied, not reconciled this pass). 6 new ML Foundation files added. TRIGGER_REGISTRY_NEWS.md listed as missing/flagged rather than silently omitted. Total corrected to 59 present + 1 flagged missing.*
+*v3.1.3 code-foundation pass (2026-08-05): V3.1.3_IMPLEMENTATION_SUMMARY.md added to Supporting Files (new). ADR-036/037/038 accepted (see docs/DECISIONS.md). Total corrected to 60 present + 1 flagged missing.*
 
 
 ## v3.1.2 Patch
