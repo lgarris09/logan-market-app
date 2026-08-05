@@ -573,7 +573,7 @@ code lands. Every non-obvious technical, product, or process choice belongs here
 
 ## ADR-036: `OutcomeRecord` redesigned — outcomes are not reduced to a win/loss framing
 - Date: 2026-08-04
-- Status: Proposed
+- Status: Accepted — approved as drafted 2026-08-05
 - Context: `OutcomeRecord`'s v3.1.2 shape (`result`/`expected`/`accuracy`/`delay_window`) collapsed every
   outcome toward a binary-ish win/loss/accuracy framing. That framing has no way to represent a
   prediction that never became resolvable, was invalidated before resolution, or was verified with low
@@ -592,7 +592,7 @@ code lands. Every non-obvious technical, product, or process choice belongs here
 
 ## ADR-037: `news` restored as the eighth standalone domain; documentation reconciled to running code and ADR-020
 - Date: 2026-08-04
-- Status: Proposed
+- Status: Accepted — approved as drafted 2026-08-05
 - Context: [ADR-020](#adr-020-news-added-as-a-fifth-domain-receptor) added News as a domain receptor, and
   the running code's `Domain` literal (`logan_core/contracts/common.py`) already includes `"news"`
   alongside `stocks`/`sports`/`poly`/`social`/`crypto`. Somewhere in the v3.1.2 documentation pass that
@@ -612,7 +612,7 @@ code lands. Every non-obvious technical, product, or process choice belongs here
 
 ## ADR-038: `17_CLAUDE_ENGINEERING_GUIDE.md` is not governing authority
 - Date: 2026-08-04
-- Status: Proposed
+- Status: Accepted — approved as drafted 2026-08-05
 - Context: `docs/specs/Logan_Documentation_v3.1.3/17_CLAUDE_ENGINEERING_GUIDE.md` opens with "This document
   tells Claude how to think about, work on, and evolve Logan Intelligence. Read it before every session" —
   language that could be read as a second, competing operating contract alongside this repository's own
