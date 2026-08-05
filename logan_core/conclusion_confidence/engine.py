@@ -9,6 +9,14 @@ class ConclusionConfidenceEngine:
     Separate from Evidence Trust: a trustworthy source does not guarantee a trustworthy
     conclusion. Forbidden per spec: writing to Memory, modifying reasoning output,
     suppressing events.
+
+    V1 (ADR-015): Mental Model is pass-through/data-collection only and must NOT
+    influence confidence_score, ranking, or recommend/suppress outcomes. `mental_model`
+    is still accepted here — it still flows through the pipeline in its normal
+    position — but its `confidence` is deliberately never read by this formula.
+    See BATCH-1 Stage 1 (V3.1.4) and `test_conclusion_confidence.py`'s
+    `test_mental_model_confidence_has_zero_scoring_effect` for the enforced
+    regression. Do not reintroduce this term before an explicit V2 ADR.
     """
 
     def evaluate(
@@ -17,8 +25,7 @@ class ConclusionConfidenceEngine:
         trust: EvidenceTrust,
         mental_model: Optional[MentalModel] = None,
     ) -> ConclusionConfidence:
-        mental_model_weight = mental_model.confidence if mental_model is not None else 0.5
-        confidence_score = trust.trust_score * 0.75 + mental_model_weight * 0.25
+        confidence_score = trust.trust_score
         if trust.contradiction_flag:
             confidence_score *= 0.7
         confidence_score = max(0.0, min(1.0, confidence_score))
