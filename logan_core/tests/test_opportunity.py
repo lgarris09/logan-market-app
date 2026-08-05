@@ -81,6 +81,30 @@ def test_priority_score_never_exceeds_bounds():
         assert 0.0 <= value <= 1.0
 
 
+def test_community_momentum_has_zero_effect_on_ranking():
+    """ADR-034 / V3.1.4 BATCH-1 Stage 2 regression: different momentum_score
+    values must produce an identical priority_score (and identical dimensions
+    other than community_momentum itself) when every other input is equal.
+    """
+    reasoning = _reasoning()
+    confidence = _confidence(reasoning.event_id, score=0.7)
+
+    engine = OpportunityEngine()
+    low = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=0.0))
+    high = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=1.0))
+
+    assert low.priority_score == high.priority_score
+    assert low.recommend == high.recommend
+    low_dims = low.dimensions.model_dump()
+    high_dims = high.dimensions.model_dump()
+    assert low_dims["community_momentum"] == 0.0
+    assert high_dims["community_momentum"] == 1.0
+    for key in low_dims:
+        if key == "community_momentum":
+            continue
+        assert low_dims[key] == high_dims[key], f"dimension {key!r} was affected by momentum"
+
+
 def test_speculation_classification_increases_risk_dimension():
     reasoning = _reasoning()
     confidence_normal = _confidence(reasoning.event_id, score=0.6, classification="inference")

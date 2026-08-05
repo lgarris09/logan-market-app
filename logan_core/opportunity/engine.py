@@ -69,7 +69,12 @@ class OpportunityEngine:
                 layer="opportunity_engine", rule="assess: scoring dimensions from inputs", timestamp=now
             )
         )
-        global_importance = min(community.momentum_score * 0.5 + confidence.confidence_score * 0.5, 1.0)
+        # ADR-034 / V3.1.4 BATCH-1 Stage 2: global_importance is confidence-only.
+        # community.momentum_score must never contribute to ranking, confidence,
+        # urgency, or relevance — directly or indirectly through this dimension.
+        global_importance = confidence.confidence_score
+        # Retained as contextual/presentation information only (e.g. a future
+        # "trending" badge) — see the scoring formula below, which excludes it.
         community_momentum = community.momentum_score
         urgency = min(_LIFECYCLE_URGENCY.get(community.lifecycle_state, 0.1) + (
             0.2 if reasoning.actionability == "actionable" else 0.0
@@ -102,6 +107,12 @@ class OpportunityEngine:
             connection_strength=connection_strength,
         )
 
+        # ADR-034: community_momentum is excluded from this formula, not
+        # redistributed into the remaining weights — dropped, not silently
+        # replaced with a different weighting scheme. Weights below therefore
+        # sum to 0.98 of the pre-risk-penalty maximum, not 1.00; this is
+        # intentional and must not be "corrected" by rebalancing without a new
+        # ADR (see docs/DECISIONS.md ADR-034 and 07_DATA_CONTRACTS.md).
         priority_score = (
             dimensions.personal_relevance * 0.25
             + dimensions.urgency * 0.20
@@ -110,7 +121,6 @@ class OpportunityEngine:
             + dimensions.global_importance * 0.10
             + dimensions.opportunity_magnitude * 0.08
             + dimensions.novelty * 0.04
-            + dimensions.community_momentum * 0.02
             + dimensions.connection_strength * 0.01
         ) * (1 - dimensions.risk * 0.20)
         priority_score = max(0.0, min(1.0, priority_score))

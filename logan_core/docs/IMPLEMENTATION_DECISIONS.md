@@ -33,11 +33,19 @@ against other signals within the same window.
 ## 4. Opportunity Engine derives `global_importance`/`urgency` without reading `EvidenceTrust` directly
 
 The spec's Input list for Layer 10 doesn't include `EvidenceTrust` — trust flows in only via
-`ConclusionConfidence.confidence_score`. `global_importance` is `community.momentum_score` and
-`confidence.confidence_score` combined; `urgency` is derived from `CommunitySignal.lifecycle_state` (an
+`ConclusionConfidence.confidence_score`. `urgency` is derived from `CommunitySignal.lifecycle_state` (an
 `"emerging"` event is more urgent than a `"dormant"` one) plus a bump when the event is directly
 actionable. This follows the spec's Input list as written rather than assuming access to a layer that
 isn't listed.
+
+**Amended in V3.1.4 BATCH-1 Stage 2 (ADR-034):** `global_importance` was originally
+`community.momentum_score` and `confidence.confidence_score` combined (50/50). That combination let
+community momentum influence ranking indirectly even after the direct `community_momentum` term was later
+excluded from the `priority_score` formula — a real, live ADR-034 violation found in the V3.1.4 gap
+review. `global_importance` is now `confidence.confidence_score` alone. `community.momentum_score` is
+retained only as `Dimensions.community_momentum`, explicitly excluded from every scoring formula, for
+contextual/presentation use (e.g. a future "trending" badge) — never as a ranking or confidence input,
+directly or indirectly.
 
 ## 5. Retry backoff is structural, not timed
 
