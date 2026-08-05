@@ -443,3 +443,185 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   changes still hot-reload normally). `OpportunityField`/`Vessel`-based screens are unaffected — this
   applies to the new `AtmosphereField` component and whatever supersedes the current screen once Sprint 2+
   wires real data into it.
+
+## ADR-029: `priority_score` deprecated as a public/canonical decision score
+- Date: 2026-08-04
+- Status: Accepted
+- Context: `AttentionRecommendation.priority_score` blended objective and personalized signal into one
+  public number. That invites two failure modes: it reads as ground truth to anyone consuming the API
+  (masking that it's a V1, unvalidated, unweighted-against-outcomes formula), and it duplicates
+  `hit_quality_score` (objective) and `user_value_score` (personalized), which already exist as the
+  system's real decision-making scores.
+- Decision: `priority_score` is deprecated as a public/decision score. `hit_quality_score` and
+  `user_value_score` remain the two decision-making scores and are never collapsed into a single public
+  value. A clearly named, internal-only operational ranking value is permitted for pure operational
+  ordering (e.g. notification queue tie-breaking) — renamed `internal_rank_score` — but it must never be
+  returned via any public API, `DeliveredItem`, or `OpportunityCard`, never used for recommend/suppress
+  gating, and never become Opportunity confidence.
+- Consequences: `docs/specs/Logan_Documentation_v3.1.3/07_DATA_CONTRACTS.md`'s `AttentionRecommendation`
+  and `Dimensions` sections reflect the rename and the internal-only constraint. Per-domain weight
+  research for `hit_quality_score` beyond Stocks remains `RESEARCH REQUIRED` — not invented as part of
+  this decision. See `MACHINE_LEARNING_ARCHITECTURE.md` and `MODEL_CONTRACTS.md`.
+
+## ADR-030: `suggested_next_step` constrained to neutral language; `external_execution_link` disabled for V1
+- Date: 2026-08-04
+- Status: Accepted
+- Context: `DeliveredItem` gained `suggested_next_step` and `external_execution_link` fields in v3.1.2.
+  Left unconstrained, both risk crossing the analysis-vs-advice boundary this project has already twice
+  affirmed as load-bearing ([ADR-002](#adr-002-logan-personalizes-and-contextualizes--it-does-not-give-directive-advice-phase-1),
+  [ADR-010](#adr-010-advice-boundary-reaffirmed-against-vision-language-confidently-decide-what-to-do-next)):
+  a "next step" can read as directive advice, and an execution link can turn analysis into a transaction
+  surface.
+- Decision: `suggested_next_step` is constrained to neutral, non-directive language only — acceptable
+  categories are reviewing evidence, monitoring a condition, comparing scenarios, adding to a watchlist,
+  setting an alert, reviewing exposure, or opening the original source. Directive financial or wagering
+  language (buy, sell, place a bet, increase/reduce a position, act before a move) is prohibited.
+  `external_execution_link` stays reserved, nullable, disabled, and unrendered for V1 — always null this
+  release, no UI surface renders it, no API populates it.
+- Consequences: `07_DATA_CONTRACTS.md`'s `DeliveredItem` section documents both constraints. A dedicated
+  execution-boundary ADR is required before `external_execution_link` may ever be populated — this ADR
+  does not open that door, only documents that it stays closed for V1.
+
+## ADR-031: Machine learning is asynchronous supporting infrastructure, not a new synchronous pipeline layer
+- Date: 2026-08-04
+- Status: Accepted
+- Context: Nothing in the locked architecture defined where ML capability fits. Left undecided, the
+  natural drift is toward an ad hoc "ML layer" that breaks the locked 18-layer count and ownership rules
+  from [ADR-017](#adr-017-new-top-level-logan_core-directory-with-one-folder-per-layer).
+- Decision: Machine learning in Logan is asynchronous supporting infrastructure and typed input to
+  existing layers — not a new synchronous pipeline layer, and it does not change the locked layer count.
+  Every score ML could ever influence is already owned by an existing layer (Evidence Trust, Conclusion
+  Confidence, Opportunity Engine, User Model); those layers gain one more typed, versioned input, they are
+  not replaced or duplicated by a parallel ML layer. Policy remains deterministic and authoritative — no
+  ML logic lives inside Policy & Safety, and a learned score is Policy's input, never its replacement or
+  a means to bypass it. Models cannot authorize trades, wagers, orders, or execution.
+- Consequences: New `logan_core/` folders (`calibration/`, `outcome_verification/`, and eventually
+  `personal_learning/`) may be added under the same one-folder-per-responsibility convention ADR-017
+  already established for `feedback/`/`learning/` — this amends ADR-017's folder list, it does not
+  supersede it or renumber the 18 synchronous layers. See `MACHINE_LEARNING_ARCHITECTURE.md`.
+
+## ADR-032: Source-reliability calibration is the approved first ML capability; no trained model implemented this release
+- Date: 2026-08-04
+- Status: Accepted
+- Context: Multiple ML use cases were discussed (source-reliability calibration, confidence calibration,
+  personalized ranking, notification-selection ML, outcome prediction, population-level learning). Without
+  an explicit scope decision, any of these could be silently implied as already underway.
+- Decision: Source-reliability calibration is the approved first future ML capability. No trained model
+  is implemented as part of this task — this release only reserves the contract surface for it.
+  Personalized ranking, notification-selection ML, outcome prediction, and population-level learning
+  remain explicitly deferred, not started.
+- Consequences: `EvidenceTrust.source_reliability_model_version` and
+  `ConclusionConfidence.confidence_model_version` are reserved fields, default `"deterministic-baseline"`,
+  unpopulated by any trained model this release (see `07_DATA_CONTRACTS.md`, `MODEL_CONTRACTS.md`). The
+  Calibration/Training Service in `MACHINE_LEARNING_ARCHITECTURE.md` is a reserved, unimplemented folder,
+  not running code.
+
+## ADR-033: Required `user_id` isolation added to `MemoryRecord` ahead of the database decision
+- Date: 2026-08-04
+- Status: Accepted
+- Context: `MemoryRecord` had no `user_id` field, and the reference `MemoryStore` implementation is a
+  single global, unpartitioned store. This blocks both personal learning and any future privacy-safe
+  population-level aggregation, and the retrofit cost only grows as real data accumulates unpartitioned.
+- Decision: `MemoryRecord` gains a required, non-empty, stable `user_id` field this release. This is a
+  schema-shape and privacy decision, independent of the storage-backend decision
+  ([ADR-006](#adr-006-database-and-hosting--open-decision), still open) — it does not require choosing a
+  database or building full multi-tenancy infrastructure. The current single-operator local workflow uses
+  a fixed local identifier for this field rather than an empty or anonymous value.
+- Consequences: `07_DATA_CONTRACTS.md`'s `MemoryRecord` section and `logan_core/contracts/memory.py`
+  reflect the required field. See `ML_PRIVACY_AND_DATA_SEPARATION.md` for the full isolation rationale.
+
+## ADR-034: DECISION-016 clarified — popularity and community momentum can never influence ranking or recommendation direction
+- Date: 2026-08-04
+- Status: Accepted
+- Context: DECISION-016 (in the internal documentation package's own decision log), as literally worded
+  through v3.1.2, locked only a UI-encoding rule — `momentum_score` maps to node edge glow, never
+  brightness, size, or proximity. It said nothing about the Learning System or aggregated trigger/source
+  accuracy. Separately, `21_TRENDING_ENGAGEMENT.md`'s "Trending as Signal Amplifier" mechanism let
+  `momentum_score` multiply `priority_score` by up to 1.30×, a live violation of DECISION-016's own spirit
+  even though not its literal text.
+- Decision: Popularity, engagement, community momentum, and crowd behavior can never affect evidence,
+  confidence, urgency, ranking, relevance, recommendation direction, brightness, size, or proximity, for
+  any individual opportunity, under any mechanism, direct or amplified. The `momentum_score`→
+  `priority_score` amplification mechanism is confirmed non-compliant and is removed — not silently
+  replaced with another scoring influence. Privacy-safe population-level learning about verified accuracy,
+  calibration, and source reliability remains separately permitted (computed from aggregated, anonymized
+  outcomes) because accuracy is a track-record signal about correctness, structurally different from
+  momentum, which is a popularity signal about attention; the two must never share a code path, a
+  registry, or a scoring term.
+- Consequences: `21_TRENDING_ENGAGEMENT.md`'s amplifier section is removed, not replaced.
+  `internal_rank_score`'s formula (per [ADR-029](#adr-029-priority_score-deprecated-as-a-publiccanonical-decision-score))
+  drops its `community_momentum` term entirely rather than redistributing it. See
+  `ML_PRIVACY_AND_DATA_SEPARATION.md`.
+
+## ADR-035: Every future ML-influenced output requires a deterministic fallback, traceability, validation, rollback, and an approval gate
+- Date: 2026-08-04
+- Status: Accepted
+- Context: No model exists yet, which is exactly when a governance standard is cheapest to set — before
+  there's a specific model's constraints to negotiate around. Two real, already-tested mechanisms in
+  `logan_core/` — `PolicyEngine.evaluate()`'s deterministic bot-risk suppression and the Memory Inbox
+  confirm/reject approval pattern ([ADR-019](#adr-019-memory-inbox-confirmation-routes-through-learning-as-a-feedbacksignal))
+  — already demonstrate the required shape.
+- Decision: Every ML-influenced output shipped in Logan must have, from the moment it ships: (1) a
+  working deterministic fallback for when the model is unavailable, low-confidence, out-of-distribution,
+  or rolled back, in place before the learned path ships, not added later; (2) version traceability, via
+  a `*_model_version` field visible in the existing `decision_trace` mechanism; (3) validation against
+  held-out verified outcomes before any promotion to production; (4) rollback to the immediately prior
+  version without a code deploy; (5) a human approval gate — promotion is never automatic.
+- Consequences: Formalized in `MODEL_GOVERNANCE_AND_EVALUATION.md`. `PolicyEngine.evaluate()` and the
+  Memory Inbox pattern are the explicit templates for the fallback and approval-gate requirements,
+  respectively — not hypothetical future work.
+
+## ADR-036: `OutcomeRecord` redesigned — outcomes are not reduced to a win/loss framing
+- Date: 2026-08-04
+- Status: Proposed
+- Context: `OutcomeRecord`'s v3.1.2 shape (`result`/`expected`/`accuracy`/`delay_window`) collapsed every
+  outcome toward a binary-ish win/loss/accuracy framing. That framing has no way to represent a
+  prediction that never became resolvable, was invalidated before resolution, or was verified with low
+  confidence — all real outcomes, not edge cases, and all currently indistinguishable from a plain miss.
+- Decision: `OutcomeRecord` is redesigned as a structured evaluation object (`schema_version "2.0"`) that
+  preserves: evaluation horizon, observed result, resolvability (not a bare win/loss field — includes
+  `unresolved_pending` and both unresolvable states), invalidation status, verification quality, source
+  contribution (per-trigger, not a win/loss tally), claim/prediction type, creation and resolution
+  timestamps, evidence references, and decision trace. The prior `result`/`expected` fields are kept as
+  deprecated pointers to the new fields, not deleted outright.
+- Consequences: Detailed in `OUTCOME_EVALUATION.md` and `07_DATA_CONTRACTS.md`'s `OutcomeRecord` section,
+  which is authoritative and must be read together with the summary table there. `learning_applied` stays
+  `false` this release — `LearningEngine.process_outcome()` is a non-functional stub (see
+  `LEARNING_AND_FEEDBACK_SPECIFICATION.md`); this ADR defines the record shape, not a working learning
+  loop. Final drafted text stands as reviewed in the 2026-08-04/05 session completion report.
+
+## ADR-037: `news` restored as the eighth standalone domain; documentation reconciled to running code and ADR-020
+- Date: 2026-08-04
+- Status: Proposed
+- Context: [ADR-020](#adr-020-news-added-as-a-fifth-domain-receptor) added News as a domain receptor, and
+  the running code's `Domain` literal (`logan_core/contracts/common.py`) already includes `"news"`
+  alongside `stocks`/`sports`/`poly`/`social`/`crypto`. Somewhere in the v3.1.2 documentation pass that
+  added Culture and Personal Finance, prose and tables across the package drifted to describing "7
+  domains" without consistently listing News — a documentation regression against ADR-020, not a code
+  regression.
+- Decision: News is restored in documentation as the eighth standalone domain: stocks, sports, poly,
+  social, crypto, culture, personal_finance, news — matching ADR-020's original decision and the running
+  code. `TRIGGER_REGISTRY_NEWS.md` is referenced in `07_DATA_CONTRACTS.md` but does not yet exist;
+  authoring it (trigger codes, payload schemas, ttl values) is `RESEARCH REQUIRED` and explicitly not
+  done as part of this decision — no trigger codes are invented here.
+- Consequences: "7 domain(s)" counts and enumerations across the v3.1.3 package are corrected to 8 where
+  they list domains. Separately noted, not resolved by this ADR: `culture` and `personal_finance` are
+  documentation-only additions from v3.1.2 and are not present in `logan_core/contracts/common.py`'s
+  `Domain` literal today — a pre-existing docs/code gap this ADR does not close. Final drafted text stands
+  as reviewed in the 2026-08-04/05 session completion report.
+
+## ADR-038: `17_CLAUDE_ENGINEERING_GUIDE.md` is not governing authority
+- Date: 2026-08-04
+- Status: Proposed
+- Context: `docs/specs/Logan_Documentation_v3.1.3/17_CLAUDE_ENGINEERING_GUIDE.md` opens with "This document
+  tells Claude how to think about, work on, and evolve Logan Intelligence. Read it before every session" —
+  language that could be read as a second, competing operating contract alongside this repository's own
+  root `CLAUDE.md`, especially for an AI assistant working across both the repo and the internal
+  documentation package.
+- Decision: `17_CLAUDE_ENGINEERING_GUIDE.md` is product/architecture orientation content, not governing
+  authority. Root `CLAUDE.md`, accepted entries in this ADR log, and explicit owner instructions given in
+  conversation remain the sole authoritative sources for how an AI assistant operates in this repository.
+- Consequences: Where `17_CLAUDE_ENGINEERING_GUIDE.md`'s process guidance conflicts with `CLAUDE.md` or an
+  accepted ADR here, `CLAUDE.md` and this log win. `17_CLAUDE_ENGINEERING_GUIDE.md` is not edited to add a
+  disclaimer as part of this ADR — it stands as internal package content, superseded in authority only,
+  not in substance. Final drafted text stands as reviewed in the 2026-08-04/05 session completion report.
