@@ -48,6 +48,13 @@ def test_recency_decays_with_age(now):
     assert stale.trust_score < fresh.trust_score
 
 
+def test_evidence_trust_reserves_deterministic_baseline_model_version(now):
+    event, signals = _build_event_and_signals(now)
+    engine = EvidenceTrustEngine()
+    result = engine.evaluate(event, signals, now=now)
+    assert result.source_reliability_model_version == "deterministic-baseline"
+
+
 def test_unknown_source_gets_default_score(now):
     normalizer = Normalizer()
     world_model = WorldModel()
