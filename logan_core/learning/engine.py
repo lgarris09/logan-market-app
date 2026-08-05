@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from logan_core.contracts import FeedbackSignal, MemoryRecord, MemoryWrite
+from logan_core.contracts import FeedbackSignal, MemoryRecord, MemoryWrite, OutcomeRecord
 from logan_core.memory import MemoryStore
 
 REVIEW_CONFIDENCE_THRESHOLD = 0.40
@@ -20,7 +20,7 @@ class LearningEngine:
         self.flagged_for_review: list[MemoryWrite] = []
 
     def process_feedback(
-        self, feedback: FeedbackSignal, domain: str, entities: list[str], content: str
+        self, feedback: FeedbackSignal, user_id: str, domain: str, entities: list[str], content: str
     ) -> MemoryWrite:
         now = datetime.now(timezone.utc)
 
@@ -33,6 +33,7 @@ class LearningEngine:
 
         record = MemoryRecord(
             record_id=uuid4(),
+            user_id=user_id,
             record_type=record_type,
             content=content,
             domain=domain,
@@ -58,3 +59,21 @@ class LearningEngine:
 
         self._memory_store.write(record, writer="learning_system")
         return write
+
+    def process_outcome(self, outcome: OutcomeRecord) -> MemoryWrite:
+        """Intentionally unimplemented (ADR-036, LEARNING_AND_FEEDBACK_SPECIFICATION.md).
+
+        The delayed-outcome learning path (UNRESOLVED_QUESTIONS.md #4) has no batch
+        scheduler yet — nothing in this vertical slice calls this method. This stub
+        exists only so the interface shape is typed and reviewable ahead of that work;
+        it deliberately does *not* train a model, update weights, alter scoring, change
+        source trust, fabricate verification, or write a real MemoryWrite. Raising here
+        rather than silently returning a placeholder result is the point: a caller that
+        reaches this before a real scheduler exists should fail loudly, not proceed as
+        if outcome-driven learning were already happening.
+        """
+        raise NotImplementedError(
+            "LearningEngine.process_outcome is a typed interface stub only (ADR-036) — "
+            "no delayed-outcome learning scheduler exists yet. See "
+            "LEARNING_AND_FEEDBACK_SPECIFICATION.md and UNRESOLVED_QUESTIONS.md #4."
+        )

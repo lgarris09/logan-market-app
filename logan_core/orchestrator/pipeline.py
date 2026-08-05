@@ -328,6 +328,7 @@ class Orchestrator:
     def run_feedback_loop(
         self,
         event_id: UUID,
+        user_id: str,
         domain: str,
         entities: list[str],
         interaction_type: str,
@@ -340,19 +341,23 @@ class Orchestrator:
         run_memory_inbox_reject for the explicit ADR-019 confirm/reject path instead.
         """
         feedback = self.deps.feedback_engine.interpret(event_id, interaction_type, duration_ms)
-        write = self.deps.learning_engine.process_feedback(feedback, domain, entities, content)
+        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
         return feedback, write
 
-    def run_memory_inbox_confirm(self, event_id: UUID, domain: str, entities: list[str], content: str):
+    def run_memory_inbox_confirm(
+        self, event_id: UUID, user_id: str, domain: str, entities: list[str], content: str
+    ):
         """Memory Inbox 'confirm' — routes through Learning as a maximum-confidence
         FeedbackSignal rather than writing to Memory directly (ADR-019).
         """
         feedback = self.deps.feedback_engine.confirm_memory_inbox(event_id)
-        write = self.deps.learning_engine.process_feedback(feedback, domain, entities, content)
+        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
         return feedback, write
 
-    def run_memory_inbox_reject(self, event_id: UUID, domain: str, entities: list[str], content: str):
+    def run_memory_inbox_reject(
+        self, event_id: UUID, user_id: str, domain: str, entities: list[str], content: str
+    ):
         """Memory Inbox 'reject' — see run_memory_inbox_confirm (ADR-019)."""
         feedback = self.deps.feedback_engine.reject_memory_inbox(event_id)
-        write = self.deps.learning_engine.process_feedback(feedback, domain, entities, content)
+        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
         return feedback, write

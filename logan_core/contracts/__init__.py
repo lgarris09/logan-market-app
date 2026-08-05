@@ -6,10 +6,15 @@ from .common import (
     Delta,
     Reference,
     Domain,
+    LOCAL_FOUNDER_USER_ID,
+    EvaluationHorizon,
+    VerificationQuality,
+    Resolvability,
+    InvalidationStatus,
 )
 from .signals import RawSignal, NormalizedSignal
 from .world_model import EnrichedEvent
-from .trust import EvidenceTrust
+from .trust import EvidenceTrust, SourceObservation
 from .community import CommunitySignal
 from .memory import MemoryRecord
 from .user_model import UserModel, Interest, Holding, Expertise, DomainPref
@@ -40,10 +45,16 @@ __all__ = [
     "Delta",
     "Reference",
     "Domain",
+    "LOCAL_FOUNDER_USER_ID",
+    "EvaluationHorizon",
+    "VerificationQuality",
+    "Resolvability",
+    "InvalidationStatus",
     "RawSignal",
     "NormalizedSignal",
     "EnrichedEvent",
     "EvidenceTrust",
+    "SourceObservation",
     "CommunitySignal",
     "MemoryRecord",
     "UserModel",

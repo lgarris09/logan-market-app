@@ -18,8 +18,16 @@ class FeedbackEngine:
 
         if interaction_type == "dismiss":
             inferred_intent, intent_confidence = "dismissing", 0.80
-        elif interaction_type in ("save", "share"):
+        elif interaction_type in ("save", "share", "watch"):
+            # "watch" (add to watchlist) is an explicit, sustained-interest action,
+            # same confidence tier as save/share — not an ML-derived signal, just the
+            # same deterministic mapping every other explicit action already gets.
             inferred_intent, intent_confidence = "interested", 0.85
+        elif interaction_type == "remind":
+            # "remind" signals interest deferred to a later time, not immediate action —
+            # still explicit and high-confidence, but distinct enough from save/share
+            # that it doesn't share their exact tier.
+            inferred_intent, intent_confidence = "interested", 0.75
         elif interaction_type == "click":
             inferred_intent, intent_confidence = "curious", 0.55
         elif interaction_type == "view":
