@@ -42,9 +42,7 @@ export default function AskScreen() {
       setAnswer(data.answer);
       setMessage("");
     } catch (error) {
-      setAnswer(
-        error instanceof Error ? error.message : "Unable to reach Logan."
-      );
+      setAnswer(error instanceof Error ? error.message : "Unable to reach Logan.");
     } finally {
       setLoading(false);
     }

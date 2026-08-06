@@ -18,7 +18,16 @@ export type CloudSpec = {
 // the same spot -- softened only by a mask blur, never emitting light of
 // its own. Slow, near-imperceptible drift comes from one shared clock, not
 // a dedicated animation per cloud.
-export function AtmosphereCloud({ cx, cy, r, colors, positions, driftPhase, driftFreq, time }: CloudSpec & { time: SharedValue<number> }) {
+export function AtmosphereCloud({
+  cx,
+  cy,
+  r,
+  colors,
+  positions,
+  driftPhase,
+  driftFreq,
+  time,
+}: CloudSpec & { time: SharedValue<number> }) {
   const transform = useDerivedValue(() => {
     const dx = Math.sin(time.value * driftFreq + driftPhase) * (r * 0.1);
     const dy = Math.cos(time.value * driftFreq * 0.8 + driftPhase) * (r * 0.14);

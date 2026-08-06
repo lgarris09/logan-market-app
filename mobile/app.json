@@ -19,10 +19,7 @@
         "backgroundColor": "#090B10"
       }
     },
-    "plugins": [
-      "expo-router",
-      "expo-font"
-    ],
+    "plugins": ["expo-router", "expo-font"],
     "extra": {
       "router": {},
       "eas": {

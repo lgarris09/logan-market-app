@@ -20,7 +20,9 @@ type Disclosure = 0 | 1 | 2;
 // connected to the newly focused vessel visibly echoes a moment later.
 export function AttentionField({ items }: { items: FeedItem[] }) {
   const [width, setWidth] = useState(0);
-  const [focusedId, setFocusedId] = useState<string | null>(() => defaultFocus(items)?.event_id ?? null);
+  const [focusedId, setFocusedId] = useState<string | null>(
+    () => defaultFocus(items)?.event_id ?? null
+  );
   const [disclosure, setDisclosure] = useState<Disclosure>(0);
 
   useEffect(() => {

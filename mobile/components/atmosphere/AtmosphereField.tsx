@@ -1,7 +1,22 @@
 import { useEffect, useMemo } from "react";
 import { StyleSheet, useWindowDimensions } from "react-native";
-import { Canvas, Circle, Fill, FractalNoise, Group, RadialGradient, Rect, vec } from "@shopify/react-native-skia";
-import { useDerivedValue, useSharedValue, withRepeat, withTiming, Easing } from "react-native-reanimated";
+import {
+  Canvas,
+  Circle,
+  Fill,
+  FractalNoise,
+  Group,
+  RadialGradient,
+  Rect,
+  vec,
+} from "@shopify/react-native-skia";
+import {
+  useDerivedValue,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  Easing,
+} from "react-native-reanimated";
 
 import { AtmosphereCloud, CloudSpec } from "./AtmosphereCloud";
 import { Particle } from "./Particle";
@@ -19,11 +34,22 @@ export function AtmosphereField() {
   const time = useSharedValue(0);
 
   useEffect(() => {
-    time.value = withRepeat(withTiming(100000, { duration: 100000000, easing: Easing.linear }), -1, false);
+    time.value = withRepeat(
+      withTiming(100000, { duration: 100000000, easing: Easing.linear }),
+      -1,
+      false
+    );
   }, [time]);
 
   const clouds = useMemo<CloudSpec[]>(() => {
-    const entries: { key: keyof typeof ATMOSPHERE_PALETTE; x: number; y: number; r: number; phase: number; freq: number }[] = [
+    const entries: {
+      key: keyof typeof ATMOSPHERE_PALETTE;
+      x: number;
+      y: number;
+      r: number;
+      phase: number;
+      freq: number;
+    }[] = [
       { key: "TSLA", x: 0.22, y: 0.22, r: 44, phase: 0.3, freq: 0.09 },
       { key: "FED", x: 0.76, y: 0.16, r: 38, phase: 1.4, freq: 0.07 },
       { key: "BTC", x: 0.18, y: 0.56, r: 40, phase: 2.6, freq: 0.11 },
@@ -59,14 +85,20 @@ export function AtmosphereField() {
     }));
   }, [width, height]);
 
-  const hazeTransformA = useDerivedValue(() => [
-    { translateX: Math.sin(time.value * 0.025) * 18 },
-    { translateY: Math.cos(time.value * 0.02) * 12 },
-  ], [time]);
-  const hazeTransformB = useDerivedValue(() => [
-    { translateX: Math.sin(time.value * 0.018 + 2) * -20 },
-    { translateY: Math.cos(time.value * 0.022 + 2) * 14 },
-  ], [time]);
+  const hazeTransformA = useDerivedValue(
+    () => [
+      { translateX: Math.sin(time.value * 0.025) * 18 },
+      { translateY: Math.cos(time.value * 0.02) * 12 },
+    ],
+    [time]
+  );
+  const hazeTransformB = useDerivedValue(
+    () => [
+      { translateX: Math.sin(time.value * 0.018 + 2) * -20 },
+      { translateY: Math.cos(time.value * 0.022 + 2) * 14 },
+    ],
+    [time]
+  );
 
   const hazeR = Math.max(width, height) * 0.55;
 

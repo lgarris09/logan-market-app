@@ -18,10 +18,19 @@ export function PressableScale({
   const scale = useRef(new Animated.Value(1)).current;
 
   const pressIn = () => {
-    Animated.timing(scale, { toValue: scaleTo, duration: motion.fast, useNativeDriver: true }).start();
+    Animated.timing(scale, {
+      toValue: scaleTo,
+      duration: motion.fast,
+      useNativeDriver: true,
+    }).start();
   };
   const pressOut = () => {
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 120 }).start();
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 5,
+      tension: 120,
+    }).start();
   };
 
   return (

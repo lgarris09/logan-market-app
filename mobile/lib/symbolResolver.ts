@@ -63,7 +63,9 @@ function hashString(value: string): number {
 }
 
 function colorFor(entityId: string): string {
-  return ENTITY_COLORS[entityId] ?? FALLBACK_PALETTE[hashString(entityId) % FALLBACK_PALETTE.length];
+  return (
+    ENTITY_COLORS[entityId] ?? FALLBACK_PALETTE[hashString(entityId) % FALLBACK_PALETTE.length]
+  );
 }
 
 function initialsFor(displayName: string): string {

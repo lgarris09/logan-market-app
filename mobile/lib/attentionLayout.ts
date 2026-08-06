@@ -53,7 +53,11 @@ export function defaultFocus(items: FeedItem[]): FeedItem | null {
 }
 
 /** The next (or previous) item to bring into focus, wrapping around the ranked order. */
-export function shiftFocus(items: FeedItem[], currentId: string, direction: 1 | -1): FeedItem | null {
+export function shiftFocus(
+  items: FeedItem[],
+  currentId: string,
+  direction: 1 | -1
+): FeedItem | null {
   const ranked = rankedByPriority(items);
   if (ranked.length === 0) return null;
   const idx = ranked.findIndex((i) => i.event_id === currentId);

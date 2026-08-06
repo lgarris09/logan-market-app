@@ -69,9 +69,25 @@ export function OpportunityNode({
 
     const loopY = Animated.loop(
       Animated.sequence([
-        Animated.timing(driftY, { toValue: 1, duration: base, delay, easing: ease, useNativeDriver: true }),
-        Animated.timing(driftY, { toValue: -1, duration: base * 2, easing: ease, useNativeDriver: true }),
-        Animated.timing(driftY, { toValue: 0, duration: base, easing: ease, useNativeDriver: true }),
+        Animated.timing(driftY, {
+          toValue: 1,
+          duration: base,
+          delay,
+          easing: ease,
+          useNativeDriver: true,
+        }),
+        Animated.timing(driftY, {
+          toValue: -1,
+          duration: base * 2,
+          easing: ease,
+          useNativeDriver: true,
+        }),
+        Animated.timing(driftY, {
+          toValue: 0,
+          duration: base,
+          easing: ease,
+          useNativeDriver: true,
+        }),
       ])
     );
     const loopX = Animated.loop(
@@ -83,8 +99,18 @@ export function OpportunityNode({
           easing: ease,
           useNativeDriver: true,
         }),
-        Animated.timing(driftX, { toValue: -1, duration: base * 2.6, easing: ease, useNativeDriver: true }),
-        Animated.timing(driftX, { toValue: 0, duration: base * 1.3, easing: ease, useNativeDriver: true }),
+        Animated.timing(driftX, {
+          toValue: -1,
+          duration: base * 2.6,
+          easing: ease,
+          useNativeDriver: true,
+        }),
+        Animated.timing(driftX, {
+          toValue: 0,
+          duration: base * 1.3,
+          easing: ease,
+          useNativeDriver: true,
+        }),
       ])
     );
     loopY.start();
@@ -133,7 +159,10 @@ export function OpportunityNode({
         >
           <EntitySymbol symbol={symbol} size={NODE_SIZE - 16} />
         </Animated.View>
-        <Text style={[styles.label, emphasis === "focused" && styles.labelFocused]} numberOfLines={1}>
+        <Text
+          style={[styles.label, emphasis === "focused" && styles.labelFocused]}
+          numberOfLines={1}
+        >
           {item.display_name.toUpperCase()}
         </Text>
         <Text style={[styles.status, { color: symbol.color }]} numberOfLines={1}>

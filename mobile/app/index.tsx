@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
@@ -73,7 +81,12 @@ export default function AttentionFieldScreen() {
 
       {feed && feed.items.length > 0 && <AttentionField items={feed.items} />}
 
-      <Modal visible={menuOpen} animationType="fade" transparent onRequestClose={() => setMenuOpen(false)}>
+      <Modal
+        visible={menuOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setMenuOpen(false)}
+      >
         <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
           <View style={styles.menuCard}>
             <Text style={styles.menuTitle}>Preserved screens</Text>
@@ -128,7 +141,13 @@ const styles = StyleSheet.create({
     padding: 22,
     paddingBottom: 40,
   },
-  menuTitle: { color: theme.textSecondary, fontSize: 11, fontWeight: "800", letterSpacing: 1, marginBottom: 14 },
+  menuTitle: {
+    color: theme.textSecondary,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginBottom: 14,
+  },
   menuItem: {
     flexDirection: "row",
     justifyContent: "space-between",

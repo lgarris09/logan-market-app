@@ -15,7 +15,9 @@ export function LoganOpportunityCard({ item }: { item: DeliveredItem }) {
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.surface}>{surfaceLabels[item.surface] ?? item.surface.toUpperCase()}</Text>
+        <Text style={styles.surface}>
+          {surfaceLabels[item.surface] ?? item.surface.toUpperCase()}
+        </Text>
         <Text style={styles.confidence}>
           {item.confidence_label} · {Math.round(item.confidence_score * 100)}%
         </Text>

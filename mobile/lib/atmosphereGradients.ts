@@ -17,8 +17,13 @@ const RING_STOPS: [number, number][] = [
   [100, 0],
 ];
 
-export function ringGradient(baseRgb: string, highlightRgb: string): { colors: string[]; positions: number[] } {
-  const colors = RING_STOPS.map(([pos, alpha], i) => `rgba(${i <= 2 ? highlightRgb : baseRgb},${alpha})`);
+export function ringGradient(
+  baseRgb: string,
+  highlightRgb: string
+): { colors: string[]; positions: number[] } {
+  const colors = RING_STOPS.map(
+    ([pos, alpha], i) => `rgba(${i <= 2 ? highlightRgb : baseRgb},${alpha})`
+  );
   const positions = RING_STOPS.map(([pos]) => pos / 100);
   return { colors, positions };
 }

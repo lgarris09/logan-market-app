@@ -34,7 +34,7 @@ export default function DemoScreen() {
       <Text style={styles.kicker}>LOGAN INTELLIGENCE SYSTEM</Text>
       <Text style={styles.title}>Pipeline demo</Text>
       <Text style={styles.subtitle}>
-        Runs the "Tesla announces a major AI chip partnership" scenario through the full
+        Runs the &ldquo;Tesla announces a major AI chip partnership&rdquo; scenario through the full
         18-layer logan_core pipeline on simulated data, live against the backend.
       </Text>
 
@@ -65,7 +65,8 @@ export default function DemoScreen() {
           <View style={styles.detailsCard}>
             <Text style={styles.detailsLabel}>CONCLUSION CONFIDENCE</Text>
             <Text style={styles.detailsText}>
-              {result.confidence.classification} · {Math.round(result.confidence.confidence_score * 100)}%
+              {result.confidence.classification} ·{" "}
+              {Math.round(result.confidence.confidence_score * 100)}%
             </Text>
             {result.confidence.limiting_factors.map((factor) => (
               <Text key={factor} style={styles.detailsSubtext}>
@@ -100,7 +101,13 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 18, paddingTop: 18, paddingBottom: 42 },
   kicker: { color: theme.accent, fontSize: 10, fontWeight: "900", letterSpacing: 1.4 },
   title: { color: theme.text, fontSize: 26, fontWeight: "900", marginTop: 8 },
-  subtitle: { color: theme.textSecondary, fontSize: 14, lineHeight: 20, marginTop: 10, marginBottom: 20 },
+  subtitle: {
+    color: theme.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 10,
+    marginBottom: 20,
+  },
   button: {
     backgroundColor: theme.accent,
     borderRadius: 16,

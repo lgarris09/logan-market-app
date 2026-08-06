@@ -103,9 +103,11 @@ export function OpportunityField({
   useEffect(() => {
     Animated.stagger(
       70,
-      entrance.slice(0, items.length).map((value) =>
-        Animated.spring(value, { toValue: 1, useNativeDriver: true, friction: 7, tension: 40 })
-      )
+      entrance
+        .slice(0, items.length)
+        .map((value) =>
+          Animated.spring(value, { toValue: 1, useNativeDriver: true, friction: 7, tension: 40 })
+        )
     ).start();
     // Only replay the entrance animation when the item set actually changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps

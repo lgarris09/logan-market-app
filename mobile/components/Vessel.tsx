@@ -66,8 +66,19 @@ export function Vessel({
     const ease = Easing.inOut(Easing.sin);
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(drift, { toValue: 1, duration: base, delay, easing: ease, useNativeDriver: true }),
-        Animated.timing(drift, { toValue: -1, duration: base * 2, easing: ease, useNativeDriver: true }),
+        Animated.timing(drift, {
+          toValue: 1,
+          duration: base,
+          delay,
+          easing: ease,
+          useNativeDriver: true,
+        }),
+        Animated.timing(drift, {
+          toValue: -1,
+          duration: base * 2,
+          easing: ease,
+          useNativeDriver: true,
+        }),
         Animated.timing(drift, { toValue: 0, duration: base, easing: ease, useNativeDriver: true }),
       ])
     );
@@ -83,8 +94,19 @@ export function Vessel({
     const ease = Easing.inOut(Easing.sin);
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(breath, { toValue: 1, duration: base, delay, easing: ease, useNativeDriver: true }),
-        Animated.timing(breath, { toValue: 0, duration: base, easing: ease, useNativeDriver: true }),
+        Animated.timing(breath, {
+          toValue: 1,
+          duration: base,
+          delay,
+          easing: ease,
+          useNativeDriver: true,
+        }),
+        Animated.timing(breath, {
+          toValue: 0,
+          duration: base,
+          easing: ease,
+          useNativeDriver: true,
+        }),
       ])
     );
     loop.start();
@@ -99,7 +121,13 @@ export function Vessel({
     const ease = Easing.inOut(Easing.sin);
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: base, delay, easing: ease, useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: base,
+          delay,
+          easing: ease,
+          useNativeDriver: true,
+        }),
         Animated.timing(pulse, { toValue: 0, duration: base, easing: ease, useNativeDriver: true }),
       ])
     );
@@ -117,7 +145,11 @@ export function Vessel({
   }, [disclosure, disclosureAnim]);
 
   useEffect(() => {
-    Animated.timing(focusAnim, { toValue: isFocused ? 1 : 0, duration: 420, useNativeDriver: true }).start();
+    Animated.timing(focusAnim, {
+      toValue: isFocused ? 1 : 0,
+      duration: 420,
+      useNativeDriver: true,
+    }).start();
   }, [isFocused, focusAnim]);
 
   const dormantSize = layout.size;
@@ -158,11 +190,20 @@ export function Vessel({
   const coreOpacityBase = 0.36;
   const coreOpacity = breath.interpolate({
     inputRange: [0, 1],
-    outputRange: [coreOpacityBase * (1 - instability * 0.45), coreOpacityBase * (1 + instability * 0.45)],
+    outputRange: [
+      coreOpacityBase * (1 - instability * 0.45),
+      coreOpacityBase * (1 + instability * 0.45),
+    ],
   });
-  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1 + 0.05 + prominence * 0.14] });
+  const pulseScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1 + 0.05 + prominence * 0.14],
+  });
   const focusScale = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] });
-  const entranceScale = entrance.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.3, 1.12, 1] });
+  const entranceScale = entrance.interpolate({
+    inputRange: [0, 0.6, 1],
+    outputRange: [0.3, 1.12, 1],
+  });
 
   // A disturbance arriving from a connected vessel: a ring expands outward
   // from the core and fades, distinct from (not summed with) this vessel's
@@ -210,7 +251,13 @@ export function Vessel({
         <View
           style={[
             styles.glowRing,
-            { width: mid, height: mid, borderRadius: mid / 2, backgroundColor: symbol.color, opacity: 0.5 },
+            {
+              width: mid,
+              height: mid,
+              borderRadius: mid / 2,
+              backgroundColor: symbol.color,
+              opacity: 0.5,
+            },
           ]}
         />
         <Animated.View
@@ -255,7 +302,10 @@ export function Vessel({
               style={StyleSheet.absoluteFill}
             />
             <View style={styles.content}>
-              <Animated.Text style={[styles.headline, { opacity: headlineOpacity }]} numberOfLines={3}>
+              <Animated.Text
+                style={[styles.headline, { opacity: headlineOpacity }]}
+                numberOfLines={3}
+              >
                 {item.delivered_item.headline}
               </Animated.Text>
 
@@ -310,6 +360,11 @@ const styles = StyleSheet.create({
   supporting: { color: theme.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 12 },
   footerRow: { flexDirection: "row", alignItems: "center", marginTop: 16 },
   confidenceDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
-  confidenceText: { color: theme.textSecondary, fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
+  confidenceText: {
+    color: theme.textSecondary,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+  },
   disclaimerText: { color: theme.muted, fontSize: 10, lineHeight: 15, marginTop: 10 },
 });

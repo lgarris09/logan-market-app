@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
@@ -124,9 +118,20 @@ export default function MemoryInboxScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.background },
   content: { padding: 18, paddingBottom: 40 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.background },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.background,
+  },
   title: { color: theme.text, fontSize: 30, fontWeight: "900" },
-  subtitle: { color: theme.textSecondary, fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 24 },
+  subtitle: {
+    color: theme.textSecondary,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 10,
+    marginBottom: 24,
+  },
   empty: {
     backgroundColor: theme.surface,
     borderColor: theme.border,
@@ -148,7 +153,13 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   branch: { color: theme.accent, fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
-  contentText: { color: theme.text, fontSize: 17, lineHeight: 24, fontWeight: "700", marginTop: 10 },
+  contentText: {
+    color: theme.text,
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: "700",
+    marginTop: 10,
+  },
   meta: { color: theme.textSecondary, fontSize: 12, marginTop: 10 },
   actions: { flexDirection: "row", gap: 10, marginTop: 16 },
   reject: {
