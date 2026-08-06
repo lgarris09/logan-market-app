@@ -3,7 +3,12 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from logan_core.contracts import ConclusionConfidence, PolicyResult, PrioritizedItem, ReasoningResult
+from logan_core.contracts import (
+    ConclusionConfidence,
+    PolicyResult,
+    PrioritizedItem,
+    ReasoningResult,
+)
 from logan_core.presentation import PresentationEngine
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
@@ -23,7 +28,12 @@ def _reasoning(event_id):
 
 
 def _confidence(event_id, score=0.8):
-    return ConclusionConfidence(event_id=event_id, confidence_score=score, classification="inference", evaluated_at=NOW)
+    return ConclusionConfidence(
+        event_id=event_id,
+        confidence_score=score,
+        classification="inference",
+        evaluated_at=NOW,
+    )
 
 
 def _policy_result(event_id):
@@ -51,14 +61,18 @@ def _prioritized(event_id, visibility="primary", interruption="digest"):
 def test_alert_interruption_produces_alert_surface():
     event_id = uuid4()
     item = _prioritized(event_id, interruption="alert")
-    delivered = PresentationEngine().deliver(item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id))
+    delivered = PresentationEngine().deliver(
+        item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id)
+    )
     assert delivered.surface == "alert"
 
 
 def test_primary_visibility_with_no_interruption_produces_wheel_surface():
     event_id = uuid4()
     item = _prioritized(event_id, visibility="primary", interruption="none")
-    delivered = PresentationEngine().deliver(item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id))
+    delivered = PresentationEngine().deliver(
+        item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id)
+    )
     assert delivered.surface == "wheel"
 
 
@@ -66,22 +80,30 @@ def test_disclaimers_carried_verbatim_from_policy_result():
     event_id = uuid4()
     item = _prioritized(event_id)
     policy_result = _policy_result(event_id)
-    delivered = PresentationEngine().deliver(item, _reasoning(event_id), _confidence(event_id), policy_result)
+    delivered = PresentationEngine().deliver(
+        item, _reasoning(event_id), _confidence(event_id), policy_result
+    )
     assert delivered.required_disclaimers == policy_result.required_disclaimers
 
 
 def test_headline_truncated_to_120_chars():
     event_id = uuid4()
     long_significance = "X" * 300
-    reasoning = _reasoning(event_id).model_copy(update={"significance": long_significance})
+    reasoning = _reasoning(event_id).model_copy(
+        update={"significance": long_significance}
+    )
     item = _prioritized(event_id)
-    delivered = PresentationEngine().deliver(item, reasoning, _confidence(event_id), _policy_result(event_id))
+    delivered = PresentationEngine().deliver(
+        item, reasoning, _confidence(event_id), _policy_result(event_id)
+    )
     assert len(delivered.headline) <= 120
 
 
 def test_decision_trace_populated():
     event_id = uuid4()
     item = _prioritized(event_id)
-    delivered = PresentationEngine().deliver(item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id))
+    delivered = PresentationEngine().deliver(
+        item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id)
+    )
     assert len(delivered.decision_trace) == 1
     assert "surface=" in delivered.decision_trace[0].rule

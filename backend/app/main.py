@@ -7,9 +7,14 @@ from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import DemoFeedResponse, run_demo_feed
 from .memory_engine import MemoryEngine
-from .memory_models import CategoryContext, MemoryConfirm, MemoryCreate, MemoryDecision, MemoryRecord
+from .memory_models import (
+    CategoryContext,
+    MemoryConfirm,
+    MemoryCreate,
+    MemoryDecision,
+    MemoryRecord,
+)
 from .models import AskRequest, AskResponse, BriefingResponse, Opportunity
-
 
 app = FastAPI(
     title="Logan Intelligence API",
@@ -25,7 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-memory_engine = MemoryEngine(Path(__file__).resolve().parent.parent / "data" / "logan_memory.db")
+memory_engine = MemoryEngine(
+    Path(__file__).resolve().parent.parent / "data" / "logan_memory.db"
+)
 
 
 @app.get("/health")

@@ -23,7 +23,10 @@ class CommunityIntelligenceEngine:
     """
 
     def measure(
-        self, event: EnrichedEvent, samples: list[EngagementSample], now: datetime | None = None
+        self,
+        event: EnrichedEvent,
+        samples: list[EngagementSample],
+        now: datetime | None = None,
     ) -> CommunitySignal:
         now = now or datetime.now(timezone.utc)
         if not samples:
@@ -55,8 +58,12 @@ class CommunityIntelligenceEngine:
         questions = sum(s.questions for s in ordered)
 
         first, last = ordered[0], ordered[-1]
-        hours_elapsed = max((last.observed_at - first.observed_at).total_seconds() / 3600.0, 0.25)
-        engagement_velocity = (last.volume_at_point - first.volume_at_point) / hours_elapsed
+        hours_elapsed = max(
+            (last.observed_at - first.observed_at).total_seconds() / 3600.0, 0.25
+        )
+        engagement_velocity = (
+            last.volume_at_point - first.volume_at_point
+        ) / hours_elapsed
 
         if engagement_velocity > 5:
             lifecycle_state = "emerging"

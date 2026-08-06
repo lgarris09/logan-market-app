@@ -35,7 +35,9 @@ ENTITY_REGISTRY: dict[str, CanonicalEntity] = {
 }
 
 
-def resolve(entity_id: str, fallback_display_name: str, fallback_domain: str) -> CanonicalEntity:
+def resolve(
+    entity_id: str, fallback_display_name: str, fallback_domain: str
+) -> CanonicalEntity:
     """Looks up the canonical entity, falling back to whatever logan_core already
     knows (its own entity display name / domain) for anything not yet registered --
     the frontend never needs a code change when a new entity appears; worst case it

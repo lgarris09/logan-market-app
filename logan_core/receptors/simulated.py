@@ -13,7 +13,9 @@ class SimulatedReceptor:
     def __init__(self, domain: Domain) -> None:
         self.domain = domain
 
-    def emit(self, source_id: str, source_name: str, raw_value: dict, captured_at: datetime) -> RawSignal:
+    def emit(
+        self, source_id: str, source_name: str, raw_value: dict, captured_at: datetime
+    ) -> RawSignal:
         return RawSignal(
             domain=self.domain,
             source_id=source_id,

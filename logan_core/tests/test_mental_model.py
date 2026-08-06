@@ -31,16 +31,26 @@ def test_new_hypothesis_created_for_new_key():
 
 def test_confirms_strengthens_existing_hypothesis():
     engine = MentalModelEngine()
-    engine.process(_reasoning(significance="Tesla: earnings signal", stance="new"), domain="stocks")
-    _, second = engine.process(_reasoning(significance="Tesla: earnings signal", stance="confirms"), domain="stocks")
+    engine.process(
+        _reasoning(significance="Tesla: earnings signal", stance="new"), domain="stocks"
+    )
+    _, second = engine.process(
+        _reasoning(significance="Tesla: earnings signal", stance="confirms"),
+        domain="stocks",
+    )
     assert second.trend == "strengthening"
     assert len(second.decision_trace) == 2
 
 
 def test_contradicts_weakens_existing_hypothesis():
     engine = MentalModelEngine()
-    engine.process(_reasoning(significance="Tesla: earnings signal", stance="new"), domain="stocks")
-    _, second = engine.process(_reasoning(significance="Tesla: earnings signal", stance="contradicts"), domain="stocks")
+    engine.process(
+        _reasoning(significance="Tesla: earnings signal", stance="new"), domain="stocks"
+    )
+    _, second = engine.process(
+        _reasoning(significance="Tesla: earnings signal", stance="contradicts"),
+        domain="stocks",
+    )
     assert second.trend == "weakening"
 
 
@@ -53,6 +63,10 @@ def test_reasoning_result_passes_through_unchanged():
 
 def test_different_domains_do_not_share_hypotheses():
     engine = MentalModelEngine()
-    _, stocks_model = engine.process(_reasoning(significance="AI: rally", stance="new"), domain="stocks")
-    _, social_model = engine.process(_reasoning(significance="AI: rally", stance="new"), domain="social")
+    _, stocks_model = engine.process(
+        _reasoning(significance="AI: rally", stance="new"), domain="stocks"
+    )
+    _, social_model = engine.process(
+        _reasoning(significance="AI: rally", stance="new"), domain="social"
+    )
     assert stocks_model.model_id != social_model.model_id

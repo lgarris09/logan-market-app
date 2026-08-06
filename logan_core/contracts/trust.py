@@ -4,7 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from .common import EvaluationHorizon, InvalidationStatus, Resolvability, VerificationQuality
+from .common import (
+    EvaluationHorizon,
+    InvalidationStatus,
+    Resolvability,
+    VerificationQuality,
+)
 
 
 class EvidenceTrust(BaseModel):
@@ -58,7 +63,11 @@ class SourceObservation(BaseModel):
     @model_validator(mode="after")
     def _observed_result_matches_resolvability(self):
         if self.resolvability == "resolved" and self.observed_result is None:
-            raise ValueError("observed_result must be populated when resolvability is 'resolved'")
+            raise ValueError(
+                "observed_result must be populated when resolvability is 'resolved'"
+            )
         if self.resolvability != "resolved" and self.observed_result is not None:
-            raise ValueError("observed_result must be null unless resolvability is 'resolved' (no fabricated outcomes)")
+            raise ValueError(
+                "observed_result must be null unless resolvability is 'resolved' (no fabricated outcomes)"
+            )
         return self

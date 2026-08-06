@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from uuid import UUID
 
 from logan_core.contracts import (
     AttentionRecommendation,
@@ -50,7 +49,10 @@ class PrioritizationEngine:
         state = self._state_for(user_id, now)
         event_id = policy_result.event_id
 
-        cooldown = next((c for c in state.cooldowns if c.event_id == event_id and c.until > now), None)
+        cooldown = next(
+            (c for c in state.cooldowns if c.event_id == event_id and c.until > now),
+            None,
+        )
         in_cooldown = cooldown is not None and not changed_since_view
 
         # A fatigue record whose window started more than FATIGUE_WINDOW ago has
@@ -58,7 +60,9 @@ class PrioritizationEngine:
         # previously FATIGUE_WINDOW was declared but never read, so fatigue only
         # ever grew and never expired).
         fatigue = next((f for f in state.fatigue if f.domain == domain), None)
-        fatigue_active = fatigue is not None and (now - fatigue.window) <= FATIGUE_WINDOW
+        fatigue_active = (
+            fatigue is not None and (now - fatigue.window) <= FATIGUE_WINDOW
+        )
         domain_fatigued = fatigue_active and fatigue.count >= FATIGUE_LIMIT
 
         visibility: Literal["primary", "feed", "background", "hidden"]
@@ -72,10 +76,16 @@ class PrioritizationEngine:
             interruption = "none"
         elif recommendation.internal_rank_score >= 0.6:
             visibility = "primary"
-            interruption = "alert" if policy_result.communication_mode == "alert" else "digest"
+            interruption = (
+                "alert" if policy_result.communication_mode == "alert" else "digest"
+            )
         elif recommendation.internal_rank_score >= 0.35:
             visibility = "feed"
-            interruption = "digest" if policy_result.communication_mode != "informational" else "none"
+            interruption = (
+                "digest"
+                if policy_result.communication_mode != "informational"
+                else "none"
+            )
         else:
             visibility = "background"
             interruption = "none"
@@ -83,10 +93,17 @@ class PrioritizationEngine:
         if visibility in ("primary", "feed"):
             state.surfaced.append(SurfaceRecord(event_id=event_id, surfaced_at=now))
             state.cooldowns = [c for c in state.cooldowns if c.event_id != event_id]
-            state.cooldowns.append(CooldownRecord(event_id=event_id, until=now + COOLDOWN_WINDOW))
+            state.cooldowns.append(
+                CooldownRecord(event_id=event_id, until=now + COOLDOWN_WINDOW)
+            )
 
-            existing_fatigue = next((f for f in state.fatigue if f.domain == domain), None)
-            existing_active = existing_fatigue is not None and (now - existing_fatigue.window) <= FATIGUE_WINDOW
+            existing_fatigue = next(
+                (f for f in state.fatigue if f.domain == domain), None
+            )
+            existing_active = (
+                existing_fatigue is not None
+                and (now - existing_fatigue.window) <= FATIGUE_WINDOW
+            )
             if not existing_active:
                 # No record yet, or the previous window fully expired -- start a
                 # fresh window rather than incrementing a stale count.
@@ -96,9 +113,13 @@ class PrioritizationEngine:
                 # Window start stays fixed (not slid forward) until it expires --
                 # a fixed 24h counting window, not a rolling average.
                 state.fatigue = [
-                    f
-                    if f.domain != domain
-                    else FatigueRecord(domain=domain, count=f.count + 1, window=f.window)
+                    (
+                        f
+                        if f.domain != domain
+                        else FatigueRecord(
+                            domain=domain, count=f.count + 1, window=f.window
+                        )
+                    )
                     for f in state.fatigue
                 ]
 

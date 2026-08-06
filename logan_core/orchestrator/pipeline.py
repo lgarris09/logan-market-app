@@ -5,7 +5,10 @@ from typing import Callable, Optional, TypeVar
 from uuid import UUID, uuid4
 
 from logan_core.active_context import ActiveContextBuilder
-from logan_core.community_intelligence import CommunityIntelligenceEngine, EngagementSample
+from logan_core.community_intelligence import (
+    CommunityIntelligenceEngine,
+    EngagementSample,
+)
 from logan_core.conclusion_confidence import ConclusionConfidenceEngine
 from logan_core.contracts import (
     ActiveContext,
@@ -61,10 +64,14 @@ class PipelineDependencies:
     community_intelligence: CommunityIntelligenceEngine = field(
         default_factory=CommunityIntelligenceEngine
     )
-    operational_history: OperationalHistoryStore = field(default_factory=OperationalHistoryStore)
+    operational_history: OperationalHistoryStore = field(
+        default_factory=OperationalHistoryStore
+    )
     memory_store: MemoryStore = field(default_factory=MemoryStore)
     user_model_builder: UserModelBuilder = field(default_factory=UserModelBuilder)
-    active_context_builder: ActiveContextBuilder = field(default_factory=ActiveContextBuilder)
+    active_context_builder: ActiveContextBuilder = field(
+        default_factory=ActiveContextBuilder
+    )
     reasoning_engine: ReasoningEngine = field(default_factory=ReasoningEngine)
     mental_model_engine: MentalModelEngine = field(default_factory=MentalModelEngine)
     conclusion_confidence_engine: ConclusionConfidenceEngine = field(
@@ -72,7 +79,9 @@ class PipelineDependencies:
     )
     opportunity_engine: OpportunityEngine = field(default_factory=OpportunityEngine)
     policy_engine: PolicyEngine = field(default_factory=PolicyEngine)
-    prioritization_engine: PrioritizationEngine = field(default_factory=PrioritizationEngine)
+    prioritization_engine: PrioritizationEngine = field(
+        default_factory=PrioritizationEngine
+    )
     presentation_engine: PresentationEngine = field(default_factory=PresentationEngine)
     feedback_engine: FeedbackEngine = field(default_factory=FeedbackEngine)
     learning_engine: LearningEngine = field(init=False)
@@ -108,7 +117,9 @@ class Orchestrator:
 
     RETRY_LIMIT = 3
 
-    def __init__(self, deps: Optional[PipelineDependencies] = None, retry_sleep: float = 0.0) -> None:
+    def __init__(
+        self, deps: Optional[PipelineDependencies] = None, retry_sleep: float = 0.0
+    ) -> None:
         self.deps = deps or PipelineDependencies()
         self._retry_sleep = retry_sleep
 
@@ -162,7 +173,9 @@ class Orchestrator:
                     ) from exc
                 if self._retry_sleep:
                     time.sleep(self._retry_sleep)
-            except Exception as exc:  # noqa: BLE001 — critical failure halts the pipeline
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 — critical failure halts the pipeline
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 trace.layers.append(
                     ExecutionMetrics(
@@ -195,25 +208,36 @@ class Orchestrator:
         """
         pipeline_run_id = uuid4()
         trace = ExecutionTrace(
-            pipeline_run_id=pipeline_run_id, started_at=datetime.now(timezone.utc), status="running"
+            pipeline_run_id=pipeline_run_id,
+            started_at=datetime.now(timezone.utc),
+            status="running",
         )
 
         normalized_signals: list[NormalizedSignal] = []
         event: Optional[EnrichedEvent] = None
 
         for raw in raw_signals:
-            normalized = self._execute(trace, "normalization", lambda r=raw: self.deps.normalizer.normalize(r))
+            normalized = self._execute(
+                trace, "normalization", lambda r=raw: self.deps.normalizer.normalize(r)
+            )
             normalized_signals.append(normalized)
 
             self._execute(
                 trace,
                 "orchestrator.operational_history",
                 lambda n=normalized: self.deps.operational_history.record(
-                    ref=n.signal_id, kind="normalized_signal", payload=n, domain=n.domain
+                    ref=n.signal_id,
+                    kind="normalized_signal",
+                    payload=n,
+                    domain=n.domain,
                 ),
             )
 
-            event = self._execute(trace, "world_model", lambda n=normalized: self.deps.world_model.process(n))
+            event = self._execute(
+                trace,
+                "world_model",
+                lambda n=normalized: self.deps.world_model.process(n),
+            )
 
         assert event is not None, "at least one raw_signal is required"
 
@@ -221,7 +245,10 @@ class Orchestrator:
             trace,
             "orchestrator.operational_history",
             lambda: self.deps.operational_history.record(
-                ref=event.event_id, kind="enriched_event", payload=event, domain=event.domain
+                ref=event.event_id,
+                kind="enriched_event",
+                payload=event,
+                domain=event.domain,
             ),
             event_id=event.event_id,
         )
@@ -240,13 +267,19 @@ class Orchestrator:
         )
 
         memory_records = self._execute(
-            trace, "memory", lambda: self.deps.memory_store.query(entities=[e.entity_id for e in event.entities]),
+            trace,
+            "memory",
+            lambda: self.deps.memory_store.query(
+                entities=[e.entity_id for e in event.entities]
+            ),
             event_id=event.event_id,
         )
         user_model = self._execute(
             trace,
             "user_model",
-            lambda: self.deps.user_model_builder.build(user_id, memory_records, user_model),
+            lambda: self.deps.user_model_builder.build(
+                user_id, memory_records, user_model
+            ),
             event_id=event.event_id,
         )
         active_context = self._execute(
@@ -261,7 +294,9 @@ class Orchestrator:
         reasoning = self._execute(
             trace,
             "reasoning",
-            lambda: self.deps.reasoning_engine.reason(event, trust, user_model, active_context),
+            lambda: self.deps.reasoning_engine.reason(
+                event, trust, user_model, active_context
+            ),
             event_id=event.event_id,
         )
         reasoning, mental_model = self._execute(
@@ -273,14 +308,18 @@ class Orchestrator:
         confidence = self._execute(
             trace,
             "conclusion_confidence",
-            lambda: self.deps.conclusion_confidence_engine.evaluate(reasoning, trust, mental_model),
+            lambda: self.deps.conclusion_confidence_engine.evaluate(
+                reasoning, trust, mental_model
+            ),
             event_id=event.event_id,
         )
 
         recommendation = self._execute(
             trace,
             "opportunity",
-            lambda: self.deps.opportunity_engine.evaluate(reasoning, confidence, community),
+            lambda: self.deps.opportunity_engine.evaluate(
+                reasoning, confidence, community
+            ),
             event_id=event.event_id,
         )
         policy_result = self._execute(
@@ -343,24 +382,42 @@ class Orchestrator:
         interactions (view/click/dismiss/save/share) — use run_memory_inbox_confirm /
         run_memory_inbox_reject for the explicit ADR-019 confirm/reject path instead.
         """
-        feedback = self.deps.feedback_engine.interpret(event_id, interaction_type, duration_ms)
-        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
+        feedback = self.deps.feedback_engine.interpret(
+            event_id, interaction_type, duration_ms
+        )
+        write = self.deps.learning_engine.process_feedback(
+            feedback, user_id, domain, entities, content
+        )
         return feedback, write
 
     def run_memory_inbox_confirm(
-        self, event_id: UUID, user_id: str, domain: Domain, entities: list[str], content: str
+        self,
+        event_id: UUID,
+        user_id: str,
+        domain: Domain,
+        entities: list[str],
+        content: str,
     ):
         """Memory Inbox 'confirm' — routes through Learning as a maximum-confidence
         FeedbackSignal rather than writing to Memory directly (ADR-019).
         """
         feedback = self.deps.feedback_engine.confirm_memory_inbox(event_id)
-        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
+        write = self.deps.learning_engine.process_feedback(
+            feedback, user_id, domain, entities, content
+        )
         return feedback, write
 
     def run_memory_inbox_reject(
-        self, event_id: UUID, user_id: str, domain: Domain, entities: list[str], content: str
+        self,
+        event_id: UUID,
+        user_id: str,
+        domain: Domain,
+        entities: list[str],
+        content: str,
     ):
         """Memory Inbox 'reject' — see run_memory_inbox_confirm (ADR-019)."""
         feedback = self.deps.feedback_engine.reject_memory_inbox(event_id)
-        write = self.deps.learning_engine.process_feedback(feedback, user_id, domain, entities, content)
+        write = self.deps.learning_engine.process_feedback(
+            feedback, user_id, domain, entities, content
+        )
         return feedback, write

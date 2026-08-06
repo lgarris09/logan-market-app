@@ -34,7 +34,9 @@ def test_feed_is_deterministic_across_runs():
     """
     first = run_demo_feed()
     second = run_demo_feed()
-    assert [item.entity_id for item in first.items] == [item.entity_id for item in second.items]
+    assert [item.entity_id for item in first.items] == [
+        item.entity_id for item in second.items
+    ]
     assert [item.rank for item in first.items] == [item.rank for item in second.items]
 
 

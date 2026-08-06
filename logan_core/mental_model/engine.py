@@ -2,7 +2,12 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from logan_core.contracts import DecisionTraceEntry, Domain, MentalModel, ReasoningResult
+from logan_core.contracts import (
+    DecisionTraceEntry,
+    Domain,
+    MentalModel,
+    ReasoningResult,
+)
 
 # V1 confidence adjustment per stance — a shift itself is the signal, per spec.
 _STANCE_DELTA: dict[str, float] = {
@@ -22,7 +27,9 @@ class MentalModelEngine:
     def __init__(self) -> None:
         self._hypotheses: dict[str, MentalModel] = {}
 
-    def process(self, reasoning: ReasoningResult, domain: Domain) -> tuple[ReasoningResult, MentalModel]:
+    def process(
+        self, reasoning: ReasoningResult, domain: Domain
+    ) -> tuple[ReasoningResult, MentalModel]:
         key = f"{domain}:{reasoning.significance.split(':')[0].strip()}"
         now = datetime.now(timezone.utc)
         existing = self._hypotheses.get(key)

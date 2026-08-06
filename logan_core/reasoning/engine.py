@@ -48,9 +48,7 @@ class ReasoningEngine:
                 f"worth understanding even though it's not a direct holding."
             )
         else:
-            personal_relevance_narrative = (
-                "Nothing in your current holdings or interests is directly connected to this yet."
-            )
+            personal_relevance_narrative = "Nothing in your current holdings or interests is directly connected to this yet."
 
         stance: Literal["confirms", "contradicts", "complicates", "new"]
         # "contradicts" is currently unreachable: WorldModel never populates

@@ -3,7 +3,10 @@ run through the full pipeline (Raw Signal -> Presentation) using simulated data 
 Scope resolved in docs/specs/LOGAN_IMPLEMENTATION_PLAN.md.
 """
 
-from logan_core.receptors import tesla_ai_partnership_corroboration, tesla_ai_partnership_signal
+from logan_core.receptors import (
+    tesla_ai_partnership_corroboration,
+    tesla_ai_partnership_signal,
+)
 
 PER_SIGNAL_LAYERS = ["normalization", "orchestrator.operational_history", "world_model"]
 
@@ -24,9 +27,14 @@ EXPECTED_LAYERS = [
 ]
 
 
-def test_tesla_scenario_produces_opportunity_card(orchestrator, user_model, engagement_samples, now):
+def test_tesla_scenario_produces_opportunity_card(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
-        raw_signals=[tesla_ai_partnership_signal(now), tesla_ai_partnership_corroboration(now)],
+        raw_signals=[
+            tesla_ai_partnership_signal(now),
+            tesla_ai_partnership_corroboration(now),
+        ],
         user_id="demo_user",
         user_model=user_model,
         engagement_samples=engagement_samples,
@@ -38,7 +46,12 @@ def test_tesla_scenario_produces_opportunity_card(orchestrator, user_model, enga
     assert len(result.delivered_item.headline) <= 120
     # Confidence score
     assert 0.0 <= result.delivered_item.confidence_score <= 1.0
-    assert result.delivered_item.confidence_label in ("High", "Moderate", "Low", "Speculative")
+    assert result.delivered_item.confidence_label in (
+        "High",
+        "Moderate",
+        "Low",
+        "Speculative",
+    )
     # Explanation
     assert result.delivered_item.why_it_matters
     assert result.delivered_item.why_it_matters_to_me
@@ -54,7 +67,9 @@ def test_tesla_scenario_produces_opportunity_card(orchestrator, user_model, enga
     assert result.trace.final_output == result.delivered_item.event_id
 
 
-def test_tesla_scenario_is_relevant_to_nvda_holder(orchestrator, user_model, engagement_samples, now):
+def test_tesla_scenario_is_relevant_to_nvda_holder(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",
@@ -65,7 +80,9 @@ def test_tesla_scenario_is_relevant_to_nvda_holder(orchestrator, user_model, eng
     assert "NVDA" in result.reasoning.connected_entities
 
 
-def test_tesla_scenario_respects_advice_boundary(orchestrator, user_model, engagement_samples, now):
+def test_tesla_scenario_respects_advice_boundary(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",

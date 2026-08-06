@@ -7,7 +7,9 @@ from logan_core.contracts import ActiveContext, ActivityRecord
 SESSION_TTL = timedelta(hours=1)
 
 
-def _time_of_day(now: datetime) -> Literal["morning", "midday", "afternoon", "evening", "night"]:
+def _time_of_day(
+    now: datetime,
+) -> Literal["morning", "midday", "afternoon", "evening", "night"]:
     hour = now.hour
     if 5 <= hour < 11:
         return "morning"

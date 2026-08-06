@@ -103,7 +103,11 @@ def test_feedback_engine_interprets_watch_and_remind():
 
 
 def _verification_quality(level="verified"):
-    return VerificationQuality(level=level, method="direct_price_data_comparison", confidence_in_verification=0.9)
+    return VerificationQuality(
+        level=level,
+        method="direct_price_data_comparison",
+        confidence_in_verification=0.9,
+    )
 
 
 def _evaluation_horizon():

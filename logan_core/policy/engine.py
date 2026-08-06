@@ -9,7 +9,9 @@ from logan_core.contracts import (
 )
 
 ANALYSIS_DISCLAIMER = "This is analysis and context, not financial or betting advice. You decide what to do next."
-GAMBLING_DISCLAIMER = "This is not gambling advice. Odds and markets can move quickly and unpredictably."
+GAMBLING_DISCLAIMER = (
+    "This is not gambling advice. Odds and markets can move quickly and unpredictably."
+)
 
 BOT_RISK_SUPPRESSION_THRESHOLD = 0.7
 
@@ -25,7 +27,10 @@ class PolicyEngine:
     """
 
     def evaluate(
-        self, recommendation: AttentionRecommendation, community: CommunitySignal, domain: Domain
+        self,
+        recommendation: AttentionRecommendation,
+        community: CommunitySignal,
+        domain: Domain,
     ) -> PolicyResult:
         now = datetime.now(timezone.utc)
         policy_rules_applied = ["advice_boundary_v1"]
@@ -34,7 +39,10 @@ class PolicyEngine:
 
         if domain in OBJECTIVE_ONLY_DOMAINS:
             policy_rules_applied.append("betting_objectivity_v1")
-            language_constraints += ["objective_data_forward_only", "no_urgency_framing"]
+            language_constraints += [
+                "objective_data_forward_only",
+                "no_urgency_framing",
+            ]
             required_disclaimers.append(GAMBLING_DISCLAIMER)
 
         if community.bot_risk >= BOT_RISK_SUPPRESSION_THRESHOLD:

@@ -1,9 +1,11 @@
 from datetime import timedelta
 
-from logan_core.contracts import NormalizedSignal
 from logan_core.evidence_trust import EvidenceTrustEngine
 from logan_core.normalization import Normalizer
-from logan_core.receptors import tesla_ai_partnership_signal, tesla_ai_partnership_corroboration
+from logan_core.receptors import (
+    tesla_ai_partnership_corroboration,
+    tesla_ai_partnership_signal,
+)
 from logan_core.world_model import WorldModel
 
 

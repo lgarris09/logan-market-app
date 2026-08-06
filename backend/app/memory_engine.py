@@ -7,16 +7,33 @@ from uuid import uuid4
 
 from .memory_models import MemoryDecision, MemoryRecord
 
-
 CATEGORY_BRANCHES = {
-    "stocks": ("markets.stocks", ["markets.portfolio", "markets.opportunities", "news.companies"]),
+    "stocks": (
+        "markets.stocks",
+        ["markets.portfolio", "markets.opportunities", "news.companies"],
+    ),
     "markets": ("markets", ["markets.stocks", "markets.portfolio", "news.companies"]),
-    "sports": ("sports_betting", ["sports_betting.teams", "sports_betting.odds", "news.sports"]),
-    "sports_betting": ("sports_betting", ["sports_betting.teams", "sports_betting.odds", "news.sports"]),
-    "polymarket": ("polymarket", ["polymarket.positions", "news.politics", "news.economics"]),
+    "sports": (
+        "sports_betting",
+        ["sports_betting.teams", "sports_betting.odds", "news.sports"],
+    ),
+    "sports_betting": (
+        "sports_betting",
+        ["sports_betting.teams", "sports_betting.odds", "news.sports"],
+    ),
+    "polymarket": (
+        "polymarket",
+        ["polymarket.positions", "news.politics", "news.economics"],
+    ),
     "news": ("news", ["markets", "sports_betting", "polymarket"]),
-    "user_profile": ("user_profile", ["decision_dna", "markets", "sports_betting", "polymarket"]),
-    "decision_dna": ("decision_dna", ["user_profile", "markets.opportunities", "sports_betting", "polymarket"]),
+    "user_profile": (
+        "user_profile",
+        ["decision_dna", "markets", "sports_betting", "polymarket"],
+    ),
+    "decision_dna": (
+        "decision_dna",
+        ["user_profile", "markets.opportunities", "sports_betting", "polymarket"],
+    ),
 }
 
 
@@ -33,8 +50,7 @@ class MemoryEngine:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
-            connection.execute(
-                '''
+            connection.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY,
                     content TEXT NOT NULL,
@@ -51,8 +67,7 @@ class MemoryEngine:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-                '''
-            )
+                """)
 
     @staticmethod
     def _normalize(value: str) -> str:
@@ -64,9 +79,15 @@ class MemoryEngine:
 
         if user_confirmed:
             return "core"
-        if any(word in text for word in ["always", "never", "prefer", "usually", "normally"]):
+        if any(
+            word in text
+            for word in ["always", "never", "prefer", "usually", "normally"]
+        ):
             return "behavioral_signal"
-        if any(word in text for word in ["goal", "strategy", "plan", "watching", "position"]):
+        if any(
+            word in text
+            for word in ["goal", "strategy", "plan", "watching", "position"]
+        ):
             return "strategic"
         if any(word in text for word in ["today", "tonight", "this week", "right now"]):
             return "temporary"
@@ -98,7 +119,9 @@ class MemoryEngine:
         return min(100, importance), min(100, confidence)
 
     @staticmethod
-    def _decision(importance: int, confidence: int, user_confirmed: bool) -> tuple[str, str]:
+    def _decision(
+        importance: int, confidence: int, user_confirmed: bool
+    ) -> tuple[str, str]:
         if user_confirmed:
             return "stored", "confirmed"
         if importance >= 70 and confidence >= 68:
@@ -142,13 +165,21 @@ class MemoryEngine:
                     action = "stored"
 
                 connection.execute(
-                    '''
+                    """
                     UPDATE memories
                     SET importance = ?, confidence = ?, status = ?, action = ?,
                         reinforcement_count = ?, updated_at = ?
                     WHERE id = ?
-                    ''',
-                    (importance, confidence, status, action, reinforcement_count, now, existing["id"]),
+                    """,
+                    (
+                        importance,
+                        confidence,
+                        status,
+                        action,
+                        reinforcement_count,
+                        now,
+                        existing["id"],
+                    ),
                 )
                 memory_id = existing["id"]
                 created_at = existing["created_at"]
@@ -157,13 +188,13 @@ class MemoryEngine:
                 reinforcement_count = 1
                 created_at = now
                 connection.execute(
-                    '''
+                    """
                     INSERT INTO memories (
                         id, content, normalized_content, primary_branch, linked_branches,
                         memory_type, importance, confidence, status, action, source,
                         reinforcement_count, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''',
+                    """,
                     (
                         memory_id,
                         content.strip(),
@@ -204,7 +235,9 @@ class MemoryEngine:
         )
         return MemoryDecision(memory=record, explanation=explanation)
 
-    def list_memories(self, category: str | None = None, inbox_only: bool = False) -> list[MemoryRecord]:
+    def list_memories(
+        self, category: str | None = None, inbox_only: bool = False
+    ) -> list[MemoryRecord]:
         query = "SELECT * FROM memories"
         clauses = []
         values: list[str] = []
@@ -243,11 +276,11 @@ class MemoryEngine:
 
         with self._connect() as connection:
             connection.execute(
-                '''
+                """
                 UPDATE memories
                 SET status = ?, action = ?, confidence = ?, updated_at = ?
                 WHERE id = ?
-                ''',
+                """,
                 (status, action, confidence, now, memory_id),
             )
             row = connection.execute(
@@ -263,7 +296,9 @@ class MemoryEngine:
             id=row["id"],
             content=row["content"],
             primary_branch=row["primary_branch"],
-            linked_branches=[item for item in row["linked_branches"].split("|") if item],
+            linked_branches=[
+                item for item in row["linked_branches"].split("|") if item
+            ],
             memory_type=row["memory_type"],
             importance=row["importance"],
             confidence=row["confidence"],

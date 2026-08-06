@@ -54,7 +54,9 @@ class ConclusionConfidenceEngine:
 
         limiting_factors: list[str] = []
         if trust.corroboration < 2:
-            limiting_factors.append("Only one independent source has corroborated this so far.")
+            limiting_factors.append(
+                "Only one independent source has corroborated this so far."
+            )
         if trust.completeness < 1.0:
             limiting_factors.append("Some expected event details are missing.")
         if trust.contradiction_flag:

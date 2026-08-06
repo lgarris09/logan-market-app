@@ -1,3 +1,3 @@
-from .normalize import Normalizer, SIGNAL_TYPE_REGISTRY
+from .normalize import SIGNAL_TYPE_REGISTRY, Normalizer
 
 __all__ = ["Normalizer", "SIGNAL_TYPE_REGISTRY"]

@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from logan_core.conclusion_confidence import ConclusionConfidenceEngine
-from logan_core.contracts import CommunitySignal, EvidenceTrust, MentalModel, ReasoningResult
+from logan_core.contracts import (
+    CommunitySignal,
+    EvidenceTrust,
+    MentalModel,
+    ReasoningResult,
+)
 from logan_core.opportunity import OpportunityEngine
 
 
@@ -111,8 +116,12 @@ def test_mental_model_confidence_has_zero_effect_on_opportunity_outcome():
     trust = _trust(reasoning.event_id)
     community = _community(reasoning.event_id)
 
-    confidence_low = confidence_engine.evaluate(reasoning, trust, mental_model=_mental_model(0.0))
-    confidence_high = confidence_engine.evaluate(reasoning, trust, mental_model=_mental_model(1.0))
+    confidence_low = confidence_engine.evaluate(
+        reasoning, trust, mental_model=_mental_model(0.0)
+    )
+    confidence_high = confidence_engine.evaluate(
+        reasoning, trust, mental_model=_mental_model(1.0)
+    )
 
     rec_low = opportunity_engine.evaluate(reasoning, confidence_low, community)
     rec_high = opportunity_engine.evaluate(reasoning, confidence_high, community)

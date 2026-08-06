@@ -1,7 +1,12 @@
 import math
 from datetime import datetime, timezone
 
-from logan_core.contracts import DecisionTraceEntry, EnrichedEvent, EvidenceTrust, NormalizedSignal
+from logan_core.contracts import (
+    DecisionTraceEntry,
+    EnrichedEvent,
+    EvidenceTrust,
+    NormalizedSignal,
+)
 
 # V1 static source reputation registry (0.0-1.0). Extension point: dynamic
 # reputation learning, updated only by the Learning System per the spec.
@@ -28,14 +33,19 @@ class EvidenceTrustEngine:
     """
 
     def __init__(self, registry: dict[str, float] | None = None) -> None:
-        self._registry = registry if registry is not None else SOURCE_REPUTATION_REGISTRY
+        self._registry = (
+            registry if registry is not None else SOURCE_REPUTATION_REGISTRY
+        )
 
     def _recency_score(self, occurred_at: datetime, now: datetime) -> float:
         hours_elapsed = max((now - occurred_at).total_seconds() / 3600.0, 0.0)
         return math.exp(-hours_elapsed / RECENCY_HALF_LIFE_HOURS)
 
     def evaluate(
-        self, event: EnrichedEvent, signals: list[NormalizedSignal], now: datetime | None = None
+        self,
+        event: EnrichedEvent,
+        signals: list[NormalizedSignal],
+        now: datetime | None = None,
     ) -> EvidenceTrust:
         now = now or datetime.now(timezone.utc)
         occurred_at = event.occurred_at
@@ -55,7 +65,9 @@ class EvidenceTrustEngine:
         contradiction_flag = bool(event.contradicting)
 
         completeness_fields = [event.summary, event.entities, event.occurred_at]
-        completeness = sum(1 for f in completeness_fields if f) / len(completeness_fields)
+        completeness = sum(1 for f in completeness_fields if f) / len(
+            completeness_fields
+        )
 
         manipulation_risk = "low"
         if corroboration == 0 and completeness < 1.0:

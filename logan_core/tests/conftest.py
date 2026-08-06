@@ -17,7 +17,11 @@ def now() -> datetime:
 def user_model(now):
     return UserModelBuilder().seed(
         user_id="demo_user",
-        holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now)],
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now
+            )
+        ],
         risk_tolerance="moderate",
     )
 
@@ -25,9 +29,19 @@ def user_model(now):
 @pytest.fixture
 def engagement_samples(now):
     return [
-        EngagementSample(observed_at=now, volume_at_point=10, unique_users=8, saves_shares=1, questions=0),
         EngagementSample(
-            observed_at=now, volume_at_point=40, unique_users=30, saves_shares=6, questions=3
+            observed_at=now,
+            volume_at_point=10,
+            unique_users=8,
+            saves_shares=1,
+            questions=0,
+        ),
+        EngagementSample(
+            observed_at=now,
+            volume_at_point=40,
+            unique_users=30,
+            saves_shares=6,
+            questions=3,
         ),
     ]
 

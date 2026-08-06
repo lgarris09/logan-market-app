@@ -49,7 +49,9 @@ class UserModel(BaseModel):
     interests: list[Interest] = Field(default_factory=list)
     goals: list[str] = Field(default_factory=list)
     holdings: list[Holding] = Field(default_factory=list)
-    risk_tolerance: Literal["conservative", "moderate", "aggressive", "unknown"] = "unknown"
+    risk_tolerance: Literal["conservative", "moderate", "aggressive", "unknown"] = (
+        "unknown"
+    )
     inferred_expertise: list[Expertise] = Field(default_factory=list)
     domain_preferences: list[DomainPref] = Field(default_factory=list)
     established_behaviors: list[BehaviorPattern] = Field(default_factory=list)

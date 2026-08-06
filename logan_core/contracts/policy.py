@@ -19,5 +19,7 @@ class PolicyResult(BaseModel):
     @model_validator(mode="after")
     def _suppressed_when_not_permitted(self):
         if not self.permitted and self.communication_mode != "suppressed":
-            raise ValueError("communication_mode must be 'suppressed' when permitted is False")
+            raise ValueError(
+                "communication_mode must be 'suppressed' when permitted is False"
+            )
         return self

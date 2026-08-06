@@ -18,10 +18,14 @@ class MemoryStore:
 
     def write(self, record: MemoryRecord, *, writer: str) -> None:
         if writer != "learning_system":
-            raise MemoryPermissionError("Only the Learning System may write to Memory (see ADR-019).")
+            raise MemoryPermissionError(
+                "Only the Learning System may write to Memory (see ADR-019)."
+            )
         self._records[record.record_id] = record
 
-    def query(self, domain: Domain | None = None, entities: list[str] | None = None) -> list[MemoryRecord]:
+    def query(
+        self, domain: Domain | None = None, entities: list[str] | None = None
+    ) -> list[MemoryRecord]:
         results = list(self._records.values())
         if domain is not None:
             results = [r for r in results if r.domain == domain]

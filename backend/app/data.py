@@ -1,6 +1,5 @@
 from .models import Opportunity
 
-
 DEMO_OPPORTUNITIES = [
     Opportunity(
         id="nvda-margin-watch",

@@ -4,14 +4,25 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from logan_core.active_context import ActiveContextBuilder
-from logan_core.contracts import EnrichedEvent, Entity, EvidenceTrust, Holding, UserModel
+from logan_core.contracts import (
+    EnrichedEvent,
+    Entity,
+    EvidenceTrust,
+    Holding,
+    UserModel,
+)
 from logan_core.reasoning import ReasoningEngine
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
 
 
 def _event(entity_id="NVDA", downstream=None, is_new=True, change_delta=None):
-    entity = Entity(entity_id=entity_id, entity_type="ticker", display_name="NVIDIA", domain="stocks")
+    entity = Entity(
+        entity_id=entity_id,
+        entity_type="ticker",
+        display_name="NVIDIA",
+        domain="stocks",
+    )
     return EnrichedEvent(
         event_id=uuid4(),
         signal_ids=[uuid4()],
@@ -58,7 +69,13 @@ def _active_context():
 def test_direct_holding_is_actionable_and_directly_relevant():
     event = _event(entity_id="NVDA")
     trust = _trust(event.event_id, trust_score=0.8)
-    user_model = _user_model(holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW)])
+    user_model = _user_model(
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW
+            )
+        ]
+    )
 
     result = ReasoningEngine().reason(event, trust, user_model, _active_context())
     assert result.actionability == "actionable"
@@ -79,7 +96,13 @@ def test_no_connection_is_informational_and_unconnected():
 def test_low_trust_is_ambiguous_regardless_of_holdings():
     event = _event(entity_id="NVDA")
     trust = _trust(event.event_id, trust_score=0.2)
-    user_model = _user_model(holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW)])
+    user_model = _user_model(
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW
+            )
+        ]
+    )
 
     result = ReasoningEngine().reason(event, trust, user_model, _active_context())
     assert result.actionability == "ambiguous"

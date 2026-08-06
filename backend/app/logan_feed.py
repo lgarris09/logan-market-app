@@ -70,7 +70,11 @@ def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]
     points = _ENGAGEMENT_BY_ENTITY.get(entity_id, [(5, 4, 0, 0), (8, 6, 1, 0)])
     return [
         EngagementSample(
-            observed_at=now, volume_at_point=v, unique_users=u, saves_shares=s, questions=q
+            observed_at=now,
+            volume_at_point=v,
+            unique_users=u,
+            saves_shares=s,
+            questions=q,
         )
         for v, u, s, q in points
     ]
@@ -90,7 +94,11 @@ def run_demo_feed() -> DemoFeedResponse:
 
     user_model = UserModelBuilder().seed(
         user_id="demo_user",
-        holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now)],
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now
+            )
+        ],
         interests=[
             Interest(
                 domain="social",
@@ -125,7 +133,8 @@ def run_demo_feed() -> DemoFeedResponse:
     # Connections: two events are "rippled" to each other if the entities either one
     # touches (directly or via World Model's downstream mapping) overlap.
     touched: dict[UUID, set[str]] = {
-        r.event.event_id: {e.entity_id for e in r.event.entities} | set(r.event.downstream)
+        r.event.event_id: {e.entity_id for e in r.event.entities}
+        | set(r.event.downstream)
         for _, r in results
     }
     connections: dict[UUID, list[UUID]] = {event_id: [] for event_id in touched}
@@ -139,7 +148,9 @@ def run_demo_feed() -> DemoFeedResponse:
     # Sort by the internal-only ranking score before building the public
     # response -- the score itself is never serialized (ADR-029); only the
     # resulting order (as `rank`, below) is public-facing.
-    results.sort(key=lambda pair: pair[1].recommendation.internal_rank_score, reverse=True)
+    results.sort(
+        key=lambda pair: pair[1].recommendation.internal_rank_score, reverse=True
+    )
 
     items = []
     for position, (entity_id, r) in enumerate(results, start=1):

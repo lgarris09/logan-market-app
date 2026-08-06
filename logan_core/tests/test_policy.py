@@ -142,7 +142,9 @@ def test_bot_risk_exactly_at_threshold_suppresses():
 def test_bot_risk_above_threshold_suppresses():
     event_id = uuid4()
     recommendation = _recommendation(event_id)
-    community = _community(event_id, bot_risk=min(BOT_RISK_SUPPRESSION_THRESHOLD + 0.1, 1.0))
+    community = _community(
+        event_id, bot_risk=min(BOT_RISK_SUPPRESSION_THRESHOLD + 0.1, 1.0)
+    )
 
     result = PolicyEngine().evaluate(recommendation, community, domain="social")
 
@@ -171,8 +173,12 @@ def test_decision_trace_populated_for_both_permitted_and_suppressed():
     event_id = uuid4()
     recommendation = _recommendation(event_id)
 
-    permitted = PolicyEngine().evaluate(recommendation, _community(event_id, bot_risk=0.0), domain="stocks")
-    suppressed = PolicyEngine().evaluate(recommendation, _community(event_id, bot_risk=0.95), domain="stocks")
+    permitted = PolicyEngine().evaluate(
+        recommendation, _community(event_id, bot_risk=0.0), domain="stocks"
+    )
+    suppressed = PolicyEngine().evaluate(
+        recommendation, _community(event_id, bot_risk=0.95), domain="stocks"
+    )
 
     assert len(permitted.decision_trace) == 1
     assert len(suppressed.decision_trace) == 1

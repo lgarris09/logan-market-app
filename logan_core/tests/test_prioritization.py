@@ -7,7 +7,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from logan_core.contracts import AttentionRecommendation, Dimensions, PolicyResult
-from logan_core.prioritization import FATIGUE_LIMIT, FATIGUE_WINDOW, PrioritizationEngine
+from logan_core.prioritization import (
+    FATIGUE_LIMIT,
+    FATIGUE_WINDOW,
+    PrioritizationEngine,
+)
 
 BASE_NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
 
@@ -130,7 +134,10 @@ def test_not_permitted_is_always_hidden():
     engine = PrioritizationEngine()
     recommendation = _recommendation(BASE_NOW)
     policy_result = _policy_result(
-        recommendation.event_id, BASE_NOW, permitted=False, communication_mode="suppressed"
+        recommendation.event_id,
+        BASE_NOW,
+        permitted=False,
+        communication_mode="suppressed",
     )
     result = engine.prioritize(
         user_id="demo_user",

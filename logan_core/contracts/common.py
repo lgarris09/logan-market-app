@@ -75,10 +75,17 @@ class Reference(BaseModel):
 # structurally consistent. See OUTCOME_EVALUATION.md.
 
 Resolvability = Literal[
-    "resolved", "unresolved_pending", "unresolvable_data_unavailable", "unresolvable_ambiguous"
+    "resolved",
+    "unresolved_pending",
+    "unresolvable_data_unavailable",
+    "unresolvable_ambiguous",
 ]
-InvalidationStatus = Literal["none", "invalidated_before_resolution", "invalidated_at_resolution"]
-VerificationLevel = Literal["verified", "partially_verified", "self_reported", "unverifiable"]
+InvalidationStatus = Literal[
+    "none", "invalidated_before_resolution", "invalidated_at_resolution"
+]
+VerificationLevel = Literal[
+    "verified", "partially_verified", "self_reported", "unverifiable"
+]
 
 
 class EvaluationHorizon(BaseModel):

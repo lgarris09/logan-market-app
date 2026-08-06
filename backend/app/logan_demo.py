@@ -14,7 +14,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.community_intelligence import EngagementSample  # noqa: E402
-from logan_core.contracts import ConclusionConfidence, DeliveredItem, Holding, PolicyResult  # noqa: E402
+from logan_core.contracts import (
+    ConclusionConfidence,
+    DeliveredItem,
+    Holding,
+    PolicyResult,
+)  # noqa: E402
 from logan_core.orchestrator import Orchestrator  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     tesla_ai_partnership_corroboration,
@@ -53,17 +58,36 @@ def run_tesla_demo() -> TeslaDemoResponse:
 
     user_model = UserModelBuilder().seed(
         user_id="demo_user",
-        holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now)],
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now
+            )
+        ],
         risk_tolerance="moderate",
     )
     engagement_samples = [
-        EngagementSample(observed_at=now, volume_at_point=10, unique_users=8, saves_shares=1, questions=0),
-        EngagementSample(observed_at=now, volume_at_point=40, unique_users=30, saves_shares=6, questions=3),
+        EngagementSample(
+            observed_at=now,
+            volume_at_point=10,
+            unique_users=8,
+            saves_shares=1,
+            questions=0,
+        ),
+        EngagementSample(
+            observed_at=now,
+            volume_at_point=40,
+            unique_users=30,
+            saves_shares=6,
+            questions=3,
+        ),
     ]
 
     orchestrator = Orchestrator()
     result = orchestrator.run(
-        raw_signals=[tesla_ai_partnership_signal(now), tesla_ai_partnership_corroboration(now)],
+        raw_signals=[
+            tesla_ai_partnership_signal(now),
+            tesla_ai_partnership_corroboration(now),
+        ],
         user_id="demo_user",
         user_model=user_model,
         engagement_samples=engagement_samples,

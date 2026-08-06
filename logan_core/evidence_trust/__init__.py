@@ -1,3 +1,3 @@
-from .trust import EvidenceTrustEngine, SOURCE_REPUTATION_REGISTRY
+from .trust import SOURCE_REPUTATION_REGISTRY, EvidenceTrustEngine
 
 __all__ = ["EvidenceTrustEngine", "SOURCE_REPUTATION_REGISTRY"]

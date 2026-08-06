@@ -4,11 +4,24 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from .common import EvaluationHorizon, InvalidationStatus, Resolvability, VerificationQuality
+from .common import (
+    EvaluationHorizon,
+    InvalidationStatus,
+    Resolvability,
+    VerificationQuality,
+)
 
-InteractionType = Literal["view", "click", "dismiss", "save", "act", "share", "watch", "remind"]
+InteractionType = Literal[
+    "view", "click", "dismiss", "save", "act", "share", "watch", "remind"
+]
 InferredIntent = Literal[
-    "interested", "curious", "dismissing", "confused", "accidental", "researching", "unknown"
+    "interested",
+    "curious",
+    "dismissing",
+    "confused",
+    "accidental",
+    "researching",
+    "unknown",
 ]
 
 
@@ -26,7 +39,9 @@ class FeedbackSignal(BaseModel):
     @model_validator(mode="after")
     def _low_confidence_is_unknown(self):
         if self.intent_confidence < 0.50 and self.inferred_intent != "unknown":
-            raise ValueError("inferred_intent must be 'unknown' when intent_confidence < 0.50")
+            raise ValueError(
+                "inferred_intent must be 'unknown' when intent_confidence < 0.50"
+            )
         return self
 
 
@@ -54,7 +69,11 @@ class OutcomeRecord(BaseModel):
     trigger_event_ids: list[UUID] = Field(default_factory=list)
     evidence_ids: list[UUID] = Field(default_factory=list)
     outcome_type: Literal[
-        "signal_accuracy", "source_reliability", "user_value", "market_resolution", "event_resolution"
+        "signal_accuracy",
+        "source_reliability",
+        "user_value",
+        "market_resolution",
+        "event_resolution",
     ]
     prediction_or_claim_type: str
     # The full predicted claim (domain-specific shape) — not just a direction/
@@ -88,7 +107,11 @@ class OutcomeRecord(BaseModel):
     @model_validator(mode="after")
     def _observed_result_matches_resolvability(self):
         if self.resolvability == "resolved" and self.observed_result is None:
-            raise ValueError("observed_result must be populated when resolvability is 'resolved'")
+            raise ValueError(
+                "observed_result must be populated when resolvability is 'resolved'"
+            )
         if self.resolvability != "resolved" and self.observed_result is not None:
-            raise ValueError("observed_result must be null unless resolvability is 'resolved' (no fabricated outcomes)")
+            raise ValueError(
+                "observed_result must be null unless resolvability is 'resolved' (no fabricated outcomes)"
+            )
         return self

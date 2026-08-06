@@ -37,7 +37,9 @@ class OpportunityEngine:
         # 1. Validate
         trace.append(
             DecisionTraceEntry(
-                layer="opportunity_engine", rule="validate: event has a reasoning result", timestamp=now
+                layer="opportunity_engine",
+                rule="validate: event has a reasoning result",
+                timestamp=now,
             )
         )
 
@@ -66,7 +68,9 @@ class OpportunityEngine:
         # 4. Assess
         trace.append(
             DecisionTraceEntry(
-                layer="opportunity_engine", rule="assess: scoring dimensions from inputs", timestamp=now
+                layer="opportunity_engine",
+                rule="assess: scoring dimensions from inputs",
+                timestamp=now,
             )
         )
         # ADR-034 / V3.1.4 BATCH-1 Stage 2: global_importance is confidence-only.
@@ -76,9 +80,11 @@ class OpportunityEngine:
         # Retained as contextual/presentation information only (e.g. a future
         # "trending" badge) — see the scoring formula below, which excludes it.
         community_momentum = community.momentum_score
-        urgency = min(_LIFECYCLE_URGENCY.get(community.lifecycle_state, 0.1) + (
-            0.2 if reasoning.actionability == "actionable" else 0.0
-        ), 1.0)
+        urgency = min(
+            _LIFECYCLE_URGENCY.get(community.lifecycle_state, 0.1)
+            + (0.2 if reasoning.actionability == "actionable" else 0.0),
+            1.0,
+        )
         novelty = _STANCE_NOVELTY.get(reasoning.stance, 0.5)
         opportunity_magnitude = min(personal_relevance * global_importance * 1.4, 1.0)
         connection_strength = min(len(reasoning.connected_entities) / 3, 1.0)
@@ -90,7 +96,9 @@ class OpportunityEngine:
             risk = min(risk + 0.2, 1.0)
         trace.append(
             DecisionTraceEntry(
-                layer="opportunity_engine", rule=f"constrain: risk={risk:.2f}", timestamp=now
+                layer="opportunity_engine",
+                rule=f"constrain: risk={risk:.2f}",
+                timestamp=now,
             )
         )
 
@@ -144,17 +152,23 @@ class OpportunityEngine:
         if dimensions.confidence >= 0.6:
             reasons.append("Multiple signals support this conclusion.")
         if dimensions.novelty >= 0.8:
-            reasons.append("This is a new development, not a repeat of something already surfaced.")
+            reasons.append(
+                "This is a new development, not a repeat of something already surfaced."
+            )
         if recommend and not reasons:
-            reasons.append("This crosses the attention threshold on balance of the scored dimensions.")
+            reasons.append(
+                "This crosses the attention threshold on balance of the scored dimensions."
+            )
 
         # 7. Recommend
         trace.append(
             DecisionTraceEntry(
                 layer="opportunity_engine",
-                rule=f"recommend: internal_rank_score={internal_rank_score:.2f} >= {RECOMMEND_THRESHOLD}"
-                if recommend
-                else f"recommend: internal_rank_score={internal_rank_score:.2f} below threshold",
+                rule=(
+                    f"recommend: internal_rank_score={internal_rank_score:.2f} >= {RECOMMEND_THRESHOLD}"
+                    if recommend
+                    else f"recommend: internal_rank_score={internal_rank_score:.2f} below threshold"
+                ),
                 confidence=internal_rank_score,
                 timestamp=now,
             )

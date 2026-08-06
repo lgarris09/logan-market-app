@@ -1,7 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from logan_core.contracts import DecisionTraceEntry, Delta, Domain, EnrichedEvent, Entity, NormalizedSignal
+from logan_core.contracts import (
+    DecisionTraceEntry,
+    Delta,
+    Domain,
+    EnrichedEvent,
+    Entity,
+    NormalizedSignal,
+)
 
 DEDUP_WINDOW = timedelta(hours=1)
 
@@ -51,7 +58,9 @@ class WorldModel:
         self._prior_values: dict[tuple[str, str], object] = {}
         self._events: dict[UUID, EnrichedEvent] = {}
 
-    def _get_or_create_entity(self, entity_id: str, entity_type: str, domain: Domain) -> Entity:
+    def _get_or_create_entity(
+        self, entity_id: str, entity_type: str, domain: Domain
+    ) -> Entity:
         entity = self._entity_graph.get(entity_id)
         if entity is None:
             entity = Entity(
@@ -78,14 +87,18 @@ class WorldModel:
         downstream `ReasoningEngine` branch that reads it is documented as
         currently unreachable for the same reason, not silently dead.
         """
-        entity = self._get_or_create_entity(signal.entity_id, signal.entity_type, signal.domain)
+        entity = self._get_or_create_entity(
+            signal.entity_id, signal.entity_type, signal.domain
+        )
         downstream = DOWNSTREAM_EFFECTS.get(signal.entity_id, [])
         for downstream_id in downstream:
             self._get_or_create_entity(downstream_id, "ticker", signal.domain)
 
         dedup_key = (signal.entity_id, signal.signal_type)
         recent = self._recent.get(dedup_key)
-        within_window = recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW
+        within_window = (
+            recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW
+        )
         prior_event_id = recent[1] if within_window else None
 
         if prior_event_id is None:

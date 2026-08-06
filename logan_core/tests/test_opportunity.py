@@ -22,7 +22,10 @@ def _reasoning(stance="new", actionability="actionable", connected=None, now=Non
 def _confidence(event_id, score=0.8, classification="inference", now=None):
     now = now or datetime.now(timezone.utc)
     return ConclusionConfidence(
-        event_id=event_id, confidence_score=score, classification=classification, evaluated_at=now
+        event_id=event_id,
+        confidence_score=score,
+        classification=classification,
+        evaluated_at=now,
     )
 
 
@@ -54,12 +57,16 @@ def test_high_relevance_high_confidence_recommends():
     assert recommendation.recommend is True
     assert recommendation.internal_rank_score >= RECOMMEND_THRESHOLD
     assert len(recommendation.reasons) >= 1
-    assert len(recommendation.decision_trace) == 7  # validate..recommend, one entry per step
+    assert (
+        len(recommendation.decision_trace) == 7
+    )  # validate..recommend, one entry per step
 
 
 def test_low_relevance_low_confidence_does_not_recommend():
     reasoning = _reasoning(actionability="ambiguous", connected=[], stance="confirms")
-    confidence = _confidence(reasoning.event_id, score=0.1, classification="speculation")
+    confidence = _confidence(
+        reasoning.event_id, score=0.1, classification="speculation"
+    )
     community = _community(reasoning.event_id, momentum=0.05, lifecycle="dormant")
 
     engine = OpportunityEngine()
@@ -90,8 +97,12 @@ def test_community_momentum_has_zero_effect_on_ranking():
     confidence = _confidence(reasoning.event_id, score=0.7)
 
     engine = OpportunityEngine()
-    low = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=0.0))
-    high = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=1.0))
+    low = engine.evaluate(
+        reasoning, confidence, _community(reasoning.event_id, momentum=0.0)
+    )
+    high = engine.evaluate(
+        reasoning, confidence, _community(reasoning.event_id, momentum=1.0)
+    )
 
     assert low.internal_rank_score == high.internal_rank_score
     assert low.recommend == high.recommend
@@ -102,13 +113,19 @@ def test_community_momentum_has_zero_effect_on_ranking():
     for key in low_dims:
         if key == "community_momentum":
             continue
-        assert low_dims[key] == high_dims[key], f"dimension {key!r} was affected by momentum"
+        assert (
+            low_dims[key] == high_dims[key]
+        ), f"dimension {key!r} was affected by momentum"
 
 
 def test_speculation_classification_increases_risk_dimension():
     reasoning = _reasoning()
-    confidence_normal = _confidence(reasoning.event_id, score=0.6, classification="inference")
-    confidence_speculative = _confidence(reasoning.event_id, score=0.6, classification="speculation")
+    confidence_normal = _confidence(
+        reasoning.event_id, score=0.6, classification="inference"
+    )
+    confidence_speculative = _confidence(
+        reasoning.event_id, score=0.6, classification="speculation"
+    )
     community = _community(reasoning.event_id, bot_risk=0.3)
 
     engine = OpportunityEngine()

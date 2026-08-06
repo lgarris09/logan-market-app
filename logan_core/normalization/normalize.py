@@ -67,7 +67,9 @@ class Normalizer:
 
     def normalize(self, raw: RawSignal) -> NormalizedSignal:
         if not isinstance(raw.raw_value, dict):
-            raise NormalizationError("raw_value must be a dict with entity/signal fields for V1 mapping")
+            raise NormalizationError(
+                "raw_value must be a dict with entity/signal fields for V1 mapping"
+            )
 
         entity_id = raw.raw_value.get("entity_id")
         entity_type = raw.raw_value.get("entity_type")

@@ -3,14 +3,19 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from logan_core.community_intelligence import CommunityIntelligenceEngine, EngagementSample
+from logan_core.community_intelligence import (
+    CommunityIntelligenceEngine,
+    EngagementSample,
+)
 from logan_core.contracts import EnrichedEvent, Entity
 
 NOW = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
 
 
 def _event():
-    entity = Entity(entity_id="TSLA", entity_type="ticker", display_name="Tesla", domain="stocks")
+    entity = Entity(
+        entity_id="TSLA", entity_type="ticker", display_name="Tesla", domain="stocks"
+    )
     return EnrichedEvent(
         event_id=uuid4(),
         signal_ids=[uuid4()],
@@ -35,9 +40,19 @@ def test_no_samples_returns_dormant_zero_signal():
 def test_rising_velocity_is_emerging():
     engine = CommunityIntelligenceEngine()
     samples = [
-        EngagementSample(observed_at=NOW, volume_at_point=10, unique_users=8, saves_shares=1, questions=0),
         EngagementSample(
-            observed_at=NOW + timedelta(hours=1), volume_at_point=40, unique_users=30, saves_shares=6, questions=3
+            observed_at=NOW,
+            volume_at_point=10,
+            unique_users=8,
+            saves_shares=1,
+            questions=0,
+        ),
+        EngagementSample(
+            observed_at=NOW + timedelta(hours=1),
+            volume_at_point=40,
+            unique_users=30,
+            saves_shares=6,
+            questions=3,
         ),
     ]
     signal = engine.measure(_event(), samples, now=NOW)
@@ -49,9 +64,19 @@ def test_rising_velocity_is_emerging():
 def test_falling_velocity_is_dormant():
     engine = CommunityIntelligenceEngine()
     samples = [
-        EngagementSample(observed_at=NOW, volume_at_point=100, unique_users=50, saves_shares=10, questions=5),
         EngagementSample(
-            observed_at=NOW + timedelta(hours=1), volume_at_point=10, unique_users=8, saves_shares=1, questions=0
+            observed_at=NOW,
+            volume_at_point=100,
+            unique_users=50,
+            saves_shares=10,
+            questions=5,
+        ),
+        EngagementSample(
+            observed_at=NOW + timedelta(hours=1),
+            volume_at_point=10,
+            unique_users=8,
+            saves_shares=1,
+            questions=0,
         ),
     ]
     signal = engine.measure(_event(), samples, now=NOW)
@@ -67,9 +92,19 @@ def test_bot_risk_equals_coordinated_risk():
     """
     engine = CommunityIntelligenceEngine()
     samples = [
-        EngagementSample(observed_at=NOW, volume_at_point=200, unique_users=5, saves_shares=1, questions=0),
         EngagementSample(
-            observed_at=NOW + timedelta(hours=1), volume_at_point=210, unique_users=5, saves_shares=1, questions=0
+            observed_at=NOW,
+            volume_at_point=200,
+            unique_users=5,
+            saves_shares=1,
+            questions=0,
+        ),
+        EngagementSample(
+            observed_at=NOW + timedelta(hours=1),
+            volume_at_point=210,
+            unique_users=5,
+            saves_shares=1,
+            questions=0,
         ),
     ]
     signal = engine.measure(_event(), samples, now=NOW)
@@ -79,7 +114,13 @@ def test_bot_risk_equals_coordinated_risk():
 def test_momentum_score_bounded_zero_to_one():
     engine = CommunityIntelligenceEngine()
     samples = [
-        EngagementSample(observed_at=NOW, volume_at_point=1000, unique_users=900, saves_shares=500, questions=50),
+        EngagementSample(
+            observed_at=NOW,
+            volume_at_point=1000,
+            unique_users=900,
+            saves_shares=500,
+            questions=50,
+        ),
         EngagementSample(
             observed_at=NOW + timedelta(hours=1),
             volume_at_point=5000,

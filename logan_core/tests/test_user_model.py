@@ -24,9 +24,20 @@ def test_seed_derives_domain_preferences_from_holdings_and_interests():
     builder = UserModelBuilder()
     model = builder.seed(
         user_id="demo_user",
-        holdings=[Holding(domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW)],
+        holdings=[
+            Holding(
+                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=NOW
+            )
+        ],
         interests=[
-            Interest(domain="social", topic="AI_SECTOR", weight=0.8, source="explicit", created_at=NOW, last_updated=NOW)
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.8,
+                source="explicit",
+                created_at=NOW,
+                last_updated=NOW,
+            )
         ],
     )
     domains = {p.domain for p in model.domain_preferences}

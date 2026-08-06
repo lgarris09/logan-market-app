@@ -8,7 +8,9 @@ from logan_core.memory import MemoryPermissionError
 from logan_core.receptors import tesla_ai_partnership_signal
 
 
-def test_memory_inbox_confirm_writes_through_learning(orchestrator, user_model, engagement_samples, now):
+def test_memory_inbox_confirm_writes_through_learning(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",
@@ -32,7 +34,9 @@ def test_memory_inbox_confirm_writes_through_learning(orchestrator, user_model, 
     assert orchestrator.deps.memory_store.all()[0].source_layer == "learning_system"
 
 
-def test_memory_inbox_reject_writes_correction_record(orchestrator, user_model, engagement_samples, now):
+def test_memory_inbox_reject_writes_correction_record(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",
@@ -54,7 +58,9 @@ def test_memory_inbox_reject_writes_correction_record(orchestrator, user_model, 
     assert stored[0].record_type == "correction_record"
 
 
-def test_low_confidence_feedback_is_flagged_not_written(orchestrator, user_model, engagement_samples, now):
+def test_low_confidence_feedback_is_flagged_not_written(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",
@@ -122,7 +128,11 @@ def test_process_outcome_is_an_explicit_unimplemented_stub(orchestrator):
     from datetime import datetime, timezone
     from uuid import uuid4
 
-    from logan_core.contracts import EvaluationHorizon, OutcomeRecord, VerificationQuality
+    from logan_core.contracts import (
+        EvaluationHorizon,
+        OutcomeRecord,
+        VerificationQuality,
+    )
 
     outcome = OutcomeRecord(
         outcome_id=uuid4(),
@@ -150,7 +160,9 @@ def test_process_outcome_is_an_explicit_unimplemented_stub(orchestrator):
     assert orchestrator.deps.learning_engine.flagged_for_review == []
 
 
-def test_memory_inbox_confirm_stamps_user_id(orchestrator, user_model, engagement_samples, now):
+def test_memory_inbox_confirm_stamps_user_id(
+    orchestrator, user_model, engagement_samples, now
+):
     result = orchestrator.run(
         raw_signals=[tesla_ai_partnership_signal(now)],
         user_id="demo_user",

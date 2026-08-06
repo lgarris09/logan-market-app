@@ -40,5 +40,7 @@ class MemoryRecord(BaseModel):
     @classmethod
     def _user_id_not_empty(cls, value: str) -> str:
         if not value or not value.strip():
-            raise ValueError("user_id must be a non-empty, stable identifier (ADR-033) — never empty or anonymous")
+            raise ValueError(
+                "user_id must be a non-empty, stable identifier (ADR-033) — never empty or anonymous"
+            )
         return value

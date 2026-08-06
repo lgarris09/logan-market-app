@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -23,9 +23,15 @@ class OperationalHistoryStore:
         self._entries: list[OperationalHistoryEntry] = []
         self._by_ref: dict[UUID, OperationalHistoryEntry] = {}
 
-    def record(self, ref: UUID, kind: str, payload: object, domain: str | None = None) -> None:
+    def record(
+        self, ref: UUID, kind: str, payload: object, domain: str | None = None
+    ) -> None:
         entry = OperationalHistoryEntry(
-            ref=ref, kind=kind, domain=domain, payload=payload, recorded_at=datetime.now(timezone.utc)
+            ref=ref,
+            kind=kind,
+            domain=domain,
+            payload=payload,
+            recorded_at=datetime.now(timezone.utc),
         )
         self._entries.append(entry)
         self._by_ref[ref] = entry
