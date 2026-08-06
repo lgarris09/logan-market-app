@@ -2,6 +2,9 @@ fastapi>=0.115
 uvicorn[standard]>=0.34
 pydantic>=2.10
 
-# Development-only (test suite) -- V3.1.4 BATCH-1/2
+# Development-only (test suite / lint / format / type-check) -- V3.1.4 BATCH-1/2, ADR-007
 pytest>=8.0
 httpx>=0.27
+black>=24.0
+ruff>=0.6
+mypy>=1.10

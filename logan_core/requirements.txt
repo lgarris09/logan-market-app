@@ -1,2 +1,7 @@
 pydantic>=2.10
 pytest>=8.0
+
+# Development-only (lint/format/type-check) -- V3.1.4 BATCH-2, ADR-007
+black>=24.0
+ruff>=0.6
+mypy>=1.10

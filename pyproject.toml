@@ -1,0 +1,49 @@
+[tool.black]
+# Default settings per ADR-007 ("Black (formatting), default settings") --
+# deliberately not overriding line-length even though this codebase was
+# hand-formatted closer to ~110-120 chars in places; ADR-007 already decided
+# this, and the resulting one-time reformat is isolated in its own commit
+# (V3.1.4 BATCH-2) rather than mixed with behavioral changes.
+target-version = ["py311"]
+extend-exclude = '''
+(
+  ^/logan_core/\.venv
+  | ^/backend/\.venv
+  | ^/mobile
+)
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = ["logan_core/.venv", "backend/.venv", "mobile"]
+
+[tool.ruff.lint]
+# Deliberately excludes "UP" (pyupgrade) -- rules like UP017
+# (datetime.timezone.utc -> datetime.UTC) and UP045 (Optional[X] -> X | None)
+# are pure style preference, not correctness, and would force ~120 lines of
+# unrelated churn across the codebase for no functional gain. E/F/I/B catch
+# the categories worth enforcing: real errors, unused/unsorted imports, and
+# common bug patterns.
+select = ["E", "F", "I", "B"]
+ignore = [
+    "E501",  # line length -- Black already enforces this; avoid double-reporting
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Engine functions intentionally accept `mental_model` for pipeline-position
+# stability (ADR-015 V1 pass-through) without reading it -- see the module
+# docstring in conclusion_confidence/engine.py.
+"logan_core/conclusion_confidence/engine.py" = ["ARG002"]
+
+[tool.mypy]
+python_version = "3.11"
+exclude = ["logan_core/.venv", "backend/.venv", "mobile"]
+warn_unused_ignores = true
+# V3.1.4 BATCH-2: this codebase has never been type-checked before. Rather
+# than block the release on a full-strict pass, start at a pragmatic baseline
+# (imports resolve, obvious errors caught) and tighten incrementally -- see
+# docs/specs/Logan_Documentation_v3.1.3/V3.1.4_IMPLEMENTATION_SUMMARY.md for
+# the exact list of currently-suppressed categories and why.
+disallow_untyped_defs = false
+check_untyped_defs = true
