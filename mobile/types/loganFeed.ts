@@ -23,7 +23,10 @@ export type FeedItem = {
   ticker: string | null;
   domain: string;
   delivered_item: DeliveredItem;
-  priority_score: number;
+  // 1-indexed position in this response's already-sorted order (1 = most
+  // important). The backend's internal ranking score is never exposed here
+  // (ADR-029) -- `rank` is the correct public-facing ordering signal.
+  rank: number;
   confidence_score: number;
   confidence_label: "High" | "Moderate" | "Low" | "Speculative";
   connected_event_ids: string[];

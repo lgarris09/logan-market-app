@@ -37,7 +37,9 @@ export function Vessel({
 }) {
   const symbol = resolveSymbol(item);
   const instability = 1 - item.confidence_score; // low confidence -> more visible flicker
-  const prominence = item.priority_score / 100;
+  // Already 0..1 and rank-derived (see attentionLayout.ts) -- no raw score is
+  // ever available here, per ADR-029.
+  const prominence = layout.prominence;
 
   const entrance = useRef(new Animated.Value(0)).current;
   const drift = useRef(new Animated.Value(0)).current;

@@ -16,6 +16,12 @@ export type VesselLayout = {
   x: number; // 0..1 fraction of field width -- stable regardless of focus
   y: number; // 0..1 fraction of field height
   size: number; // px diameter of the resting (dormant) glow
+  // 0..1, derived from this item's rank position among the current items
+  // (1.0 = rank 1 / most important). Public API responses never expose a raw
+  // ranking score (ADR-029) -- this is the correct, already-normalized value
+  // for any visual "how prominent should this feel" calculation. Vessel.tsx
+  // should read this instead of deriving anything from a score field.
+  prominence: number;
   driftPhase: number; // 0..2π, stable per entity
   driftFreq: number; // ~0.6..1.1
   breathPhase: number; // 0..2π -- confidence-driven flicker cycle
@@ -38,7 +44,7 @@ function stableRandom(seed: string): number {
 
 /** Items ranked by priority -- the order focus moves through on a swipe. */
 export function rankedByPriority(items: FeedItem[]): FeedItem[] {
-  return [...items].sort((a, b) => b.priority_score - a.priority_score);
+  return [...items].sort((a, b) => a.rank - b.rank);
 }
 
 /** The item that should be in focus by default: whatever matters most right now. */
@@ -71,13 +77,13 @@ export function computeAtmosphereLayout(items: FeedItem[]): Map<string, VesselLa
   const result = new Map<string, VesselLayout>();
   if (items.length === 0) return result;
 
-  const scores = items.map((item) => item.priority_score);
-  const minScore = Math.min(...scores);
-  const maxScore = Math.max(...scores);
-  const range = maxScore - minScore || 1;
+  // Normalize by rank position, not a raw score (ADR-029 -- the backend
+  // never sends one). Rank 1 (best) -> t=1; the lowest-ranked item -> t=0.
+  const maxRank = Math.max(...items.map((item) => item.rank));
+  const rankRange = maxRank - 1 || 1;
 
   items.forEach((item) => {
-    const t = (item.priority_score - minScore) / range;
+    const t = 1 - (item.rank - 1) / rankRange;
     const radius = RADIUS_MAX - t * (RADIUS_MAX - RADIUS_MIN);
     const size = SIZE_MIN + t * (SIZE_MAX - SIZE_MIN);
 
@@ -92,6 +98,7 @@ export function computeAtmosphereLayout(items: FeedItem[]): Map<string, VesselLa
       x: Math.min(0.92, Math.max(0.08, x)),
       y: Math.min(0.88, Math.max(0.14, y)),
       size,
+      prominence: t,
       driftPhase: stableRandom(`${item.event_id}:drift`) * Math.PI * 2,
       driftFreq: 0.6 + stableRandom(`${item.event_id}:driftFreq`) * 0.5,
       breathPhase: stableRandom(`${item.event_id}:breath`) * Math.PI * 2,

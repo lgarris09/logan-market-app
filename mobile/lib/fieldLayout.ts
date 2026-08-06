@@ -5,7 +5,7 @@
 // seeded at a natural starting point, then three simple forces are applied
 // over many iterations until the system settles:
 //   - a radial spring pulling each node toward the orbit distance its
-//     priority_score implies (importance = distance from the core)
+//     rank implies (importance = distance from the core)
 //   - a cohesion pull toward its cluster's centroid (related entities drift
 //     toward each other)
 //   - mutual repulsion between every pair of nodes (nothing overlaps, nothing
@@ -109,10 +109,10 @@ export function computeFieldLayout(
   const clusterByItem = new Map<string, string>();
   buildClusters(items).forEach((ids, root) => ids.forEach((id) => clusterByItem.set(id, root)));
 
-  const scores = items.map((i) => i.priority_score);
-  const minScore = Math.min(...scores);
-  const maxScore = Math.max(...scores);
-  const scoreRange = maxScore - minScore || 1;
+  // Normalize by rank position, not a raw score (ADR-029 -- the backend
+  // never sends one). Rank 1 (best) -> t=1; the lowest-ranked item -> t=0.
+  const maxRank = Math.max(...items.map((i) => i.rank));
+  const rankRange = maxRank - 1 || 1;
 
   const targetRadius = new Map<string, number>();
   const points = new Map<string, Point>();
@@ -120,9 +120,9 @@ export function computeFieldLayout(
   // Seed: golden-angle spread (the same distribution pattern that gives
   // sunflower seeds and pinecones their non-repeating natural look) at each
   // item's target orbit distance, plus a stable per-item nudge so identical
-  // priority scores don't seed on top of each other.
+  // ranks don't seed on top of each other.
   items.forEach((item, index) => {
-    const t = (item.priority_score - minScore) / scoreRange;
+    const t = 1 - (item.rank - 1) / rankRange;
     const radius = outerRadius - t * (outerRadius - innerRadius);
     targetRadius.set(item.event_id, radius);
 
