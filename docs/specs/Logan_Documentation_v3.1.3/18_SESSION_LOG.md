@@ -29,6 +29,83 @@ This file is the institutional memory of the project.
 
 ---
 
+### 2026-08-06 — V3.1.4 implementation, BATCH-1 through BATCH-3 (in progress)
+`[VERIFIED]`
+
+**Context:** Full V3.1.4 implementation authorized in one continuous pass (BATCH-1 through BATCH-5),
+following 12 owner decisions (OD-001 through OD-012) resolving prior ambiguities from the V3.1.4 gap
+review. Branch `feat/v3.1.4-implementation`, local commits only, no push/merge/deploy.
+
+**BATCH-1 (scoring/policy correctness) — complete:**
+- `MentalModel.confidence` severed from `ConclusionConfidence.confidence_score` (ADR-015): confidence now
+  derives from `EvidenceTrust.trust_score` plus contradiction penalty only.
+- `community_momentum` removed from ranking entirely (ADR-034): no `* 0.02` term in the rank formula, no
+  50/50 blend in `global_importance`.
+- `priority_score` renamed to `internal_rank_score` and documented internal-only (ADR-029);
+  `backend/app/logan_feed.py`'s public `FeedItem` now exposes an ordinal `rank: int` instead of any score;
+  mobile consumers (`attentionLayout.ts`, `fieldLayout.ts`, `Vessel.tsx`) migrated to `rank`, fixing a
+  latent unit bug in `Vessel`'s prominence calculation along the way.
+- `hit_quality_score`/`user_value_score` deliberately **not** implemented this pass — no accepted ADR
+  defines a deterministic split of the unified score into objective/personalized components; inventing one
+  was out of scope. Documented as a deferred item, not silently dropped.
+
+**BATCH-2 (contract completeness, tooling) — complete:**
+- `ActiveContext.user_id` added as a required field (ADR-033 extension); threaded through
+  `ActiveContextBuilder.build()` and the orchestrator.
+- `decision_trace` populated across every layer that produces a decision. The `contradicting` field on
+  world-model events and the `contradicts` branch in reasoning remain documented-unreachable — no valid
+  deterministic contradiction rule exists without inventing per-domain semantic comparison (prohibited);
+  reserved and tested rather than built.
+- `FATIGUE_WINDOW`/`FATIGUE_LIMIT`/`COOLDOWN_WINDOW` wired into real fatigue/cooldown expiration logic in
+  `prioritization/engine.py` (previously unwired constants).
+- Domain fields typed as the `Domain` Literal throughout contracts and engines (previously bare `str` in
+  several places).
+- Full per-layer unit test coverage added — every previously-untested layer now has a dedicated test file.
+- Python tooling added: root `pyproject.toml` (Black/Ruff/mypy), dev-only deps in both `requirements.txt`
+  files. 13 mypy findings in `logan_core`, 4 in `backend` — all fixed with genuine type narrowing (exported
+  Literal aliases, explicit variable annotations), not suppressions, except 3 documented suppressions for a
+  known mypy limitation on default-arg-capture lambdas. Two real (if runtime-benign) bugs caught this way:
+  an `Optional[tuple]` ternary-indexing pattern in `world_model/model.py` and an analogous one in
+  `prioritization/engine.py`.
+- Mobile tooling added: ESLint flat config (`eslint-config-expo`) + Prettier. ~97 findings from
+  React-Compiler-readiness rules (`react-hooks/refs`, `react-hooks/purity`, etc.) determined to be
+  near-100% false positives against this codebase's classic Animated API and fetch-on-mount patterns;
+  disabled with documented rationale rather than rewriting the animation architecture.
+- Test count: 95 `logan_core` tests + 8 `backend` tests, up from 40.
+- CI added: `.github/workflows/ci.yml`, 3 jobs (`logan_core`, `backend`, `mobile`).
+- Formatting-only changes (Ruff --fix, Black, Prettier) isolated into dedicated commits, separate from
+  behavioral changes, per instruction.
+
+**BATCH-3 (documentation reconciliation) — in progress:**
+- TriggerEvent and `OpportunityLifecycle`/Decay Engine content relabeled SPECIFIED — NOT IMPLEMENTED across
+  ~20 files in `docs/specs/Logan_Documentation_v3.1.3/` (OD-009): both trigger framework files, all 7
+  `TRIGGER_REGISTRY_*.md` files, `02_LOGAN_INTELLIGENCE_BRAIN.md`, `10_OPPORTUNITY_ENGINE.md` (entire file
+  — both Lifecycle and Decay Engine parts), `06_LAYER_INTERFACE_SPECIFICATION.md`, `07_DATA_CONTRACTS.md`,
+  `24_API_SPECIFICATION.md`, `26_GOLDEN_TEST_SCENARIOS.md`, `00_MASTER_BRIEF.md`, `08_BUILD_ORDER.md`,
+  `05_SYSTEM_ARCHITECTURE.md`, `04_WORLD_MODEL.md`, `03_MEMORY_ARCHITECTURE.md`, `OUTCOME_EVALUATION.md`,
+  `ENTITY_RESOLUTION.md`, `17_CLAUDE_ENGINEERING_GUIDE.md`, `14_ENGINEERING_STANDARDS.md`. Historical
+  changelog/footer lines documenting what a past version *said* were left untouched by design.
+- Domain count/naming gap made explicit in `07_DATA_CONTRACTS.md`: the doc's 8-domain list (ADR-037) vs.
+  the running `Domain` Literal's 6 values — `culture`/`personal_finance` are SPECIFIED — NOT IMPLEMENTED in
+  code; adding them is out of V3.1.4 scope (broad domain expansion excluded).
+- ADR-039 added: "Attention Field" ratified as the product-facing name, closing the open question ADR-027
+  left unresolved (OD-005).
+- ADR-040 added: `docs/specs/Logan_Documentation_v3.1.3/` ratified as the authoritative spec lineage; the
+  older `docs/specs/*.md` numbered files and `LOGAN_*_v1.0.md` files marked historical, preserved unchanged
+  (OD-010). `CLAUDE.md` and `docs/ARCHITECTURE.md` required-reading pointers updated accordingly.
+- `27_SECURITY_PRIVACY_COMPLIANCE.md` fully rewritten (P0 gap-review item): every principle, control, and
+  table row now tagged CURRENT / LOCAL-DEV LIMITATION / REQUIRED — TRUSTED ALPHA / FUTURE — PRODUCTION. New
+  "Current State (V3.1.4)" section states plainly what's actually true today (single local operator, no
+  auth, no encryption, no account linking, simulated receptors only). No target-design content deleted —
+  relabeled, not removed.
+- `23_CURRENT_IMPLEMENTATION_STATE.md` updated for all BATCH-1/2/3 changes, including resolving the prior
+  session's "Known ADR-034 conflict, not fixed" note (now fixed).
+- Remaining before BATCH-3 closes: `DOCUMENTATION_REFERENCE_AUDIT.md` refresh, `28_PACKAGE_MANIFEST.md`
+  update, and this docs work committed as its own commit (or set of commits), separate from BATCH-1/2's
+  functional-code commits.
+
+---
+
 ### 2026-08-05 — Sprint 2 Code Foundations (first code pass on the v3.1.3 package)
 `[VERIFIED]`
 

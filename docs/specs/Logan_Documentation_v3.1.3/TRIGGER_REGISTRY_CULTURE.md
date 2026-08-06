@@ -1,5 +1,6 @@
 # Logan Intelligence — TriggerEvent Registry: Culture Domain
 **Version:** 3.1.3
+**Status:** SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) — see `TRIGGER_EVENT_FRAMEWORK.md`.
 *New in v3.1.2. No prior version.*
 *Authoritative source for all Culture domain trigger codes. Global index: `TRIGGER_REGISTRY_GLOBAL.md`.*
 

@@ -3,6 +3,7 @@
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/17_CLAUDE_ENGINEERING_GUIDE.md” (historical label).*
 
 *This document tells Claude how to think about, work on, and evolve Logan Intelligence. Read it before every session.*
+**TriggerEvent status:** rules below that assume a live TriggerEvent registry enforcement mechanism are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). There is no TriggerEvent object or registry-validation code in `logan_core/` as of V3.1.4; do not build it as part of V3.1.4 work.
 
 ---
 

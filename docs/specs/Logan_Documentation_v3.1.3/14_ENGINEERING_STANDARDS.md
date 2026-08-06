@@ -1,6 +1,7 @@
 # Logan Intelligence — Engineering Standards
 **Version:** 3.1.3
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/14_ENGINEERING_STANDARDS.md” (historical label).*
+**TriggerEvent status:** the `trigger_registry/` module, `TriggerEvent` data contract class, and TriggerEvent-specific tests referenced below are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). None of these exist in `logan_core/` as of V3.1.4.
 
 ---
 

@@ -1,6 +1,13 @@
 # Logan Intelligence — TriggerEvent Framework
 **Version:** 3.1.3
-**Status:** LOCKED for current implementation cycle; changes require ADR and user approval.
+**Status:** SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). This contract,
+its lifecycle, and every registered trigger code below are an approved design,
+not running code — zero TriggerEvent code exists anywhere in `logan_core/` as
+of V3.1.4 (confirmed by direct code inspection during the V3.1.4 gap review;
+see `23_CURRENT_IMPLEMENTATION_STATE.md`). The "LOCKED" language below
+describes how this specification itself is not to be casually changed once
+implementation begins — it does not mean implementation has begun. Building
+this as running code is explicitly out of scope for V3.1.4 (OD-009).
 
 ---
 

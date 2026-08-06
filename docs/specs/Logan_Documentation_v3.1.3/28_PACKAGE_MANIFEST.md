@@ -9,35 +9,35 @@
 
 | # | File | Version | Source | Verification Status | Notes |
 |---|------|---------|--------|--------------------|----|
-| 00 | 00_MASTER_BRIEF.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains; 17_CLAUDE_ENGINEERING_GUIDE.md reference row corrected (ADR-038) |
+| 00 | 00_MASTER_BRIEF.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains; 17_CLAUDE_ENGINEERING_GUIDE.md reference row corrected (ADR-038); TriggerEvent Framework index heading tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
 | 01 | 01_PRODUCT_SPECIFICATION.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Culture and Personal Finance domains added; not reconciled to v3.1.3 this pass |
-| 02 | 02_LOGAN_INTELLIGENCE_BRAIN.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent as first-class pipeline object; not reconciled to v3.1.3 this pass |
-| 03 | 03_MEMORY_ARCHITECTURE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent outcome performance branch added; not reconciled to v3.1.3 this pass |
-| 04 | 04_WORLD_MODEL.md | 3.1.2 | v3.1 base (updated) | VERIFIED | trigger_events array added to WorldModel entity; not reconciled to v3.1.3 this pass |
-| 05 | 05_SYSTEM_ARCHITECTURE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent registry in pipeline; not reconciled to v3.1.3 this pass |
-| 06 | 06_LAYER_INTERFACE_SPECIFICATION.md | 3.1.3 | source_material/02_LAYER_INTERFACES.md | VERIFIED | ReasoningResult/AttentionRecommendation/MemoryRecord/Dimensions fields reconciled to 07_DATA_CONTRACTS.md (ADR-021, 029, 033, 034) |
-| 07 | 07_DATA_CONTRACTS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Full v3.1.3 reconciliation (ADR-021, 029, 030, 033, 034, 036, 037) |
-| 08 | 08_BUILD_ORDER.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains (ADR-037); priority_score→internal_rank_score (ADR-029) |
+| 02 | 02_LOGAN_INTELLIGENCE_BRAIN.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent pipeline diagram/text explicitly tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 03 | 03_MEMORY_ARCHITECTURE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent outcome performance branch tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 04 | 04_WORLD_MODEL.md | 3.1.2 | v3.1 base (updated) | VERIFIED | trigger_events array / TriggerEvent matching tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 05 | 05_SYSTEM_ARCHITECTURE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | "TriggerEvent arrival" pipeline trigger tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 06 | 06_LAYER_INTERFACE_SPECIFICATION.md | 3.1.3 | source_material/02_LAYER_INTERFACES.md | VERIFIED | ReasoningResult/AttentionRecommendation/MemoryRecord/Dimensions fields reconciled to 07_DATA_CONTRACTS.md (ADR-021, 029, 033, 034); all TriggerEvent I/O references tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 07 | 07_DATA_CONTRACTS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Full v3.1.3 reconciliation (ADR-021, 029, 030, 033, 034, 036, 037); TriggerEvent/OpportunityLifecycle contracts tagged SPECIFIED — NOT IMPLEMENTED; Domain enum's 8-vs-6 doc/code gap made explicit (V3.1.4 BATCH-3, OD-009) |
+| 08 | 08_BUILD_ORDER.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains (ADR-037); priority_score→internal_rank_score (ADR-029); TriggerEvent/OpportunityLifecycle build steps tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
 | 09 | 09_READ_AND_SUGGEST.md | 3.1.2 | v3.1 base (updated) | VERIFIED | LOCKED label; sports betting deferred to V2; not reconciled to v3.1.3 this pass |
-| 10 | 10_OPPORTUNITY_ENGINE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | action_window_opens/closes; not reconciled to v3.1.3 this pass |
+| 10 | 10_OPPORTUNITY_ENGINE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Entire file (Lifecycle + Decay Engine) tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
 | 11 | 11_UI_PHILOSOPHY.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Community momentum/edge glow LOCKED rule; not reconciled to v3.1.3 this pass |
 | 12 | 12_VISUAL_LANGUAGE.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | News domain color gap flagged, not invented (ADR-037) |
 | 13 | 13_BRANDING.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Advisory voice rule; correction state tone; not reconciled to v3.1.3 this pass |
-| 14 | 14_ENGINEERING_STANDARDS.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent registry section; not reconciled to v3.1.3 this pass |
+| 14 | 14_ENGINEERING_STANDARDS.md | 3.1.2 | v3.1 base (updated) | VERIFIED | TriggerEvent registry section tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
 | 15 | 15_DECISIONS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | DECISION-016 cross-referenced to ADR-034 clarification |
-| 16 | 16_ROADMAP.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains throughout (ADR-037) |
-| 17 | 17_CLAUDE_ENGINEERING_GUIDE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Not governing authority (ADR-038) — clarified via 00_MASTER_BRIEF.md reference, not edited in place |
-| 18 | 18_SESSION_LOG.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 2026-08-04/05 v3.1.3 reconciliation session entry added at top |
-| 19 | 19_FUTURE_IDEAS.md | 3.1.2 | v3.1 base (updated) | VERIFIED | ML trigger discovery; not reconciled to v3.1.3 this pass |
+| 16 | 16_ROADMAP.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains throughout (ADR-037); TriggerEvent phases already correctly future-tense, left as-is |
+| 17 | 17_CLAUDE_ENGINEERING_GUIDE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Not governing authority (ADR-038); TriggerEvent registry rules tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 18 | 18_SESSION_LOG.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | 2026-08-06 V3.1.4 BATCH-1/2/3 session entry added at top |
+| 19 | 19_FUTURE_IDEAS.md | 3.1.2 | v3.1 base (updated) | VERIFIED | ML trigger discovery; already correctly tagged V2/future, left as-is |
 | 20 | 20_LOGAN_PRINCIPLES.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Principle 13 added; not reconciled to v3.1.3 this pass |
 | 21 | 21_TRENDING_ENGAGEMENT.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Amplifier mechanism removed per ADR-034 (written by the prior session) |
 | 22 | 22_OPPORTUNITY_CARD_SPEC.md | 3.1.2 | v3.1 base (updated) | VERIFIED | 80-char headline; not reconciled to v3.1.3 this pass |
-| 23 | 23_CURRENT_IMPLEMENTATION_STATE.md | 3.1.3 | Direct repository inspection | VERIFIED | Rewritten from `git`/`logan_core/`/`mobile/app/` inspection, not reconstructed |
-| 24 | 24_API_SPECIFICATION.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | priority_score removed from public API response examples (ADR-029) |
+| 23 | 23_CURRENT_IMPLEMENTATION_STATE.md | 3.1.4 | Direct repository inspection | VERIFIED | Updated for all V3.1.4 BATCH-1/2/3 changes (community_momentum/internal_rank_score fix, user_id, decision_trace, tooling, TriggerEvent/Lifecycle relabeling); 95+8 test count |
+| 24 | 24_API_SPECIFICATION.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | priority_score removed from public API response examples (ADR-029); trigger_events/trigger_event_fired tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
 | 25 | 25_INTEGRATION_FEASIBILITY.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains; News integration assessment flagged RESEARCH REQUIRED, not invented |
-| 26 | 26_GOLDEN_TEST_SCENARIOS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Scenario 13: 7→8 domains (ADR-037) |
-| 27 | 27_SECURITY_PRIVACY_COMPLIANCE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | User controls section; not reconciled to v3.1.3 this pass |
-| 28 | 28_PACKAGE_MANIFEST.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | This file; rebuilt for the actual v3.1.3 file set |
+| 26 | 26_GOLDEN_TEST_SCENARIOS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Scenario 13: 7→8 domains (ADR-037); TriggerEvent-dependent scenarios tagged SPECIFIED — NOT IMPLEMENTED, not part of V3.1.4 release gates (V3.1.4 BATCH-3, OD-009) |
+| 27 | 27_SECURITY_PRIVACY_COMPLIANCE.md | 3.1.4 | v3.1.2 base (updated) | VERIFIED | Fully rewritten (P0 gap-review item): every control tagged CURRENT / LOCAL-DEV LIMITATION / REQUIRED — TRUSTED ALPHA / FUTURE — PRODUCTION (V3.1.4 BATCH-3) |
+| 28 | 28_PACKAGE_MANIFEST.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | This file; updated for V3.1.4 BATCH-3 documentation changes |
 
 ---
 
@@ -45,17 +45,21 @@
 
 | File | Version | Status | Notes |
 |------|---------|--------|-------|
-| TRIGGER_EVENT_FRAMEWORK.md | 3.1.2 | WRITTEN | TriggerEvent architecture, contract, lifecycle, and enforcement rules |
-| TRIGGER_REGISTRY_GLOBAL.md | 3.1.2 | WRITTEN | Master index of all registered trigger codes across all domains — no News entries yet |
-| TRIGGER_REGISTRY_STOCKS.md | 3.1.2 | WRITTEN | Stocks domain trigger codes |
-| TRIGGER_REGISTRY_SPORTS.md | 3.1.2 | WRITTEN | Sports domain trigger codes |
-| TRIGGER_REGISTRY_PREDICTION_MARKETS.md | 3.1.2 | WRITTEN | Prediction Markets domain trigger codes |
-| TRIGGER_REGISTRY_CRYPTO.md | 3.1.2 | WRITTEN | Crypto domain trigger codes |
-| TRIGGER_REGISTRY_CULTURE.md | 3.1.2 | WRITTEN | Culture domain trigger codes |
-| TRIGGER_REGISTRY_PERSONAL_FINANCE.md | 3.1.2 | WRITTEN | Personal Finance domain trigger codes |
+*All files in this section are SPECIFIED — NOT IMPLEMENTED as of V3.1.4 (V3.1.4 BATCH-3, OD-009): no `logan_core/` module emits, matches, or stores a TriggerEvent object. "WRITTEN" below describes documentation completeness only, not code status.*
+
+| File | Version | Status | Notes |
+|------|---------|--------|-------|
+| TRIGGER_EVENT_FRAMEWORK.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | TriggerEvent architecture, contract, lifecycle, and enforcement rules |
+| TRIGGER_REGISTRY_GLOBAL.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Master index of all registered trigger codes across all domains — no News entries yet |
+| TRIGGER_REGISTRY_STOCKS.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Stocks domain trigger codes |
+| TRIGGER_REGISTRY_SPORTS.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Sports domain trigger codes |
+| TRIGGER_REGISTRY_PREDICTION_MARKETS.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Prediction Markets domain trigger codes |
+| TRIGGER_REGISTRY_CRYPTO.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Crypto domain trigger codes |
+| TRIGGER_REGISTRY_CULTURE.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Culture domain trigger codes |
+| TRIGGER_REGISTRY_PERSONAL_FINANCE.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | Personal Finance domain trigger codes |
 | TRIGGER_REGISTRY_NEWS.md | — | **MISSING** | Referenced by `07_DATA_CONTRACTS.md` (ADR-037) but does not exist. Trigger codes are `RESEARCH REQUIRED` — not invented this session. |
-| TRIGGER_SCORING_AND_CONFLICT_RULES.md | 3.1.2 | WRITTEN | How TriggerEvents affect scoring; conflict resolution |
-| ENTITY_RESOLUTION.md | 3.1.2 | WRITTEN | Cross-domain entity identity resolution rules |
+| TRIGGER_SCORING_AND_CONFLICT_RULES.md | 3.1.2 | WRITTEN, NOT IMPLEMENTED | How TriggerEvents affect scoring; conflict resolution |
+| ENTITY_RESOLUTION.md | 3.1.2 | WRITTEN | Cross-domain entity identity resolution rules; TriggerEvent reattribution sub-section tagged SPECIFIED — NOT IMPLEMENTED |
 | NOTIFICATION_POLICY.md | 3.1.3 | WRITTEN | priority_score→internal_rank_score (ADR-029) |
 | OUTCOME_EVALUATION.md | 3.1.3 | WRITTEN | Redesigned per ADR-036 (written by the prior session) |
 
@@ -112,6 +116,7 @@
 *v3.1.2 changes: All 29 core document entries updated from v3.1 to v3.1.2 with change summaries. TriggerEvent Framework section added (12 new files). DOCUMENTATION_REFERENCE_AUDIT.md added to Supporting Files. Total count updated from 40 to 55. TRIGGER_REGISTRY_GLOBAL.md added to regularly-updated files list.*
 *v3.1.3 changes: Rebuilt to reflect the actual v3.1.3 package. Per-file Version column now reflects each file's real last-touched version rather than a blanket bump — most files remain honestly labeled 3.1.2 (bulk-copied, not reconciled this pass). 6 new ML Foundation files added. TRIGGER_REGISTRY_NEWS.md listed as missing/flagged rather than silently omitted. Total corrected to 59 present + 1 flagged missing.*
 *v3.1.3 code-foundation pass (2026-08-05): V3.1.3_IMPLEMENTATION_SUMMARY.md added to Supporting Files (new). ADR-036/037/038 accepted (see docs/DECISIONS.md). Total corrected to 60 present + 1 flagged missing.*
+*V3.1.4 BATCH-3 pass (2026-08-06): TriggerEvent Framework files section and every core-document row touched by the OD-009 relabeling pass annotated SPECIFIED — NOT IMPLEMENTED. `10_OPPORTUNITY_ENGINE.md` row updated to reflect whole-file OpportunityLifecycle/Decay Engine tagging. `27_SECURITY_PRIVACY_COMPLIANCE.md` and `28_PACKAGE_MANIFEST.md` bumped to 3.1.4 (real content changes this pass). `18_SESSION_LOG.md` and `23_CURRENT_IMPLEMENTATION_STATE.md` bumped to 3.1.4 for the V3.1.4 session entry and current-state refresh. File count and TriggerEvent-missing flag unchanged (no files added or removed this pass).*
 
 
 ## v3.1.2 Patch

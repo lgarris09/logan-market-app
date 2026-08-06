@@ -407,11 +407,9 @@ code lands. Every non-obvious technical, product, or process choice belongs here
 - Consequences: `OpportunityField`/`OpportunityNode`/`LoganCore`/`fieldLayout.ts` are preserved unchanged
   at `app/field-legacy.tsx`, reachable via the menu — nothing was deleted, per the project's standing
   preserve-don't-delete pattern for superseded screens. New code lives in `AttentionField.tsx`,
-  `Vessel.tsx`, `attentionLayout.ts`. **Open question, not resolved by this ADR**: whether the
-  product-facing name should also change from "Opportunity Field" to "Attention Field" — the user's own
-  reference mockups from this session label it "THE ATTENTION FIELD," and the code now uses
-  `AttentionField` throughout, but nobody has explicitly decided this the way ADR-023 explicitly decided
-  the Wheel→Field rename. Revisit and either ratify or reject explicitly; don't let it stay ambiguous.
+  `Vessel.tsx`, `attentionLayout.ts`. **Open question, not resolved by this ADR** (whether the
+  product-facing name should also change from "Opportunity Field" to "Attention Field"): resolved by
+  [ADR-039](#adr-039-attention-field-ratified-as-the-product-facing-name-closing-adr-027s-open-naming-question) — ratified as "Attention Field."
 
 ## ADR-028: Atmosphere-first visual language adopted; rendering migrates to Skia for this component
 - Date: 2026-08-03
@@ -625,3 +623,47 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   accepted ADR here, `CLAUDE.md` and this log win. `17_CLAUDE_ENGINEERING_GUIDE.md` is not edited to add a
   disclaimer as part of this ADR — it stands as internal package content, superseded in authority only,
   not in substance. Final drafted text stands as reviewed in the 2026-08-04/05 session completion report.
+
+## ADR-039: "Attention Field" ratified as the product-facing name, closing ADR-027's open naming question
+- Date: 2026-08-06
+- Status: Accepted (owner decision OD-005, V3.1.4 BATCH-3)
+- Context: ADR-027 replaced the radial `OpportunityField` interaction model with the depth-of-focus
+  `AttentionField` component but explicitly left the product-facing *name* unresolved — "Opportunity
+  Field" was still the documented/spoken term, while the code, the component name, and the user's own
+  reference mockups ("THE ATTENTION FIELD") already pointed to "Attention Field." That ambiguity was
+  carried unresolved through the v3.1.3 documentation package, which still uses "Opportunity Field" as
+  the active-screen term throughout.
+- Decision: "Attention Field" is the product-facing term for the live depth-of-focus home screen, going
+  forward from V3.1.4. "Opportunity Field" is retained only as a historical term for the superseded
+  radial layout preserved at `app/field-legacy.tsx` (ADR-023, ADR-027) and in already-published historical
+  changelog/session-log entries, which are not rewritten.
+- Consequences: V3.1.4 BATCH-3 documentation updates describing the *active* UI use "Attention Field."
+  Prior-version numbered docs (`docs/specs/Logan_Documentation_v3.1.3/*.md`) are not swept file-by-file to
+  replace every historical "Opportunity Field" mention — that volume of terminology churn across
+  ~30 files is out of proportion to a naming ADR and is deferred to the next full documentation pass;
+  new/edited content in this pass uses the ratified name. Code identifiers (`AttentionField.tsx`,
+  `attentionLayout.ts`) already matched this decision before it was ratified and are unchanged.
+
+## ADR-040: `docs/specs/Logan_Documentation_v3.1.3/` ratified as the authoritative spec lineage; older `docs/specs/*.md` numbered files marked historical
+- Date: 2026-08-06
+- Status: Accepted (owner decision OD-010, V3.1.4 BATCH-3)
+- Context: Two parallel documentation lineages exist under `docs/specs/`: the original numbered files
+  (`00_MASTER_BRIEF.md`... `11_UI_SYSTEM.md`, `LOGAN_ARCHITECTURE_v1.0.md`, `LOGAN_DATA_CONTRACTS_v1.0.md`,
+  `LOGAN_IMPLEMENTATION_PLAN.md`, `LOGAN_VISUALIZATION_PHILOSOPHY_v1.0.md`, `ENGINEERING_REVIEW_NOTES.md`)
+  and the newer, more actively reconciled `docs/specs/Logan_Documentation_v3.1.3/` package (29 core files,
+  TriggerEvent framework files, ML-foundation files). `CLAUDE.md` and `docs/ARCHITECTURE.md` pointed to
+  the older lineage for required `logan_core/` reading, while the actual v3.1.2/v3.1.3 reconciliation work
+  (ADR-020 through ADR-038) was all done against the newer package — creating a real risk that an AI
+  assistant or contributor reads stale, unreconciled interface specs.
+- Decision: `docs/specs/Logan_Documentation_v3.1.3/` is the authoritative, canonical specification lineage
+  going forward. The older `docs/specs/*.md` numbered files (00-11), `LOGAN_ARCHITECTURE_v1.0.md`,
+  `LOGAN_DATA_CONTRACTS_v1.0.md`, `LOGAN_IMPLEMENTATION_PLAN.md`, `LOGAN_VISUALIZATION_PHILOSOPHY_v1.0.md`,
+  and `ENGINEERING_REVIEW_NOTES.md` are historical: preserved unchanged (not deleted, per the project's
+  standing preserve-don't-delete pattern), but no longer read as current guidance.
+- Consequences: `CLAUDE.md`'s required-reading pointers for `logan_core/` work updated to reference
+  `Logan_Documentation_v3.1.3/06_LAYER_INTERFACE_SPECIFICATION.md`, `07_DATA_CONTRACTS.md`, and
+  `08_BUILD_ORDER.md` instead of the `LOGAN_*_v1.0.md` files. `docs/ARCHITECTURE.md`'s reference updated
+  similarly. The old lineage files are not individually annotated with a superseded-banner in this pass
+  (out of proportion to the ADR); this entry is the authoritative record that they are historical. A
+  future pass may add short pointer banners to the old files themselves if contributors are found reading
+  them by habit.

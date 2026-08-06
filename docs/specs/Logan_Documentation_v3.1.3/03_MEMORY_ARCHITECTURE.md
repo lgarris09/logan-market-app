@@ -1,5 +1,6 @@
 # Logan Intelligence — Memory Architecture
 **Version:** 3.1.3
+**TriggerEvent status:** the `trigger_event_outcome` memory branch and TriggerEvent performance retention rules described below are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). `logan_core/memory/store.py` writes no TriggerEvent-derived records as of V3.1.4.
 
 ---
 

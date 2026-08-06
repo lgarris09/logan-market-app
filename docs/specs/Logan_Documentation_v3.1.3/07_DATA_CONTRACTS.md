@@ -1,5 +1,6 @@
 # Logan Intelligence System — Data Contracts
 **Version:** 3.1.3
+**TriggerEvent / OpportunityLifecycle status:** both contracts and every field derived from them (`trigger_events`, `trigger_event_ids`, `trigger_adjustments`, the `OpportunityLifecycle` object, `DecayState`) are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). No corresponding Pydantic model exists in `logan_core/contracts/` as of V3.1.4. Building these as running code is explicitly out of scope for V3.1.4.
 
 Every object in the system is defined here.
 Read this before defining any schema, type, or model.
@@ -77,8 +78,24 @@ signal_id       uuid      required   unique across all signals
 domain          string    required   "stocks"|"sports"|"poly"|"social"|"crypto"|
                                      "culture"|"personal_finance"|"news"
                                      (news added in v3.1.3 — see ADR-037,
-                                     TRIGGER_REGISTRY_NEWS.md; matches running
-                                     code's logan_core/contracts/common.py)
+                                     TRIGGER_REGISTRY_NEWS.md)
+                                     STATUS (V3.1.4 BATCH-3): running code's
+                                     `logan_core/contracts/common.py` Domain
+                                     Literal implements only 6 of these 8 —
+                                     "stocks"|"sports"|"poly"|"social"|"news"|
+                                     "crypto". "culture" and "personal_finance"
+                                     are SPECIFIED — NOT IMPLEMENTED: they exist
+                                     in this document and the TriggerEvent
+                                     registries (TRIGGER_REGISTRY_CULTURE.md,
+                                     TRIGGER_REGISTRY_PERSONAL_FINANCE.md) but
+                                     have no corresponding receptor, contract
+                                     value, or pipeline handling in `logan_core/`
+                                     as of V3.1.4. Adding them to the running
+                                     Domain Literal is out of scope for V3.1.4
+                                     (broad domain expansion excluded — see
+                                     OD scope). Whether to add them to code as
+                                     inert values or leave the doc/code split
+                                     as-is is an open owner decision.
 source_id       string    required   registered source identifier
 source_name     string    required
 raw_value       any       required   must not be null

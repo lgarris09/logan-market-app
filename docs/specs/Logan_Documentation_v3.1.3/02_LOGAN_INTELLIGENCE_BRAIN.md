@@ -48,7 +48,7 @@ Every opportunity, suggestion, or recommendation must be traceable to a reason. 
 External World
       │
       ▼
-Domain Receptors  ──→  TriggerEvent emitted on signal arrival
+Domain Receptors  ──→  TriggerEvent emitted on signal arrival (SPECIFIED — NOT IMPLEMENTED, V3.1.4 BATCH-3 / OD-009)
       │
       ▼
 Normalization
@@ -120,7 +120,7 @@ Learning
 - Personal finance feeds
 - User-linked services
 
-**Output:** RawSignal — raw, unprocessed signals for normalization. On structured event detection, a TriggerEvent is emitted as a first-class pipeline object. See `TRIGGER_EVENT_FRAMEWORK.md` for the TriggerEvent contract and “TRIGGER_REGISTRY_*.md” (historical label) for all domain trigger codes.
+**Output:** RawSignal — raw, unprocessed signals for normalization. On structured event detection, a TriggerEvent is *specified* to be emitted as a first-class pipeline object; this is design-only and not implemented in `logan_core/` as of V3.1.4 (SPECIFIED — NOT IMPLEMENTED, V3.1.4 BATCH-3 / OD-009). See `TRIGGER_EVENT_FRAMEWORK.md` for the TriggerEvent contract and “TRIGGER_REGISTRY_*.md” (historical label) for all domain trigger codes.
 
 ---
 
@@ -157,7 +157,7 @@ Answers: *What is the broader market / community paying attention to right now?*
 ### Hit Detection
 **What it does:** Detects meaningful changes that warrant attention.
 
-All four detectors (Convergence, Divergence, Pattern Engine, ODSE) produce `OpportunityEvidence` — the same shape for all. Every detector also emits a `TriggerEvent` whenever a structured trigger code fires. See `TRIGGER_EVENT_FRAMEWORK.md`.
+All four detectors (Convergence, Divergence, Pattern Engine, ODSE) produce `OpportunityEvidence` — the same shape for all. Every detector is *specified* to also emit a `TriggerEvent` whenever a structured trigger code fires; this is design-only and not implemented in `logan_core/` as of V3.1.4 (SPECIFIED — NOT IMPLEMENTED, V3.1.4 BATCH-3 / OD-009). See `TRIGGER_EVENT_FRAMEWORK.md`.
 
 **Examples:**
 - Breaking news affecting a user's holdings

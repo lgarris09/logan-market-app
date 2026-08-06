@@ -1,6 +1,7 @@
 # Logan Intelligence — Entity Resolution
 **Version:** 3.1.3
 *New in v3.1.2. No prior version.*
+**TriggerEvent status:** TriggerEvent reattribution on entity merge (below) is SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009), since no TriggerEvent object exists in `logan_core/` as of V3.1.4.
 
 ---
 

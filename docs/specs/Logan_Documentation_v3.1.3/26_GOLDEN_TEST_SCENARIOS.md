@@ -3,6 +3,7 @@
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/26_GOLDEN_TEST_SCENARIOS.md” (historical label).*
 
 *These scenarios are the Phase 6 gate criteria. The full pipeline must pass all 13 before declaring the pipeline complete.*
+**TriggerEvent / OpportunityLifecycle status:** every scenario step referencing TriggerEvent emission or lifecycle-stage transitions (including Scenario 11) is SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). These scenarios are not run against `logan_core/` as of V3.1.4 and are not part of the V3.1.4 release gates.
 
 ---
 

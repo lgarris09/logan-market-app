@@ -3,6 +3,7 @@
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/24_API_SPECIFICATION.md” (historical label).*
 *All tech stack choices are PROVISIONAL. See `15_DECISIONS.md`.*
 *v3.1.3 (ADR-029): `priority_score` removed from both response examples below — it is deprecated as a public score and its replacement, `internal_rank_score`, is explicitly internal-only and never returned via any API response. `hit_quality_score`, `user_value_score`, and `momentum_score` remain the response's scoring fields.*
+**TriggerEvent status:** every `trigger_events`/`trigger_event_ids` response field and the `trigger_event_fired` WebSocket event described below are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). The real `/v1/opportunities` API shipped in V3.1.4 BATCH-4 does not emit or accept TriggerEvent data.
 
 ---
 

@@ -3,6 +3,8 @@
 
 > **⚠ PROVISIONAL TECH STACK** — Technology choices here are working assumptions for V1 MVP development. They have NOT been locked through formal decision review. All stack choices (FastAPI, PostgreSQL, Redis, S3, Zustand, React Query, Skia, Docker, JWT, Plaid, cloud provider) are subject to change before implementation begins. See `15_DECISIONS.md` for locked vs. provisional decisions.
 
+**TriggerEvent status:** references below to the pipeline running "on TriggerEvent arrival" and to TriggerEvent-based analytics/learning are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). The orchestrator in `logan_core/orchestrator/` runs synchronously per call as of V3.1.4; there is no event-driven trigger arrival model.
+
 ---
 
 ## Architecture Overview

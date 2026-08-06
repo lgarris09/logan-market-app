@@ -1,5 +1,6 @@
 # Logan Intelligence — World Model
 **Version:** 3.1.3
+**TriggerEvent status:** all TriggerEvent code matching, `active_triggers`, and `trigger_events` array behavior described below is SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). `logan_core/world_model/model.py` does not match, attach, or store TriggerEvent codes as of V3.1.4.
 
 ---
 

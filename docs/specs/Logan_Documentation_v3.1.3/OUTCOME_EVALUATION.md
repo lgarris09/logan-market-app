@@ -1,6 +1,7 @@
 # Logan Intelligence — Outcome Evaluation
 **Version:** 3.1.3
 *New in v3.1.2. Amended in v3.1.3: outcome records redesigned from a simplistic win/loss framing to a structured evaluation object per `docs/DECISIONS.md` ADR-036; `correction_state` wired as an actual Learning System input (previously display-only); false-negative, ranking-quality, and notification-usefulness scope added as explicitly-deferred (not silently absent).*
+**TriggerEvent status:** "TriggerEvent Predictive Accuracy" and TriggerEvent outcome logging below are SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). No TriggerEvent-derived accuracy metric exists in `logan_core/` as of V3.1.4.
 
 ---
 

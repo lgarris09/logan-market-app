@@ -1,5 +1,6 @@
 # Logan Intelligence System — Opportunity Lifecycle & Decay Engine
 **Version:** 3.1.3
+**Status:** SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). The `OpportunityLifecycle` object, its eight stages, stage transitions, stage velocity, the Opportunity Portfolio endpoint, and all four decay types (time, reaction, crowd, contradiction) described in this document are design-only. Zero lifecycle-stage or decay code exists anywhere in `logan_core/` as of V3.1.4 — the current `opportunity/engine.py` produces a single-pass `AttentionRecommendation` with no stage machine and no decay accumulation. Building this as running code is explicitly out of scope for V3.1.4 (OD-009).
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/10_OPPORTUNITY_ENGINE.md” (historical label).*
 
 ---

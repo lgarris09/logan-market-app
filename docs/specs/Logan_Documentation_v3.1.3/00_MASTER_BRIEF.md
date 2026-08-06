@@ -160,7 +160,7 @@ The Read & Suggest feature is the beginning. Over time, every domain of a person
 | `27_SECURITY_PRIVACY_COMPLIANCE.md` | Privacy, security, compliance | Before any data handling |
 | `28_PACKAGE_MANIFEST.md` | Complete file inventory | Package management |
 
-### TriggerEvent Framework (new in v3.1.2)
+### TriggerEvent Framework (new in v3.1.2) — SPECIFIED, NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009)
 
 | File | Purpose | Read when |
 |---|---|---|

@@ -1,6 +1,9 @@
 # Logan Intelligence — Trigger Scoring and Conflict Rules
 **Version:** 3.1.3
-**Status:** PROVISIONAL calculation model; required behavior is LOCKED.
+**Status:** SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). Depends
+entirely on the TriggerEvent framework, which has zero code — see
+`TRIGGER_EVENT_FRAMEWORK.md`. PROVISIONAL calculation model; required
+behavior is LOCKED as a *specification*, not as running code.
 
 ## Required outputs
 Every evaluated trigger may affect confidence, urgency, risk, personal relevance, recommendation strength, presentation priority, lifecycle, notification, or suppression. Each effect must be traceable.

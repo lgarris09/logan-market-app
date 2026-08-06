@@ -1,6 +1,7 @@
 # Logan Intelligence — Build Order
 **Version:** 3.1.3
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: `source_material/08_BUILD_ORDER.md`.*
+**TriggerEvent / OpportunityLifecycle status:** every build phase step below that references emitting, matching, or scoring TriggerEvents, or producing an `OpportunityLifecycle` object, is SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). None of those steps were executed as part of V3.1.4; they remain future build-order items, not completed phases.
 
 ---
 

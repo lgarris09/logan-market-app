@@ -4,6 +4,8 @@
 Each layer has a defined purpose, inputs, outputs, ownership rules, and forbidden behaviors.
 Read this before implementing any layer.
 
+**TriggerEvent status:** every TriggerEvent input/output/forbidden-behavior reference below is SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009). No layer in `logan_core/` emits, reads, or stores a TriggerEvent object as of V3.1.4; treat those references as the target interface, not the current one. See `TRIGGER_EVENT_FRAMEWORK.md`.
+
 All object schemas are defined in `07_DATA_CONTRACTS.md`.
 TriggerEvent contract and trigger codes: `TRIGGER_EVENT_FRAMEWORK.md` and “TRIGGER_REGISTRY_*.md” (historical label).
 
