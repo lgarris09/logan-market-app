@@ -50,7 +50,12 @@ class FeedItem(BaseModel):
     ticker: str | None
     domain: str
     delivered_item: DeliveredItem
-    priority_score: float
+    # 1-indexed position in this response's already-sorted order (1 = most
+    # important). Deliberately an ordinal, not a raw score: logan_core's
+    # internal_rank_score is internal-only and must never be returned via any
+    # public API response (ADR-029) -- this field is the correct public-facing
+    # substitute for "where does this belong in the field/list."
+    rank: int
     confidence_score: float
     confidence_label: str
     connected_event_ids: list[UUID]
@@ -131,8 +136,13 @@ def run_demo_feed() -> DemoFeedResponse:
                 connections[a].append(b)
                 connections[b].append(a)
 
+    # Sort by the internal-only ranking score before building the public
+    # response -- the score itself is never serialized (ADR-029); only the
+    # resulting order (as `rank`, below) is public-facing.
+    results.sort(key=lambda pair: pair[1].recommendation.internal_rank_score, reverse=True)
+
     items = []
-    for entity_id, r in results:
+    for position, (entity_id, r) in enumerate(results, start=1):
         entity = r.event.entities[0]
         canonical = resolve(entity_id, entity.display_name, r.event.domain)
         items.append(
@@ -144,12 +154,11 @@ def run_demo_feed() -> DemoFeedResponse:
                 ticker=canonical.ticker,
                 domain=r.event.domain,
                 delivered_item=r.delivered_item,
-                priority_score=r.recommendation.priority_score,
+                rank=position,
                 confidence_score=r.confidence.confidence_score,
                 confidence_label=r.delivered_item.confidence_label,
                 connected_event_ids=connections[r.event.event_id],
             )
         )
-    items.sort(key=lambda item: item.priority_score, reverse=True)
 
     return DemoFeedResponse(items=items, generated_at=now)
