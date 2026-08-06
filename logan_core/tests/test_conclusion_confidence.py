@@ -79,6 +79,15 @@ def test_confidence_score_derives_from_trust_only():
     assert confidence.confidence_score == trust.trust_score
 
 
+def test_decision_trace_populated():
+    engine = ConclusionConfidenceEngine()
+    trust = _trust(uuid4())
+    reasoning = _reasoning()
+    confidence = engine.evaluate(reasoning, trust, mental_model=None)
+    assert len(confidence.decision_trace) == 1
+    assert "classification" in confidence.decision_trace[0].rule
+
+
 def test_mental_model_confidence_has_zero_effect_on_confidence_score():
     engine = ConclusionConfidenceEngine()
     reasoning = _reasoning()

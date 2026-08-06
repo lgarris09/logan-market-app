@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from logan_core.contracts import NormalizedSignal, RawSignal
+from logan_core.contracts import DecisionTraceEntry, NormalizedSignal, RawSignal
 
 SIGNAL_TYPE_REGISTRY: dict[str, set[str]] = {
     "stocks": {
@@ -86,6 +86,7 @@ class Normalizer:
                 f"signal_type '{signal_type}' is not registered for domain '{raw.domain}'"
             )
 
+        now = datetime.now(timezone.utc)
         return NormalizedSignal(
             signal_id=uuid4(),
             domain=raw.domain,
@@ -97,5 +98,12 @@ class Normalizer:
             source_id=raw.source_id,
             source_name=raw.source_name,
             captured_at=raw.captured_at,
-            normalized_at=datetime.now(timezone.utc),
+            normalized_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="normalization",
+                    rule=f"signal_type '{signal_type}' validated against the '{raw.domain}' registry",
+                    timestamp=now,
+                )
+            ],
         )

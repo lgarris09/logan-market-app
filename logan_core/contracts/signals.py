@@ -15,6 +15,11 @@ class RawSignal(BaseModel):
     raw_value: object
     captured_at: datetime
     metadata: dict = Field(default_factory=dict)
+    # Intentionally left empty by every V1 receptor (V3.1.4 BATCH-2 review):
+    # a receptor captures a signal, it doesn't decide anything about it --
+    # there is no deterministic rule to trace at this layer. Reserved for a
+    # receptor implementation that does make a capture-time decision (e.g.
+    # filtering, dedup against a live feed) once live receptors exist.
     decision_trace: list = Field(default_factory=list)
 
 

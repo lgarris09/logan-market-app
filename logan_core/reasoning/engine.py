@@ -3,6 +3,7 @@ from typing import Literal
 
 from logan_core.contracts import (
     ActiveContext,
+    DecisionTraceEntry,
     EnrichedEvent,
     EvidenceTrust,
     ReasoningResult,
@@ -52,6 +53,12 @@ class ReasoningEngine:
             )
 
         stance: Literal["confirms", "contradicts", "complicates", "new"]
+        # "contradicts" is currently unreachable: WorldModel never populates
+        # event.contradicting (see world_model/model.py's V3.1.4 BATCH-2 note
+        # on why a deterministic contradiction rule isn't implementable from
+        # the current untyped signal-value model without inventing per-domain
+        # semantics). The branch is kept, not removed, so this still routes
+        # correctly the moment a real contradiction detector exists.
         if event.contradicting:
             stance = "contradicts"
         elif not event.is_new and event.change_delta:
@@ -68,6 +75,7 @@ class ReasoningEngine:
             actionability = "informational"
 
         explanation = f"{significance}. {personal_relevance_narrative}"
+        now = datetime.now(timezone.utc)
 
         return ReasoningResult(
             event_id=event.event_id,
@@ -77,5 +85,14 @@ class ReasoningEngine:
             stance=stance,
             actionability=actionability,
             explanation=explanation,
-            reasoned_at=datetime.now(timezone.utc),
+            reasoned_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="reasoning",
+                    rule=f"stance={stance}, actionability={actionability} "
+                    f"(holds_directly={holds_directly}, trust_score={trust.trust_score:.2f})",
+                    confidence=trust.trust_score,
+                    timestamp=now,
+                )
+            ],
         )

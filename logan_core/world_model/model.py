@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from logan_core.contracts import Delta, EnrichedEvent, Entity, NormalizedSignal
+from logan_core.contracts import DecisionTraceEntry, Delta, EnrichedEvent, Entity, NormalizedSignal
 
 DEDUP_WINDOW = timedelta(hours=1)
 
@@ -65,6 +65,19 @@ class WorldModel:
         return entity
 
     def process(self, signal: NormalizedSignal) -> EnrichedEvent:
+        """V3.1.4 BATCH-2 note on `EnrichedEvent.contradicting`: reserved, not
+        populated. A deterministic contradiction rule needs to compare two
+        signals' `value` fields, but `NormalizedSignal.value` is untyped
+        (`object`) -- comparing raw values for inequality would misclassify
+        ordinary corroboration as contradiction (per
+        `docs/IMPLEMENTATION_DECISIONS.md` #3, two sources paraphrasing the
+        same event report different exact text/values without disagreeing),
+        and any type-aware comparison would require inventing per-domain
+        semantic contradiction logic this task's instructions explicitly
+        prohibit. `contradicting` stays reserved on the contract; the
+        downstream `ReasoningEngine` branch that reads it is documented as
+        currently unreachable for the same reason, not silently dead.
+        """
         entity = self._get_or_create_entity(signal.entity_id, signal.entity_type, signal.domain)
         downstream = DOWNSTREAM_EFFECTS.get(signal.entity_id, [])
         for downstream_id in downstream:
@@ -104,11 +117,22 @@ class WorldModel:
                 entities=[entity],
                 change_delta=change_delta,
                 supporting=[],
+                # Deliberately always empty in V1 -- see the module-level note
+                # below `process()` for why a deterministic contradiction rule
+                # isn't implemented yet (V3.1.4 BATCH-2 review).
                 contradicting=[],
                 downstream=downstream,
                 summary=summary,
                 occurred_at=signal.captured_at,
                 enriched_at=datetime.now(timezone.utc),
+                decision_trace=[
+                    DecisionTraceEntry(
+                        layer="world_model",
+                        rule=f"new event: no prior signal for {signal.entity_id}/{signal.signal_type} "
+                        f"within the {DEDUP_WINDOW} dedup window",
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                ],
             )
         else:
             # A corroborating signal for an event already seen in this window — merge
@@ -121,6 +145,15 @@ class WorldModel:
                     "signal_ids": existing.signal_ids + [signal.signal_id],
                     "supporting": existing.supporting + [signal.signal_id],
                     "enriched_at": datetime.now(timezone.utc),
+                    "decision_trace": existing.decision_trace
+                    + [
+                        DecisionTraceEntry(
+                            layer="world_model",
+                            rule=f"corroboration: merged into existing event "
+                            f"(within {DEDUP_WINDOW} dedup window)",
+                            timestamp=datetime.now(timezone.utc),
+                        )
+                    ],
                 }
             )
 

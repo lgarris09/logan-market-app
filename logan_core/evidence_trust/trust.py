@@ -1,7 +1,7 @@
 import math
 from datetime import datetime, timezone
 
-from logan_core.contracts import EnrichedEvent, EvidenceTrust, NormalizedSignal
+from logan_core.contracts import DecisionTraceEntry, EnrichedEvent, EvidenceTrust, NormalizedSignal
 
 # V1 static source reputation registry (0.0-1.0). Extension point: dynamic
 # reputation learning, updated only by the Learning System per the spec.
@@ -79,4 +79,14 @@ class EvidenceTrustEngine:
             completeness=completeness,
             trust_score=trust_score,
             evaluated_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="evidence_trust",
+                    rule=f"trust_score={trust_score:.2f} "
+                    f"(source={source_score:.2f}, corroboration={corroboration}, "
+                    f"recency={recency_score:.2f}, manipulation_risk={manipulation_risk})",
+                    confidence=trust_score,
+                    timestamp=now,
+                )
+            ],
         )

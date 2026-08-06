@@ -1,7 +1,13 @@
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from logan_core.contracts import ConclusionConfidence, EvidenceTrust, MentalModel, ReasoningResult
+from logan_core.contracts import (
+    ConclusionConfidence,
+    DecisionTraceEntry,
+    EvidenceTrust,
+    MentalModel,
+    ReasoningResult,
+)
 
 
 class ConclusionConfidenceEngine:
@@ -54,11 +60,21 @@ class ConclusionConfidenceEngine:
         if trust.contradiction_flag:
             limiting_factors.append("Contradicting signals exist for this event.")
 
+        now = datetime.now(timezone.utc)
         return ConclusionConfidence(
             event_id=reasoning.event_id,
             confidence_score=confidence_score,
             classification=classification,
             alternatives=alternatives,
             limiting_factors=limiting_factors,
-            evaluated_at=datetime.now(timezone.utc),
+            evaluated_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="conclusion_confidence",
+                    rule=f"classification={classification} from confidence_score={confidence_score:.2f} "
+                    f"(trust_score={trust.trust_score:.2f}, contradiction_flag={trust.contradiction_flag})",
+                    confidence=confidence_score,
+                    timestamp=now,
+                )
+            ],
         )

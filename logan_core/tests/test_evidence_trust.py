@@ -55,6 +55,14 @@ def test_evidence_trust_reserves_deterministic_baseline_model_version(now):
     assert result.source_reliability_model_version == "deterministic-baseline"
 
 
+def test_evidence_trust_populates_decision_trace(now):
+    event, signals = _build_event_and_signals(now)
+    engine = EvidenceTrustEngine()
+    result = engine.evaluate(event, signals, now=now)
+    assert len(result.decision_trace) == 1
+    assert "trust_score" in result.decision_trace[0].rule
+
+
 def test_unknown_source_gets_default_score(now):
     normalizer = Normalizer()
     world_model = WorldModel()

@@ -3,6 +3,7 @@ from typing import Literal
 
 from logan_core.contracts import (
     ConclusionConfidence,
+    DecisionTraceEntry,
     DeliveredItem,
     PolicyResult,
     PrioritizedItem,
@@ -61,4 +62,12 @@ class PresentationEngine:
             confidence_score=confidence.confidence_score,
             required_disclaimers=policy_result.required_disclaimers,
             delivered_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="presentation",
+                    rule=f"surface={surface} from visibility={prioritized_item.visibility}, "
+                    f"interruption={prioritized_item.interruption}",
+                    timestamp=now,
+                )
+            ],
         )

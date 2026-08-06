@@ -6,6 +6,7 @@ from logan_core.contracts import (
     AttentionRecommendation,
     AttentionState,
     CooldownRecord,
+    DecisionTraceEntry,
     FatigueRecord,
     PolicyResult,
     PrioritizedItem,
@@ -97,6 +98,14 @@ class PrioritizationEngine:
             cooldown_until=cooldown.until if cooldown else None,
             changed_since_view=changed_since_view,
             prioritized_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="prioritization",
+                    rule=f"visibility={visibility}, interruption={interruption} "
+                    f"(in_cooldown={in_cooldown}, domain_fatigued={domain_fatigued})",
+                    timestamp=now,
+                )
+            ],
         )
 
     def attention_state(self, user_id: str) -> AttentionState | None:

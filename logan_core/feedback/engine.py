@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from logan_core.contracts import FeedbackSignal
+from logan_core.contracts import DecisionTraceEntry, FeedbackSignal
 
 
 class FeedbackEngine:
@@ -53,6 +53,15 @@ class FeedbackEngine:
             duration_ms=duration_ms,
             raw_interaction=interaction_type,
             observed_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="feedback",
+                    rule=f"interaction_type={interaction_type!r} -> "
+                    f"inferred_intent={inferred_intent!r} (duration_ms={duration_ms})",
+                    confidence=intent_confidence,
+                    timestamp=now,
+                )
+            ],
         )
 
     def confirm_memory_inbox(self, event_id: UUID) -> FeedbackSignal:

@@ -45,3 +45,32 @@ def test_downstream_ripple_includes_related_entities(now):
 
     assert "NVDA" in event.downstream
     assert "MARKETS" in event.downstream
+
+
+def test_decision_trace_populated_for_new_and_corroborating_events(now):
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    n1 = normalizer.normalize(tesla_ai_partnership_signal(now))
+    assert n1.decision_trace, "Normalizer must populate NormalizedSignal.decision_trace"
+
+    first_event = world_model.process(n1)
+    assert len(first_event.decision_trace) == 1
+    assert "new event" in first_event.decision_trace[0].rule
+
+    n2 = normalizer.normalize(tesla_ai_partnership_corroboration(now))
+    second_event = world_model.process(n2)
+    assert len(second_event.decision_trace) == 2
+    assert "corroboration" in second_event.decision_trace[1].rule
+
+
+def test_contradicting_is_reserved_not_populated(now):
+    """V3.1.4 BATCH-2: contradicting is intentionally never populated in V1 --
+    see world_model/model.py's note on process(). This test documents that as
+    current, deliberate behavior rather than leaving it unverified.
+    """
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    n1 = normalizer.normalize(tesla_ai_partnership_signal(now))
+    event = world_model.process(n1)
+    assert event.contradicting == []
