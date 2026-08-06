@@ -251,7 +251,9 @@ class Orchestrator:
         active_context = self._execute(
             trace,
             "active_context",
-            lambda: self.deps.active_context_builder.build(current_question=current_question),
+            lambda: self.deps.active_context_builder.build(
+                user_id=user_id, current_question=current_question
+            ),
             event_id=event.event_id,
         )
 

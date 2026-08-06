@@ -27,6 +27,7 @@ class ActiveContextBuilder:
 
     def build(
         self,
+        user_id: str,
         current_question: Optional[str] = None,
         recent_activity: Optional[list[ActivityRecord]] = None,
         now: Optional[datetime] = None,
@@ -34,6 +35,7 @@ class ActiveContextBuilder:
         now = now or datetime.now(timezone.utc)
         return ActiveContext(
             session_id=uuid4(),
+            user_id=user_id,
             current_question=current_question,
             time_of_day=_time_of_day(now),
             recent_activity=recent_activity or [],
