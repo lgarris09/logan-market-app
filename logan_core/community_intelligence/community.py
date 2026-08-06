@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from logan_core.contracts import CommunitySignal, EnrichedEvent
+from logan_core.contracts import CommunitySignal, DecisionTraceEntry, EnrichedEvent
 
 
 @dataclass
@@ -39,6 +39,13 @@ class CommunityIntelligenceEngine:
                 bot_risk=0.0,
                 momentum_score=0.0,
                 measured_at=now,
+                decision_trace=[
+                    DecisionTraceEntry(
+                        layer="community_intelligence",
+                        rule="no engagement samples provided -> dormant, all-zero signal",
+                        timestamp=now,
+                    )
+                ],
             )
 
         ordered = sorted(samples, key=lambda s: s.observed_at)
@@ -85,4 +92,12 @@ class CommunityIntelligenceEngine:
             bot_risk=bot_risk,
             momentum_score=momentum_score,
             measured_at=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="community_intelligence",
+                    rule=f"lifecycle_state={lifecycle_state} from engagement_velocity={engagement_velocity:.2f}; "
+                    f"momentum_score={momentum_score:.2f}",
+                    timestamp=now,
+                )
+            ],
         )
