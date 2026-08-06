@@ -52,8 +52,13 @@ class PrioritizationEngine:
         cooldown = next((c for c in state.cooldowns if c.event_id == event_id and c.until > now), None)
         in_cooldown = cooldown is not None and not changed_since_view
 
+        # A fatigue record whose window started more than FATIGUE_WINDOW ago has
+        # fully decayed -- it no longer counts toward the limit (V3.1.4 BATCH-2;
+        # previously FATIGUE_WINDOW was declared but never read, so fatigue only
+        # ever grew and never expired).
         fatigue = next((f for f in state.fatigue if f.domain == domain), None)
-        domain_fatigued = fatigue is not None and fatigue.count >= FATIGUE_LIMIT
+        fatigue_active = fatigue is not None and (now - fatigue.window) <= FATIGUE_WINDOW
+        domain_fatigued = fatigue_active and fatigue.count >= FATIGUE_LIMIT
 
         visibility: Literal["primary", "feed", "background", "hidden"]
         interruption: Literal["alert", "digest", "none"]
@@ -80,11 +85,19 @@ class PrioritizationEngine:
             state.cooldowns.append(CooldownRecord(event_id=event_id, until=now + COOLDOWN_WINDOW))
 
             existing_fatigue = next((f for f in state.fatigue if f.domain == domain), None)
-            if existing_fatigue is None:
+            existing_active = existing_fatigue is not None and (now - existing_fatigue.window) <= FATIGUE_WINDOW
+            if not existing_active:
+                # No record yet, or the previous window fully expired -- start a
+                # fresh window rather than incrementing a stale count.
+                state.fatigue = [f for f in state.fatigue if f.domain != domain]
                 state.fatigue.append(FatigueRecord(domain=domain, count=1, window=now))
             else:
+                # Window start stays fixed (not slid forward) until it expires --
+                # a fixed 24h counting window, not a rolling average.
                 state.fatigue = [
-                    f if f.domain != domain else FatigueRecord(domain=domain, count=f.count + 1, window=now)
+                    f
+                    if f.domain != domain
+                    else FatigueRecord(domain=domain, count=f.count + 1, window=f.window)
                     for f in state.fatigue
                 ]
 
