@@ -1,0 +1,81 @@
+name: CI
+
+# V3.1.4 BATCH-2: first CI workflow for this repository. Three independent
+# jobs (logan_core, backend, mobile) so a failure in one package's checks
+# doesn't hide the others. Each job installs its own dependencies from a
+# clean checkout -- no reliance on state from a prior run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  logan_core:
+    name: logan_core (pytest, ruff, black, mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: logan_core/requirements.txt
+      - name: Install dependencies
+        run: pip install -r logan_core/requirements.txt
+      - name: pytest
+        run: python -m pytest logan_core/tests -v
+      - name: ruff
+        run: python -m ruff check logan_core
+      - name: black --check
+        run: python -m black --check logan_core
+      - name: mypy
+        run: python -m mypy logan_core
+
+  backend:
+    name: backend (pytest, ruff, black, mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+      - name: pytest
+        run: python -m pytest backend/tests -v
+      - name: ruff
+        run: python -m ruff check backend
+      - name: black --check
+        run: python -m black --check backend
+      - name: mypy
+        run: python -m mypy backend
+
+  mobile:
+    name: mobile (eslint, prettier, tsc, jest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: eslint
+        run: npm run lint
+      - name: prettier --check
+        run: npm run format:check
+      - name: tsc --noEmit
+        run: npm run typecheck
+      - name: jest
+        # V3.1.4 BATCH-5 adds the mobile test suite and this script; until
+        # then this step is a no-op rather than a failure, so BATCH-2/3/4
+        # can merge with the other three checks already gating.
+        run: npm run test --if-present -- --ci
