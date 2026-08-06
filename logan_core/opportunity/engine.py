@@ -113,7 +113,7 @@ class OpportunityEngine:
         # sum to 0.98 of the pre-risk-penalty maximum, not 1.00; this is
         # intentional and must not be "corrected" by rebalancing without a new
         # ADR (see docs/DECISIONS.md ADR-034 and 07_DATA_CONTRACTS.md).
-        priority_score = (
+        internal_rank_score = (
             dimensions.personal_relevance * 0.25
             + dimensions.urgency * 0.20
             + dimensions.confidence * 0.15
@@ -123,7 +123,7 @@ class OpportunityEngine:
             + dimensions.novelty * 0.04
             + dimensions.connection_strength * 0.01
         ) * (1 - dimensions.risk * 0.20)
-        priority_score = max(0.0, min(1.0, priority_score))
+        internal_rank_score = max(0.0, min(1.0, internal_rank_score))
 
         # 6. Compare
         trace.append(
@@ -134,7 +134,7 @@ class OpportunityEngine:
             )
         )
 
-        recommend = priority_score >= RECOMMEND_THRESHOLD
+        recommend = internal_rank_score >= RECOMMEND_THRESHOLD
 
         reasons: list[str] = []
         if dimensions.personal_relevance >= 0.6:
@@ -152,10 +152,10 @@ class OpportunityEngine:
         trace.append(
             DecisionTraceEntry(
                 layer="opportunity_engine",
-                rule=f"recommend: priority_score={priority_score:.2f} >= {RECOMMEND_THRESHOLD}"
+                rule=f"recommend: internal_rank_score={internal_rank_score:.2f} >= {RECOMMEND_THRESHOLD}"
                 if recommend
-                else f"recommend: priority_score={priority_score:.2f} below threshold",
-                confidence=priority_score,
+                else f"recommend: internal_rank_score={internal_rank_score:.2f} below threshold",
+                confidence=internal_rank_score,
                 timestamp=now,
             )
         )
@@ -164,7 +164,7 @@ class OpportunityEngine:
             event_id=reasoning.event_id,
             recommend=recommend,
             dimensions=dimensions,
-            priority_score=priority_score,
+            internal_rank_score=internal_rank_score,
             reasons=reasons,
             competing_items=competing_items or [],
             recommended_at=now,

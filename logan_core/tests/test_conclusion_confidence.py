@@ -109,5 +109,5 @@ def test_mental_model_confidence_has_zero_effect_on_opportunity_outcome():
     rec_high = opportunity_engine.evaluate(reasoning, confidence_high, community)
 
     assert rec_low.recommend == rec_high.recommend
-    assert rec_low.priority_score == rec_high.priority_score
+    assert rec_low.internal_rank_score == rec_high.internal_rank_score
     assert rec_low.dimensions.model_dump() == rec_high.dimensions.model_dump()

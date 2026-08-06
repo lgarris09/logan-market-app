@@ -52,7 +52,7 @@ def test_high_relevance_high_confidence_recommends():
     recommendation = engine.evaluate(reasoning, confidence, community)
 
     assert recommendation.recommend is True
-    assert recommendation.priority_score >= RECOMMEND_THRESHOLD
+    assert recommendation.internal_rank_score >= RECOMMEND_THRESHOLD
     assert len(recommendation.reasons) >= 1
     assert len(recommendation.decision_trace) == 7  # validate..recommend, one entry per step
 
@@ -66,24 +66,24 @@ def test_low_relevance_low_confidence_does_not_recommend():
     recommendation = engine.evaluate(reasoning, confidence, community)
 
     assert recommendation.recommend is False
-    assert recommendation.priority_score < RECOMMEND_THRESHOLD
+    assert recommendation.internal_rank_score < RECOMMEND_THRESHOLD
 
 
-def test_priority_score_never_exceeds_bounds():
+def test_internal_rank_score_never_exceeds_bounds():
     reasoning = _reasoning()
     confidence = _confidence(reasoning.event_id, score=1.0)
     community = _community(reasoning.event_id, momentum=1.0, lifecycle="emerging")
 
     engine = OpportunityEngine()
     recommendation = engine.evaluate(reasoning, confidence, community)
-    assert 0.0 <= recommendation.priority_score <= 1.0
+    assert 0.0 <= recommendation.internal_rank_score <= 1.0
     for value in recommendation.dimensions.model_dump().values():
         assert 0.0 <= value <= 1.0
 
 
 def test_community_momentum_has_zero_effect_on_ranking():
     """ADR-034 / V3.1.4 BATCH-1 Stage 2 regression: different momentum_score
-    values must produce an identical priority_score (and identical dimensions
+    values must produce an identical internal_rank_score (and identical dimensions
     other than community_momentum itself) when every other input is equal.
     """
     reasoning = _reasoning()
@@ -93,7 +93,7 @@ def test_community_momentum_has_zero_effect_on_ranking():
     low = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=0.0))
     high = engine.evaluate(reasoning, confidence, _community(reasoning.event_id, momentum=1.0))
 
-    assert low.priority_score == high.priority_score
+    assert low.internal_rank_score == high.internal_rank_score
     assert low.recommend == high.recommend
     low_dims = low.dimensions.model_dump()
     high_dims = high.dimensions.model_dump()

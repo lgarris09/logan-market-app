@@ -63,10 +63,10 @@ class PrioritizationEngine:
         elif domain_fatigued:
             visibility = "background"
             interruption = "none"
-        elif recommendation.priority_score >= 0.6:
+        elif recommendation.internal_rank_score >= 0.6:
             visibility = "primary"
             interruption = "alert" if policy_result.communication_mode == "alert" else "digest"
-        elif recommendation.priority_score >= 0.35:
+        elif recommendation.internal_rank_score >= 0.35:
             visibility = "feed"
             interruption = "digest" if policy_result.communication_mode != "informational" else "none"
         else:

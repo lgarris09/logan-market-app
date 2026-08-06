@@ -28,7 +28,7 @@ def _recommendation(event_id, recommend=True, **dim_overrides):
         event_id=event_id,
         recommend=recommend,
         dimensions=_dimensions(**dim_overrides),
-        priority_score=0.6,
+        internal_rank_score=0.6,
         reasons=["test"],
         recommended_at=now,
     )
