@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from logan_core.contracts import MentalModel, ReasoningResult
+from logan_core.contracts import DecisionTraceEntry, Domain, MentalModel, ReasoningResult
 
 # V1 confidence adjustment per stance — a shift itself is the signal, per spec.
 _STANCE_DELTA: dict[str, float] = {
@@ -22,7 +22,7 @@ class MentalModelEngine:
     def __init__(self) -> None:
         self._hypotheses: dict[str, MentalModel] = {}
 
-    def process(self, reasoning: ReasoningResult, domain: str) -> tuple[ReasoningResult, MentalModel]:
+    def process(self, reasoning: ReasoningResult, domain: Domain) -> tuple[ReasoningResult, MentalModel]:
         key = f"{domain}:{reasoning.significance.split(':')[0].strip()}"
         now = datetime.now(timezone.utc)
         existing = self._hypotheses.get(key)
@@ -40,6 +40,14 @@ class MentalModelEngine:
                 trend="new",
                 created_at=now,
                 last_updated=now,
+                decision_trace=[
+                    DecisionTraceEntry(
+                        layer="mental_model",
+                        rule=f"new hypothesis for key={key!r}, stance={reasoning.stance} "
+                        f"(delta={delta:+.2f})",
+                        timestamp=now,
+                    )
+                ],
             )
         else:
             new_confidence = max(0.0, min(1.0, existing.confidence + delta))
@@ -60,6 +68,15 @@ class MentalModelEngine:
                     "supporting": supporting,
                     "opposing": opposing,
                     "last_updated": now,
+                    "decision_trace": existing.decision_trace
+                    + [
+                        DecisionTraceEntry(
+                            layer="mental_model",
+                            rule=f"trend={trend} from stance={reasoning.stance} (delta={delta:+.2f})",
+                            confidence=new_confidence,
+                            timestamp=now,
+                        )
+                    ],
                 }
             )
 

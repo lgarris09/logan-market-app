@@ -3,9 +3,11 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from .common import Domain
+
 
 class Interest(BaseModel):
-    domain: str
+    domain: Domain
     topic: str
     weight: float = Field(ge=0.0, le=1.0)
     source: Literal["explicit", "inferred"]
@@ -14,7 +16,7 @@ class Interest(BaseModel):
 
 
 class Holding(BaseModel):
-    domain: str
+    domain: Domain
     entity_id: str
     display_name: str
     size: Optional[object] = None
@@ -22,14 +24,14 @@ class Holding(BaseModel):
 
 
 class Expertise(BaseModel):
-    domain: str
+    domain: Domain
     level: float = Field(ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
     last_updated: datetime
 
 
 class DomainPref(BaseModel):
-    domain: str
+    domain: Domain
     active: bool
     weight: float = Field(ge=0.0, le=1.0)
     last_updated: datetime

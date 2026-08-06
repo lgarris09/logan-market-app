@@ -7,6 +7,7 @@ from logan_core.contracts import (
     AttentionState,
     CooldownRecord,
     DecisionTraceEntry,
+    Domain,
     FatigueRecord,
     PolicyResult,
     PrioritizedItem,
@@ -38,7 +39,7 @@ class PrioritizationEngine:
     def prioritize(
         self,
         user_id: str,
-        domain: str,
+        domain: Domain,
         policy_result: PolicyResult,
         recommendation: AttentionRecommendation,
         rank: int = 1,

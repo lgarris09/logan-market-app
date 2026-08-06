@@ -13,6 +13,7 @@ from logan_core.contracts import (
     CommunitySignal,
     ConclusionConfidence,
     DeliveredItem,
+    Domain,
     EnrichedEvent,
     EvidenceTrust,
     ExecutionMetrics,
@@ -185,7 +186,7 @@ class Orchestrator:
         user_id: str,
         user_model: UserModel,
         engagement_samples: list[EngagementSample],
-        domain: str,
+        domain: Domain,
         current_question: Optional[str] = None,
     ) -> PipelineResult:
         """Runs the primary vertical-slice pipeline: Raw Signal through Presentation.
@@ -331,7 +332,7 @@ class Orchestrator:
         self,
         event_id: UUID,
         user_id: str,
-        domain: str,
+        domain: Domain,
         entities: list[str],
         interaction_type: str,
         content: str,
@@ -347,7 +348,7 @@ class Orchestrator:
         return feedback, write
 
     def run_memory_inbox_confirm(
-        self, event_id: UUID, user_id: str, domain: str, entities: list[str], content: str
+        self, event_id: UUID, user_id: str, domain: Domain, entities: list[str], content: str
     ):
         """Memory Inbox 'confirm' — routes through Learning as a maximum-confidence
         FeedbackSignal rather than writing to Memory directly (ADR-019).
@@ -357,7 +358,7 @@ class Orchestrator:
         return feedback, write
 
     def run_memory_inbox_reject(
-        self, event_id: UUID, user_id: str, domain: str, entities: list[str], content: str
+        self, event_id: UUID, user_id: str, domain: Domain, entities: list[str], content: str
     ):
         """Memory Inbox 'reject' — see run_memory_inbox_confirm (ADR-019)."""
         feedback = self.deps.feedback_engine.reject_memory_inbox(event_id)

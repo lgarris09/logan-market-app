@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from .common import Domain
+
 
 class ActivityRecord(BaseModel):
     activity_type: str
@@ -17,7 +19,7 @@ class ScheduledEvent(BaseModel):
 
 
 class LiveState(BaseModel):
-    domain: str
+    domain: Domain
     entity_id: str
     state: object
 

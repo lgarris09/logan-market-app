@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from .common import Domain
+
 
 class PrioritizedItem(BaseModel):
     schema_version: str = "1.0"
@@ -22,6 +24,14 @@ class SurfaceRecord(BaseModel):
     surfaced_at: datetime
 
 
+# RESERVED, UNWIRED (V3.1.4 BATCH-2 review): part of AttentionState's contract
+# shape, but nothing in PrioritizationEngine appends to AttentionState.dismissed
+# or .alerted -- a "dismiss" interaction currently flows only through
+# FeedbackEngine -> LearningEngine -> MemoryStore (see feedback/engine.py,
+# learning/engine.py), never touching Prioritization/AttentionState at all.
+# Not required by the current vertical slice; kept for when Prioritization
+# itself needs to track per-item dismiss/alert history (e.g. to avoid
+# re-surfacing a dismissed item), not removed as obsolete.
 class DismissRecord(BaseModel):
     event_id: UUID
     dismissed_at: datetime
@@ -38,7 +48,7 @@ class CooldownRecord(BaseModel):
 
 
 class FatigueRecord(BaseModel):
-    domain: str
+    domain: Domain
     count: int = Field(ge=0)
     window: datetime
 

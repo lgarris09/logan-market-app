@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from logan_core.contracts import DecisionTraceEntry, Delta, EnrichedEvent, Entity, NormalizedSignal
+from logan_core.contracts import DecisionTraceEntry, Delta, Domain, EnrichedEvent, Entity, NormalizedSignal
 
 DEDUP_WINDOW = timedelta(hours=1)
 
@@ -51,7 +51,7 @@ class WorldModel:
         self._prior_values: dict[tuple[str, str], object] = {}
         self._events: dict[UUID, EnrichedEvent] = {}
 
-    def _get_or_create_entity(self, entity_id: str, entity_type: str, domain: str) -> Entity:
+    def _get_or_create_entity(self, entity_id: str, entity_type: str, domain: Domain) -> Entity:
         entity = self._entity_graph.get(entity_id)
         if entity is None:
             entity = Entity(

@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
 
-from logan_core.contracts import AttentionRecommendation, CommunitySignal, DecisionTraceEntry, PolicyResult
+from logan_core.contracts import (
+    AttentionRecommendation,
+    CommunitySignal,
+    DecisionTraceEntry,
+    Domain,
+    PolicyResult,
+)
 
 ANALYSIS_DISCLAIMER = "This is analysis and context, not financial or betting advice. You decide what to do next."
 GAMBLING_DISCLAIMER = "This is not gambling advice. Odds and markets can move quickly and unpredictably."
@@ -19,7 +25,7 @@ class PolicyEngine:
     """
 
     def evaluate(
-        self, recommendation: AttentionRecommendation, community: CommunitySignal, domain: str
+        self, recommendation: AttentionRecommendation, community: CommunitySignal, domain: Domain
     ) -> PolicyResult:
         now = datetime.now(timezone.utc)
         policy_rules_applied = ["advice_boundary_v1"]

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from .common import Domain
+
 RecordType = Literal[
     "user_statement",
     "behavior_record",
@@ -26,7 +28,7 @@ class MemoryRecord(BaseModel):
     user_id: str
     record_type: RecordType
     content: object
-    domain: Optional[str] = None
+    domain: Optional[Domain] = None
     entities: list[str] = Field(default_factory=list)
     source_layer: Literal["learning_system"] = "learning_system"
     created_at: datetime

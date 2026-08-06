@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from logan_core.contracts import FeedbackSignal, MemoryRecord, MemoryWrite, OutcomeRecord
+from logan_core.contracts import Domain, FeedbackSignal, MemoryRecord, MemoryWrite, OutcomeRecord
 from logan_core.memory import MemoryStore
 
 REVIEW_CONFIDENCE_THRESHOLD = 0.40
@@ -20,7 +20,7 @@ class LearningEngine:
         self.flagged_for_review: list[MemoryWrite] = []
 
     def process_feedback(
-        self, feedback: FeedbackSignal, user_id: str, domain: str, entities: list[str], content: str
+        self, feedback: FeedbackSignal, user_id: str, domain: Domain, entities: list[str], content: str
     ) -> MemoryWrite:
         now = datetime.now(timezone.utc)
 
