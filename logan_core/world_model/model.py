@@ -7,6 +7,7 @@ from logan_core.contracts import (
     Domain,
     EnrichedEvent,
     Entity,
+    EntityType,
     NormalizedSignal,
 )
 
@@ -59,7 +60,7 @@ class WorldModel:
         self._events: dict[UUID, EnrichedEvent] = {}
 
     def _get_or_create_entity(
-        self, entity_id: str, entity_type: str, domain: Domain
+        self, entity_id: str, entity_type: EntityType, domain: Domain
     ) -> Entity:
         entity = self._entity_graph.get(entity_id)
         if entity is None:
@@ -96,10 +97,9 @@ class WorldModel:
 
         dedup_key = (signal.entity_id, signal.signal_type)
         recent = self._recent.get(dedup_key)
-        within_window = (
-            recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW
-        )
-        prior_event_id = recent[1] if within_window else None
+        prior_event_id: UUID | None = None
+        if recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW:
+            prior_event_id = recent[1]
 
         if prior_event_id is None:
             # First time this entity+signal_type has been seen in this time window —

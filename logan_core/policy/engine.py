@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from logan_core.contracts import (
     AttentionRecommendation,
@@ -65,6 +66,7 @@ class PolicyEngine:
                 ],
             )
 
+        communication_mode: Literal["analysis", "alert", "informational", "suppressed"]
         if not recommendation.recommend:
             communication_mode = "informational"
         elif recommendation.dimensions.urgency >= 0.7:

@@ -60,10 +60,11 @@ class PrioritizationEngine:
         # previously FATIGUE_WINDOW was declared but never read, so fatigue only
         # ever grew and never expired).
         fatigue = next((f for f in state.fatigue if f.domain == domain), None)
-        fatigue_active = (
-            fatigue is not None and (now - fatigue.window) <= FATIGUE_WINDOW
+        domain_fatigued = (
+            fatigue is not None
+            and (now - fatigue.window) <= FATIGUE_WINDOW
+            and fatigue.count >= FATIGUE_LIMIT
         )
-        domain_fatigued = fatigue_active and fatigue.count >= FATIGUE_LIMIT
 
         visibility: Literal["primary", "feed", "background", "hidden"]
         interruption: Literal["alert", "digest", "none"]

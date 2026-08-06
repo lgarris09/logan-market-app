@@ -21,6 +21,7 @@ from logan_core.contracts import (
     EvidenceTrust,
     ExecutionMetrics,
     ExecutionTrace,
+    InteractionType,
     MentalModel,
     NormalizedSignal,
     PolicyResult,
@@ -216,16 +217,24 @@ class Orchestrator:
         normalized_signals: list[NormalizedSignal] = []
         event: Optional[EnrichedEvent] = None
 
+        # NOTE (applies to the three `# type: ignore[misc]` lambdas below): mypy
+        # can't infer T through a default-arg-capture closure (`lambda r=raw: ...`),
+        # even though it's genuinely Callable[[], T] at runtime. The default-arg
+        # capture itself is deliberate: it snapshots each loop iteration's
+        # `raw`/`normalized` by value, avoiding the classic late-binding closure
+        # bug where every lambda would otherwise see the loop's final value.
         for raw in raw_signals:
             normalized = self._execute(
-                trace, "normalization", lambda r=raw: self.deps.normalizer.normalize(r)
+                trace,
+                "normalization",
+                lambda r=raw: self.deps.normalizer.normalize(r),  # type: ignore[misc]
             )
             normalized_signals.append(normalized)
 
             self._execute(
                 trace,
                 "orchestrator.operational_history",
-                lambda n=normalized: self.deps.operational_history.record(
+                lambda n=normalized: self.deps.operational_history.record(  # type: ignore[misc]
                     ref=n.signal_id,
                     kind="normalized_signal",
                     payload=n,
@@ -236,7 +245,7 @@ class Orchestrator:
             event = self._execute(
                 trace,
                 "world_model",
-                lambda n=normalized: self.deps.world_model.process(n),
+                lambda n=normalized: self.deps.world_model.process(n),  # type: ignore[misc]
             )
 
         assert event is not None, "at least one raw_signal is required"
@@ -373,7 +382,7 @@ class Orchestrator:
         user_id: str,
         domain: Domain,
         entities: list[str],
-        interaction_type: str,
+        interaction_type: InteractionType,
         content: str,
         duration_ms: Optional[int] = None,
     ):

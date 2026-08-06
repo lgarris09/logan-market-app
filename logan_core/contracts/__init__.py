@@ -5,6 +5,7 @@ from .common import (
     Delta,
     Domain,
     Entity,
+    EntityType,
     EvaluationHorizon,
     ExecutionMetrics,
     ExecutionTrace,
@@ -15,9 +16,9 @@ from .common import (
 )
 from .community import CommunitySignal
 from .confidence import ConclusionConfidence
-from .feedback import FeedbackSignal, OutcomeRecord
+from .feedback import FeedbackSignal, InferredIntent, InteractionType, OutcomeRecord
 from .learning import MemoryWrite
-from .memory import MemoryRecord
+from .memory import MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
 from .opportunity import AttentionRecommendation, Dimensions
 from .policy import PolicyResult
@@ -42,6 +43,7 @@ __all__ = [
     "ExecutionMetrics",
     "ExecutionTrace",
     "Entity",
+    "EntityType",
     "Delta",
     "Reference",
     "Domain",
@@ -57,6 +59,7 @@ __all__ = [
     "SourceObservation",
     "CommunitySignal",
     "MemoryRecord",
+    "RecordType",
     "UserModel",
     "Interest",
     "Holding",
@@ -80,6 +83,8 @@ __all__ = [
     "FatigueRecord",
     "DeliveredItem",
     "FeedbackSignal",
+    "InteractionType",
+    "InferredIntent",
     "OutcomeRecord",
     "MemoryWrite",
 ]

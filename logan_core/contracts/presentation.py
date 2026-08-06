@@ -29,7 +29,10 @@ class DeliveredItem(BaseModel):
         return value
 
 
-def confidence_label_for(score: float) -> str:
+ConfidenceLabel = Literal["High", "Moderate", "Low", "Speculative"]
+
+
+def confidence_label_for(score: float) -> ConfidenceLabel:
     if score >= 0.80:
         return "High"
     if score >= 0.55:

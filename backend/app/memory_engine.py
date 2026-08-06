@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .memory_models import MemoryDecision, MemoryRecord
+from .memory_models import (
+    MemoryAction,
+    MemoryDecision,
+    MemoryRecord,
+    MemoryStatus,
+    MemoryType,
+)
 
 CATEGORY_BRANCHES = {
     "stocks": (
@@ -74,7 +80,7 @@ class MemoryEngine:
         return " ".join(value.lower().strip().split())
 
     @staticmethod
-    def _classify_type(content: str, user_confirmed: bool) -> str:
+    def _classify_type(content: str, user_confirmed: bool) -> MemoryType:
         text = content.lower()
 
         if user_confirmed:
@@ -94,7 +100,9 @@ class MemoryEngine:
         return "contextual"
 
     @staticmethod
-    def _score(content: str, memory_type: str, user_confirmed: bool) -> tuple[int, int]:
+    def _score(
+        content: str, memory_type: MemoryType, user_confirmed: bool
+    ) -> tuple[int, int]:
         importance = 45
         confidence = 58
 
@@ -121,7 +129,7 @@ class MemoryEngine:
     @staticmethod
     def _decision(
         importance: int, confidence: int, user_confirmed: bool
-    ) -> tuple[str, str]:
+    ) -> tuple[MemoryAction, MemoryStatus]:
         if user_confirmed:
             return "stored", "confirmed"
         if importance >= 70 and confidence >= 68:
@@ -147,7 +155,8 @@ class MemoryEngine:
         memory_type = self._classify_type(content, user_confirmed)
         importance, confidence = self._score(content, memory_type, user_confirmed)
         action, status = self._decision(importance, confidence, user_confirmed)
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
 
         with self._connect() as connection:
             existing = connection.execute(
@@ -225,8 +234,8 @@ class MemoryEngine:
             action=action,
             source=source,
             reinforcement_count=reinforcement_count,
-            created_at=created_at,
-            updated_at=now,
+            created_at=datetime.fromisoformat(created_at),
+            updated_at=now_dt,
         )
 
         explanation = (

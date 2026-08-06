@@ -1,5 +1,6 @@
 import math
 from datetime import datetime, timezone
+from typing import Literal
 
 from logan_core.contracts import (
     DecisionTraceEntry,
@@ -69,7 +70,7 @@ class EvidenceTrustEngine:
             completeness_fields
         )
 
-        manipulation_risk = "low"
+        manipulation_risk: Literal["low", "medium", "high"] = "low"
         if corroboration == 0 and completeness < 1.0:
             manipulation_risk = "medium"
 

@@ -2,7 +2,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from logan_core.contracts import DecisionTraceEntry, FeedbackSignal
+from logan_core.contracts import (
+    DecisionTraceEntry,
+    FeedbackSignal,
+    InferredIntent,
+    InteractionType,
+)
 
 
 class FeedbackEngine:
@@ -12,10 +17,15 @@ class FeedbackEngine:
     """
 
     def interpret(
-        self, event_id: UUID, interaction_type: str, duration_ms: Optional[int] = None
+        self,
+        event_id: UUID,
+        interaction_type: InteractionType,
+        duration_ms: Optional[int] = None,
     ) -> FeedbackSignal:
         now = datetime.now(timezone.utc)
 
+        inferred_intent: InferredIntent
+        intent_confidence: float
         if interaction_type == "dismiss":
             inferred_intent, intent_confidence = "dismissing", 0.80
         elif interaction_type in ("save", "share", "watch"):

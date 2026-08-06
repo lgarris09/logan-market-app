@@ -14,12 +14,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.community_intelligence import EngagementSample  # noqa: E402
-from logan_core.contracts import (
+from logan_core.contracts import (  # noqa: E402
     ConclusionConfidence,
     DeliveredItem,
     Holding,
     PolicyResult,
-)  # noqa: E402
+)
 from logan_core.orchestrator import Orchestrator  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     tesla_ai_partnership_corroboration,

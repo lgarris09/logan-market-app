@@ -30,15 +30,10 @@ ignore = [
     "E501",  # line length -- Black already enforces this; avoid double-reporting
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# Engine functions intentionally accept `mental_model` for pipeline-position
-# stability (ADR-015 V1 pass-through) without reading it -- see the module
-# docstring in conclusion_confidence/engine.py.
-"logan_core/conclusion_confidence/engine.py" = ["ARG002"]
-
 [tool.mypy]
 python_version = "3.11"
 exclude = ["logan_core/.venv", "backend/.venv", "mobile"]
+explicit_package_bases = true
 warn_unused_ignores = true
 # V3.1.4 BATCH-2: this codebase has never been type-checked before. Rather
 # than block the release on a full-strict pass, start at a pragmatic baseline

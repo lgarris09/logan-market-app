@@ -7,6 +7,7 @@ from logan_core.contracts import (
     MemoryRecord,
     MemoryWrite,
     OutcomeRecord,
+    RecordType,
 )
 from logan_core.memory import MemoryStore
 
@@ -35,6 +36,7 @@ class LearningEngine:
     ) -> MemoryWrite:
         now = datetime.now(timezone.utc)
 
+        record_type: RecordType
         if feedback.raw_interaction == "memory_inbox_reject":
             record_type = "correction_record"
         elif feedback.interaction_type == "act":

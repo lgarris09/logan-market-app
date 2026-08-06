@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from logan_core.contracts import CommunitySignal, DecisionTraceEntry, EnrichedEvent
 
@@ -65,6 +66,7 @@ class CommunityIntelligenceEngine:
             last.volume_at_point - first.volume_at_point
         ) / hours_elapsed
 
+        lifecycle_state: Literal["emerging", "peak", "fading", "dormant"]
         if engagement_velocity > 5:
             lifecycle_state = "emerging"
         elif engagement_velocity > 0:
