@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -11,10 +11,18 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
-import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
 import { AttentionField } from "../components/AttentionField";
+import { PressableScale } from "../components/PressableScale";
+import { fetchJson } from "../lib/apiClient";
 import { OpportunitiesResponse } from "../types/loganFeed";
+
+type FeedState =
+  | { kind: "loading" }
+  | { kind: "loaded"; response: OpportunitiesResponse }
+  | { kind: "empty" }
+  | { kind: "timeout" }
+  | { kind: "error"; message: string };
 
 const LEGACY_SCREENS: {
   label: string;
@@ -32,24 +40,47 @@ const LEGACY_SCREENS: {
 // Logan is tracking present only as soft, ambient light around it. Swipe, or
 // touch a glow directly, to bring something else into focus.
 export default function AttentionFieldScreen() {
-  const [feed, setFeed] = useState<OpportunitiesResponse | null>(null);
-  const [error, setError] = useState("");
+  const [state, setState] = useState<FeedState>({ kind: "loading" });
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const loadFeed = useCallback(async () => {
-    try {
-      setError("");
-      const response = await fetch(`${API_BASE_URL}/v1/opportunities`);
-      if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      setFeed((await response.json()) as OpportunitiesResponse);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reach Logan.");
+  const loadFeed = useCallback(async (signal: AbortSignal) => {
+    setState({ kind: "loading" });
+    const result = await fetchJson<OpportunitiesResponse>("/v1/opportunities", { signal });
+    switch (result.status) {
+      case "success":
+        setState(
+          result.data.items.length > 0
+            ? { kind: "loaded", response: result.data }
+            : { kind: "empty" }
+        );
+        return;
+      case "timeout":
+        setState({ kind: "timeout" });
+        return;
+      case "aborted":
+        // Screen unmounted or a new load superseded this one -- no state update.
+        return;
+      case "error":
+        setState({ kind: "error", message: result.message });
+        return;
     }
   }, []);
 
-  useEffect(() => {
-    loadFeed();
+  // Cancels the in-flight request if the screen unmounts before it resolves,
+  // instead of calling setState on an unmounted component.
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const startLoad = useCallback(() => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    loadFeed(controller.signal);
   }, [loadFeed]);
+
+  useEffect(() => {
+    startLoad();
+    return () => controllerRef.current?.abort();
+  }, [startLoad]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -67,25 +98,72 @@ export default function AttentionFieldScreen() {
         <View style={styles.liveDot} accessibilityElementsHidden importantForAccessibility="no" />
       </View>
 
-      {!feed && !error && (
-        <View style={styles.centerFill}>
+      {state.kind === "loading" && (
+        <View style={styles.centerFill} accessibilityLabel="Loading opportunities">
           <ActivityIndicator color={theme.accent} size="large" />
         </View>
       )}
 
-      {!!error && (
+      {state.kind === "error" && (
         <View style={styles.centerFill}>
-          <View style={styles.error}>
+          <View style={styles.error} accessibilityLiveRegion="polite">
             <Text style={styles.errorTitle}>Backend not connected</Text>
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{state.message}</Text>
             <Text style={styles.errorText}>
-              Start FastAPI and set your computer IP in constants/config.ts.
+              Start FastAPI and set your computer IP in constants/config.ts (or
+              EXPO_PUBLIC_API_BASE_URL).
             </Text>
+            <PressableScale
+              style={styles.retryButton}
+              onPress={startLoad}
+              accessibilityLabel="Retry"
+              accessibilityHint="Tries loading opportunities again"
+            >
+              <Text style={styles.retryText}>Retry</Text>
+            </PressableScale>
           </View>
         </View>
       )}
 
-      {feed && feed.items.length > 0 && <AttentionField items={feed.items} />}
+      {state.kind === "timeout" && (
+        <View style={styles.centerFill}>
+          <View style={styles.error} accessibilityLiveRegion="polite">
+            <Text style={styles.errorTitle}>Taking longer than expected</Text>
+            <Text style={styles.errorText}>
+              Logan didn&apos;t respond in time. Check that the backend is running and reachable.
+            </Text>
+            <PressableScale
+              style={styles.retryButton}
+              onPress={startLoad}
+              accessibilityLabel="Retry"
+              accessibilityHint="Tries loading opportunities again"
+            >
+              <Text style={styles.retryText}>Retry</Text>
+            </PressableScale>
+          </View>
+        </View>
+      )}
+
+      {state.kind === "empty" && (
+        <View style={styles.centerFill}>
+          <View style={styles.error} accessibilityLiveRegion="polite">
+            <Text style={styles.errorTitle}>Nothing to show yet</Text>
+            <Text style={styles.errorText}>
+              Logan isn&apos;t tracking any opportunities right now.
+            </Text>
+            <PressableScale
+              style={styles.retryButton}
+              onPress={startLoad}
+              accessibilityLabel="Refresh"
+              accessibilityHint="Checks again for opportunities"
+            >
+              <Text style={styles.retryText}>Refresh</Text>
+            </PressableScale>
+          </View>
+        </View>
+      )}
+
+      {state.kind === "loaded" && <AttentionField items={state.response.items} />}
 
       <Modal
         visible={menuOpen}
@@ -146,6 +224,14 @@ const styles = StyleSheet.create({
   },
   errorTitle: { color: theme.text, fontWeight: "900", marginBottom: 7 },
   errorText: { color: theme.textSecondary, lineHeight: 20, marginBottom: 4 },
+  retryButton: {
+    backgroundColor: theme.accent,
+    borderRadius: 13,
+    alignItems: "center",
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  retryText: { color: "#FFFFFF", fontWeight: "900" },
   menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   menuCard: {
     backgroundColor: theme.surface,

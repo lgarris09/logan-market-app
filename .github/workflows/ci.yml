@@ -75,7 +75,4 @@ jobs:
       - name: tsc --noEmit
         run: npm run typecheck
       - name: jest
-        # V3.1.4 BATCH-5 adds the mobile test suite and this script; until
-        # then this step is a no-op rather than a failure, so BATCH-2/3/4
-        # can merge with the other three checks already gating.
-        run: npm run test --if-present -- --ci
+        run: npm run test -- --ci
