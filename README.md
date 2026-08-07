@@ -84,41 +84,40 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## Start the phone app
 
-From `mobile`:
+As of V3.1.4, Expo Go is **not** the target environment (it can't load the Skia/Atmosphere native module).
+The app runs as an Apple-signed native development-client build on the owner's iPhone. Full step-by-step
+instructions — including the exact `eas build` command and what to select at each prompt — are in
+[docs/testing/STRATUS_IPHONE_BUILD_INSTRUCTIONS_V3.1.4.md](docs/testing/STRATUS_IPHONE_BUILD_INSTRUCTIONS_V3.1.4.md).
+
+Quick version once the native build is installed once:
 
 ```powershell
+cd mobile
 npm install
-npx expo start
+npx expo start --dev-client
 ```
 
-Install Expo Go on the phone and scan the QR code.
+Open the installed STRATUS app on the phone; it connects to this Metro server over the same Wi-Fi network.
 
 ## Connect the phone to the backend
 
-Update:
+Backend URL is environment-based, not hardcoded — copy `mobile/.env.example` to `mobile/.env` and set:
 
 ```text
-mobile/constants/config.ts
+EXPO_PUBLIC_API_BASE_URL=http://<this computer's local IPv4>:8000
 ```
 
-Replace the sample address with the computer's local IPv4 address:
-
-```ts
-export const API_BASE_URL = "http://192.168.1.100:8000";
-```
-
-The phone and computer must be on the same Wi-Fi.
-
-This hardcoded-IP setup is a local-development convenience only — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#known-gaps-phase-1-prototype--tracked-not-yet-urgent) for
-what needs to change before this goes beyond a developer's machine.
+The phone and computer must be on the same Wi-Fi. No source file needs editing (see
+`mobile/constants/config.ts` for the fallback logic). Changing `.env` takes effect the next time
+`npx expo start --dev-client` runs — no rebuild required.
 
 ## Run the Logan Intelligence System demo
 
 `POST /v1/demo/tesla` bridges the historical backend to the `logan_core` pipeline (see
 [ADR-022](docs/DECISIONS.md#adr-022-logan_core-bridged-into-the-historical-backend-via-a-demo-endpoint-not-a-real-api-design))
-and runs the Tesla AI-chip-partnership scenario end-to-end on simulated data. The mobile app has a
-"Run Logan Demo" button on the home screen that calls it and renders the result.
+and runs the Tesla AI-chip-partnership scenario end-to-end on simulated data. The mobile app's demo screen
+(reachable from the home screen's menu, not the home screen itself as of V3.1.4) has a **Run STRATUS
+Demo** button that calls it and renders the result.
 
 Backend (from `backend`, after following "Start the backend" above):
 
@@ -128,7 +127,8 @@ curl -X POST http://127.0.0.1:8000/v1/demo/tesla
 
 Or open `http://127.0.0.1:8000/docs` and try it from the Swagger UI.
 
-Mobile: start the app per "Start the phone app" above, then tap **Run Logan Demo** on the home screen.
+Mobile: start the app per "Start the phone app" above, open the menu, choose "Tesla-only pipeline demo",
+then tap **Run STRATUS Demo**.
 
 ## Test memory through the API
 
