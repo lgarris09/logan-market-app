@@ -4,6 +4,7 @@ import { Animated, Easing, StyleSheet, Text } from "react-native";
 import { EntitySymbol } from "./EntitySymbol";
 import { PressableScale } from "./PressableScale";
 import { theme, motion } from "../constants/theme";
+import { useReducedMotion } from "../hooks/useReducedMotion";
 import { resolveSymbol } from "../lib/symbolResolver";
 import { FeedItem } from "../types/loganFeed";
 
@@ -25,6 +26,7 @@ export function OpportunityNode({
   floatFreq?: number;
 }) {
   const symbol = resolveSymbol(item);
+  const reducedMotion = useReducedMotion();
 
   const focusAnim = useRef(new Animated.Value(emphasis === "focused" ? 1 : 0)).current;
   const opacityAnim = useRef(new Animated.Value(emphasis === "dimmed" ? 0.38 : 1)).current;
@@ -45,11 +47,11 @@ export function OpportunityNode({
       useNativeDriver: true,
     }).start();
 
-    if (emphasis === "focused") {
+    if (emphasis === "focused" && !reducedMotion) {
       selectRipple.setValue(0);
       Animated.timing(selectRipple, { toValue: 1, duration: 750, useNativeDriver: true }).start();
     }
-  }, [emphasis, focusAnim, opacityAnim, selectRipple]);
+  }, [emphasis, focusAnim, opacityAnim, selectRipple, reducedMotion]);
 
   const rippleScale = selectRipple.interpolate({ inputRange: [0, 1], outputRange: [1, 1.9] });
   const rippleOpacity = selectRipple.interpolate({
@@ -63,6 +65,11 @@ export function OpportunityNode({
   const driftY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (reducedMotion) {
+      driftX.setValue(0);
+      driftY.setValue(0);
+      return;
+    }
     const base = 4400 / floatFreq;
     const delay = (floatPhase / (Math.PI * 2)) * base;
     const ease = Easing.inOut(Easing.sin);
@@ -119,7 +126,7 @@ export function OpportunityNode({
       loopY.stop();
       loopX.stop();
     };
-  }, [driftX, driftY, floatFreq, floatPhase]);
+  }, [driftX, driftY, floatFreq, floatPhase, reducedMotion]);
 
   const ringScale = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
   const translateY = driftY.interpolate({ inputRange: [-1, 1], outputRange: [-3, 3] });
@@ -127,7 +134,14 @@ export function OpportunityNode({
 
   return (
     <Animated.View style={{ opacity: opacityAnim, transform: [{ translateX }, { translateY }] }}>
-      <PressableScale onPress={onPress} style={styles.wrapper} scaleTo={0.92}>
+      <PressableScale
+        onPress={onPress}
+        style={styles.wrapper}
+        scaleTo={0.92}
+        accessibilityLabel={item.display_name}
+        accessibilityHint="Focuses this opportunity"
+        accessibilityState={{ selected: emphasis === "focused" }}
+      >
         <Animated.View
           pointerEvents="none"
           style={[

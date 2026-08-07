@@ -4,6 +4,7 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 
 import { theme } from "../constants/theme";
+import { useReducedMotion } from "../hooks/useReducedMotion";
 import { resolveSymbol } from "../lib/symbolResolver";
 import { VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
@@ -40,6 +41,7 @@ export function Vessel({
   // Already 0..1 and rank-derived (see attentionLayout.ts) -- no raw score is
   // ever available here, per ADR-029.
   const prominence = layout.prominence;
+  const reducedMotion = useReducedMotion();
 
   const entrance = useRef(new Animated.Value(0)).current;
   const drift = useRef(new Animated.Value(0)).current;
@@ -51,16 +53,30 @@ export function Vessel({
   // Condensation: this vessel did not simply appear -- it accreted, starting
   // diffuse and settling. Staggered per entity so the whole field doesn't
   // form in unison.
+  // Reduced motion (OS accessibility setting): the vessel still appears, still
+  // discloses on tap, still shows focus -- what stops is the ambient, non-essential
+  // motion that never carries information on its own (continuous drift/breath/pulse
+  // loops, the condensation spring-in, cross-vessel echo ripples). Disclosure and
+  // focus still transition, just quickly and without spring bounce, since those are
+  // direct responses to a user's own tap/swipe, not ambient animation.
   useEffect(() => {
+    if (reducedMotion) {
+      entrance.setValue(1);
+      return;
+    }
     const delay = stableDelay(item.event_id);
     Animated.sequence([
       Animated.delay(delay),
       Animated.spring(entrance, { toValue: 1, useNativeDriver: true, friction: 6, tension: 30 }),
     ]).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reducedMotion]);
 
   useEffect(() => {
+    if (reducedMotion) {
+      drift.setValue(0);
+      return;
+    }
     const base = 6000 / layout.driftFreq;
     const delay = (layout.driftPhase / (Math.PI * 2)) * base;
     const ease = Easing.inOut(Easing.sin);
@@ -84,11 +100,15 @@ export function Vessel({
     );
     loop.start();
     return () => loop.stop();
-  }, [drift, layout.driftFreq, layout.driftPhase]);
+  }, [drift, layout.driftFreq, layout.driftPhase, reducedMotion]);
 
   // Confidence made continuous: a settled belief barely moves; an uncertain
   // one visibly wavers the whole time you look at it, not just once.
   useEffect(() => {
+    if (reducedMotion) {
+      breath.setValue(0);
+      return;
+    }
     const base = 3400 / layout.breathFreq;
     const delay = (layout.breathPhase / (Math.PI * 2)) * base;
     const ease = Easing.inOut(Easing.sin);
@@ -111,11 +131,15 @@ export function Vessel({
     );
     loop.start();
     return () => loop.stop();
-  }, [breath, layout.breathFreq, layout.breathPhase]);
+  }, [breath, layout.breathFreq, layout.breathPhase, reducedMotion]);
 
   // Priority made continuous: what matters more visibly asserts itself more
   // often -- a slow heartbeat, not a fixed brightness.
   useEffect(() => {
+    if (reducedMotion) {
+      pulse.setValue(0);
+      return;
+    }
     const base = 2200 / layout.pulseFreq;
     const delay = (layout.pulsePhase / (Math.PI * 2)) * base;
     const ease = Easing.inOut(Easing.sin);
@@ -133,24 +157,32 @@ export function Vessel({
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse, layout.pulseFreq, layout.pulsePhase]);
+  }, [pulse, layout.pulseFreq, layout.pulsePhase, reducedMotion]);
 
   useEffect(() => {
+    if (reducedMotion) {
+      Animated.timing(disclosureAnim, {
+        toValue: disclosure,
+        duration: 120,
+        useNativeDriver: false,
+      }).start();
+      return;
+    }
     Animated.spring(disclosureAnim, {
       toValue: disclosure,
       useNativeDriver: false, // drives width/height/borderRadius, not transform-only
       friction: 9,
       tension: 40,
     }).start();
-  }, [disclosure, disclosureAnim]);
+  }, [disclosure, disclosureAnim, reducedMotion]);
 
   useEffect(() => {
     Animated.timing(focusAnim, {
       toValue: isFocused ? 1 : 0,
-      duration: 420,
+      duration: reducedMotion ? 120 : 420,
       useNativeDriver: true,
     }).start();
-  }, [isFocused, focusAnim]);
+  }, [isFocused, focusAnim, reducedMotion]);
 
   const dormantSize = layout.size;
   const glanceHeight = 118;
@@ -291,7 +323,17 @@ export function Vessel({
         />
       </View>
 
-      <Pressable onPress={onPress} hitSlop={12} style={styles.pressable}>
+      <Pressable
+        onPress={onPress}
+        hitSlop={12}
+        style={styles.pressable}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.display_name}: ${item.delivered_item.headline}`}
+        accessibilityHint={
+          disclosure < 2 ? "Reveals more detail about this opportunity" : "Shows less detail"
+        }
+        accessibilityState={{ expanded: disclosure > 0, selected: isFocused }}
+      >
         <Animated.View style={{ width, height, borderRadius: radius, overflow: "hidden" }}>
           <Animated.View style={[StyleSheet.absoluteFill, { opacity: frostOpacity }]}>
             <BlurView intensity={38} tint="dark" style={StyleSheet.absoluteFill} />

@@ -116,15 +116,27 @@ export default function ClassicBriefingScreen() {
           </FadeIn>
         ))}
 
-        <PressableScale style={styles.primaryButton} onPress={() => router.push("/ask")}>
+        <PressableScale
+          style={styles.primaryButton}
+          onPress={() => router.push("/ask")}
+          accessibilityLabel="Ask Logan"
+        >
           <Text style={styles.primaryButtonText}>Ask Logan</Text>
         </PressableScale>
 
-        <PressableScale style={styles.secondaryButton} onPress={() => router.push("/memory")}>
+        <PressableScale
+          style={styles.secondaryButton}
+          onPress={() => router.push("/memory")}
+          accessibilityLabel="Memory inbox"
+        >
           <Text style={styles.secondaryButtonText}>Memory inbox</Text>
         </PressableScale>
 
-        <PressableScale style={styles.secondaryButton} onPress={() => router.push("/demo")}>
+        <PressableScale
+          style={styles.secondaryButton}
+          onPress={() => router.push("/demo")}
+          accessibilityLabel="Run Logan demo"
+        >
           <Text style={styles.secondaryButtonText}>Run Logan Demo</Text>
         </PressableScale>
       </ScrollView>

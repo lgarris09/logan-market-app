@@ -54,11 +54,17 @@ export default function AttentionFieldScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.topbar}>
-        <Pressable onPress={() => setMenuOpen(true)} hitSlop={10}>
+        <Pressable
+          onPress={() => setMenuOpen(true)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Menu"
+          accessibilityHint="Opens the list of preserved screens"
+        >
           <Ionicons name="menu" size={22} color={theme.textSecondary} />
         </Pressable>
         <Text style={styles.wordmark}>LOGAN</Text>
-        <View style={styles.liveDot} />
+        <View style={styles.liveDot} accessibilityElementsHidden importantForAccessibility="no" />
       </View>
 
       {!feed && !error && (
@@ -87,7 +93,12 @@ export default function AttentionFieldScreen() {
         transparent
         onRequestClose={() => setMenuOpen(false)}
       >
-        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+        <Pressable
+          style={styles.menuBackdrop}
+          onPress={() => setMenuOpen(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close menu"
+        >
           <View style={styles.menuCard}>
             <Text style={styles.menuTitle}>Preserved screens</Text>
             {LEGACY_SCREENS.map((screen) => (
@@ -98,6 +109,8 @@ export default function AttentionFieldScreen() {
                   setMenuOpen(false);
                   router.push(screen.href);
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={screen.label}
               >
                 <Text style={styles.menuItemText}>{screen.label}</Text>
                 <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />

@@ -34,7 +34,7 @@ export function PressableScale({
   };
 
   return (
-    <Pressable onPressIn={pressIn} onPressOut={pressOut} {...props}>
+    <Pressable accessibilityRole="button" onPressIn={pressIn} onPressOut={pressOut} {...props}>
       <Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>
     </Pressable>
   );

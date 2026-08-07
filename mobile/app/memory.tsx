@@ -87,6 +87,9 @@ export default function MemoryInboxScreen() {
                     style={styles.reject}
                     onPress={() => confirm(memory.id, false)}
                     disabled={isPending}
+                    accessibilityLabel="Reject"
+                    accessibilityHint={`Rejects this memory: ${memory.content}`}
+                    accessibilityState={{ disabled: isPending, busy: isPending }}
                   >
                     {isPending ? (
                       <ActivityIndicator color={theme.text} size="small" />
@@ -98,6 +101,9 @@ export default function MemoryInboxScreen() {
                     style={styles.confirm}
                     onPress={() => confirm(memory.id, true)}
                     disabled={isPending}
+                    accessibilityLabel="Confirm"
+                    accessibilityHint={`Confirms this memory: ${memory.content}`}
+                    accessibilityState={{ disabled: isPending, busy: isPending }}
                   >
                     {isPending ? (
                       <ActivityIndicator color="#FFFFFF" size="small" />

@@ -68,8 +68,16 @@ export default function AskScreen() {
           placeholderTextColor={theme.muted}
           multiline
           style={styles.input}
+          accessibilityLabel="Message to Logan"
         />
-        <PressableScale style={styles.send} onPress={submit} disabled={loading}>
+        <PressableScale
+          style={styles.send}
+          onPress={submit}
+          disabled={loading}
+          accessibilityLabel="Send"
+          accessibilityHint="Sends your message to Logan"
+          accessibilityState={{ disabled: loading, busy: loading }}
+        >
           {loading ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (

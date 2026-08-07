@@ -38,7 +38,14 @@ export default function DemoScreen() {
         18-layer logan_core pipeline on simulated data, live against the backend.
       </Text>
 
-      <PressableScale style={styles.button} onPress={runDemo} disabled={loading}>
+      <PressableScale
+        style={styles.button}
+        onPress={runDemo}
+        disabled={loading}
+        accessibilityLabel="Run Logan demo"
+        accessibilityHint="Runs the Tesla pipeline scenario against the backend"
+        accessibilityState={{ disabled: loading, busy: loading }}
+      >
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (

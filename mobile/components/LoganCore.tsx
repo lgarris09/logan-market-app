@@ -3,6 +3,8 @@ import { Animated, StyleSheet, Text, View } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 
+import { useReducedMotion } from "../hooks/useReducedMotion";
+
 const CORE_SIZE = 84;
 const GOLD = "#E8B95C";
 
@@ -17,17 +19,22 @@ const RINGS = [
   { duration: 2000, delay: 460, peakScale: 2.75, eccentricity: 0.96 },
 ];
 
-function useRippleBurst(trigger: unknown, duration: number, delay: number) {
+function useRippleBurst(trigger: unknown, duration: number, delay: number, reducedMotion: boolean) {
   const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (trigger === undefined) return;
+    // Decorative reinforcement of "Logan concluded something" -- the state
+    // change itself (new headline, new confidence) already carries that
+    // information, so the burst is skipped rather than sped up under reduced
+    // motion.
+    if (reducedMotion) return;
     progress.setValue(0);
     const anim = Animated.timing(progress, { toValue: 1, duration, delay, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trigger]);
+  }, [trigger, reducedMotion]);
 
   return progress;
 }
@@ -38,8 +45,9 @@ function Ripple({
   delay,
   peakScale,
   eccentricity,
-}: (typeof RINGS)[number] & { trigger: unknown }) {
-  const progress = useRippleBurst(trigger, duration, delay);
+  reducedMotion,
+}: (typeof RINGS)[number] & { trigger: unknown; reducedMotion: boolean }) {
+  const progress = useRippleBurst(trigger, duration, delay, reducedMotion);
 
   const scaleX = progress.interpolate({ inputRange: [0, 1], outputRange: [1, peakScale] });
   const scaleY = progress.interpolate({
@@ -68,8 +76,13 @@ function Ripple({
 // generated_at timestamp. Passing the same pulseKey twice does nothing.
 export function LoganCore({ pulseKey }: { pulseKey?: string | number }) {
   const breath = useRef(new Animated.Value(0)).current;
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
+    if (reducedMotion) {
+      breath.setValue(0);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(breath, { toValue: 1, duration: 2800, useNativeDriver: true }),
@@ -78,14 +91,14 @@ export function LoganCore({ pulseKey }: { pulseKey?: string | number }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [breath]);
+  }, [breath, reducedMotion]);
 
   const scale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] });
 
   return (
     <View style={styles.wrapper} pointerEvents="none">
       {RINGS.map((ring, index) => (
-        <Ripple key={index} trigger={pulseKey} {...ring} />
+        <Ripple key={index} trigger={pulseKey} {...ring} reducedMotion={reducedMotion} />
       ))}
 
       <Animated.View style={[styles.core, { transform: [{ scale }] }]}>

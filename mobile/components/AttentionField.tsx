@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, LayoutChangeEvent, PanResponder, StyleSheet, View } from "react-native";
 
+import { useReducedMotion } from "../hooks/useReducedMotion";
 import { computeAtmosphereLayout, defaultFocus, shiftFocus } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 import { Vessel } from "./Vessel";
@@ -30,6 +31,7 @@ export function AttentionField({ items }: { items: FeedItem[] }) {
   }, [items, focusedId]);
 
   const layouts = useMemo(() => computeAtmosphereLayout(items), [items]);
+  const reducedMotion = useReducedMotion();
 
   const echoSignals = useRef(new Map<string, Animated.Value>()).current;
   const echoSignalFor = (eventId: string): Animated.Value => {
@@ -46,6 +48,10 @@ export function AttentionField({ items }: { items: FeedItem[] }) {
   // outward -- this is how relatedness is felt, never drawn as a line.
   useEffect(() => {
     if (!focusedId) return;
+    // Purely decorative: relatedness is still conveyed by which vessel gains
+    // focus and its own disclosure state, so under reduced motion the ripple is
+    // skipped entirely rather than sped up.
+    if (reducedMotion) return;
     const focused = items.find((item) => item.event_id === focusedId);
     if (!focused) return;
 
@@ -66,7 +72,7 @@ export function AttentionField({ items }: { items: FeedItem[] }) {
       ]).start();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedId]);
+  }, [focusedId, reducedMotion]);
 
   const handlePress = (item: FeedItem) => {
     if (item.event_id !== focusedId) {

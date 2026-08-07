@@ -12,6 +12,7 @@ import {
 } from "@shopify/react-native-skia";
 import {
   useDerivedValue,
+  useReducedMotion,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -32,14 +33,24 @@ const PARTICLE_COUNT = 130;
 export function AtmosphereField() {
   const { width, height } = useWindowDimensions();
   const time = useSharedValue(0);
+  // Reanimated's own reduced-motion hook (not mobile/hooks/useReducedMotion, which
+  // is built for the classic-Animated AttentionField/Vessel/LoganCore tree) --
+  // idiomatic here since this whole layer is already Reanimated/Skia-driven. Note:
+  // per Reanimated's docs this value is captured once at app start and does not
+  // update if the OS setting changes while the app is running.
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
+    // Every drift in this layer (haze, clouds, particles) derives from this one
+    // clock -- freezing it at a static value stops all of it in one place instead
+    // of threading a reduced-motion check through each derived value.
+    if (reducedMotion) return;
     time.value = withRepeat(
       withTiming(100000, { duration: 100000000, easing: Easing.linear }),
       -1,
       false
     );
-  }, [time]);
+  }, [time, reducedMotion]);
 
   const clouds = useMemo<CloudSpec[]>(() => {
     const entries: {
