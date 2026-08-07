@@ -1,6 +1,6 @@
 # Logan Intelligence — Current Implementation State
-**Version:** 3.1.3
-*Last updated: 2026-08-04/05 (v3.1.3 reconciliation session) — verified against the actual repository, not reconstructed.*
+**Version:** 3.1.4
+*Last updated: 2026-08-06/07 (V3.1.4 BATCH-1 through BATCH-5) — verified against the actual repository, not reconstructed.*
 
 > This document was rewritten from a direct repository inspection (`git remote`, `git log`, `logan_core/` and `mobile/app/` directory listings) during the v3.1.3 reconciliation session. It supersedes the prior "UNVERIFIED IMPLEMENTATION SNAPSHOT" placeholder below, which predates this repository's actual `logan_core/` build (see `docs/DECISIONS.md` ADR-014 through ADR-028) and was never updated to match it.
 
@@ -20,12 +20,17 @@
 
 | Item | State | Notes |
 |------|-------|-------|
-| Expo Router screens | EXISTS | `index.tsx` (home/Attention Field), `field-legacy.tsx` (preserved radial Opportunity Field, ADR-027), `atmosphere-preview.tsx` (Skia atmosphere layer, ADR-028), `ask.tsx`, `classic.tsx`, `demo.tsx`, `memory.tsx` |
-| Attention Field (depth-of-focus, `Vessel` component) | BUILT | Not yet wired to real entity data (ADR-027); Skia atmosphere layer is a standalone preview, not yet merged into the live screen (ADR-028) |
-| Opportunity Field (legacy radial layout) | BUILT | Preserved unchanged, reachable via menu (ADR-023, ADR-027) |
-| API connection | DEMO ONLY | Calls `backend/app/logan_demo.py`'s single `run_tesla_demo()` route, not a real client-facing API (ADR-022) |
+| Expo Router screens | EXISTS | `index.tsx` (home/Attention Field), `field-legacy.tsx` (preserved radial Opportunity Field, ADR-027), `atmosphere-preview.tsx` (Skia atmosphere Sprint-1 preview, ADR-028, unchanged), `ask.tsx`, `classic.tsx`, `demo.tsx`, `memory.tsx` |
+| Attention Field (depth-of-focus, `Vessel` component) | BUILT | Wired to real `/v1/opportunities` data (V3.1.4 BATCH-4); Atmosphere is now integrated as a subordinate background layer behind the Vessels (`AttentionAtmosphere.tsx`, V3.1.4 BATCH-5, resolves ADR-028's open item) — a narrower, capped version of the Sprint 1 preview, not the full particle/demo-entity version |
+| Opportunity Field (legacy radial layout) | BUILT | Preserved unchanged, reachable via menu (ADR-023, ADR-027); still calls `/v1/demo/feed` (deprecated but functional) |
+| API connection | REAL (primary screen), DEMO (legacy screens) | Home screen calls the real, versioned `GET /v1/opportunities` (V3.1.4 BATCH-4, `backend/app/opportunities.py`); `field-legacy.tsx`/`demo.tsx`/`classic.tsx` remain on their existing demo/legacy routes, all still functional (`deprecated=True`, not removed) |
 | WebSocket client | NOT BUILT | |
-| Opportunity Card (full spec, `22_OPPORTUNITY_CARD_SPEC.md`) | NOT BUILT AS SPECIFIED | Demo screens render pipeline output directly, not the full card contract |
+| Opportunity Card (full spec, `22_OPPORTUNITY_CARD_SPEC.md`) | NOT BUILT AS SPECIFIED, but consolidated | Two near-duplicate card components merged into one canonical `OpportunityCard` (`DeliveredItem`-based, V3.1.4 BATCH-4); still not the full `22_OPPORTUNITY_CARD_SPEC.md` contract |
+| Reduced motion | BUILT | `hooks/useReducedMotion.ts` (AccessibilityInfo-based) wired into AttentionField/Vessel/LoganCore/OpportunityNode; Atmosphere layers use Reanimated's own `useReducedMotion()` (V3.1.4 BATCH-5) |
+| Accessibility (labels/roles/hints/states) | BUILT (partial) | Applied to every interactive element reached in V3.1.4 BATCH-5 (Vessel, home screen menu, OpportunityNode, ask/memory/demo/classic screens); not a full accessibility audit of every screen |
+| Centralized fetch / loading-empty-timeout-retry-error states | BUILT | `lib/apiClient.ts` (timeout, bounded retry, `AbortSignal` cancellation); wired into the home screen only (V3.1.4 BATCH-5) |
+| Mobile test suite (Jest/RNTL) | BUILT | First ever for this repo — 19 tests (`jest-expo` preset, `@testing-library/react-native@13`); wired into CI (V3.1.4 BATCH-5) |
+| Design tokens (`spacing`/`radius`/`type`) | PARTIAL | Adopted on the flagship screen (`index.tsx`) and `Vessel.tsx` wherever an exact-value match existed; not a full sweep of every screen (V3.1.4 BATCH-5) |
 
 ---
 
@@ -53,13 +58,14 @@ All 18 layer folders plus `contracts/`, `orchestrator/`, and `tests/` exist with
 | `decision_trace` population | BUILT | Populated across all layers that produce a decision (normalization, world_model, evidence_trust, reasoning, conclusion_confidence, policy, prioritization, presentation, feedback, mental_model, community_intelligence); the `contradicting` field on world-model events and the `contradicts` branch in reasoning remain documented-unreachable — no deterministic contradiction rule exists without inventing per-domain semantics (out of scope) |
 | Domain Receptors | SIMULATED ONLY | `logan_core/receptors/simulated.py` — no live external data source wired up for any domain |
 | Orchestrator | BUILT | Owns Operational History writes (ADR-016) |
-| World Model, Evidence Trust, Community Intelligence, Reasoning, Mental Model, Conclusion Confidence, Opportunity Engine, Policy, Prioritization, Presentation, Memory, User Model, Active Context, Feedback, Learning | BUILT | Each has a real implementation file (`engine.py` or equivalent); every layer now has direct unit test coverage plus a full pipeline integration test (`test_pipeline_tesla.py`) — 95 `logan_core` tests + 8 `backend` tests as of V3.1.4 BATCH-2, up from 40 |
+| World Model, Evidence Trust, Community Intelligence, Reasoning, Mental Model, Conclusion Confidence, Opportunity Engine, Policy, Prioritization, Presentation, Memory, User Model, Active Context, Feedback, Learning | BUILT | Each has a real implementation file (`engine.py` or equivalent); every layer now has direct unit test coverage plus a full pipeline integration test (`test_pipeline_tesla.py`) — 95 `logan_core` tests, up from 40 |
 | Python tooling (Black/Ruff/mypy) | BUILT | Root `pyproject.toml`; dev-only deps in `logan_core/requirements.txt` and `backend/requirements.txt`; zero suppressions except 3 documented mypy limitations on default-arg-capture lambdas |
-| Mobile tooling (ESLint/Prettier) | BUILT | `mobile/eslint.config.js` (flat config, `eslint-config-expo`), `.prettierrc.json`; React-Compiler-readiness rules disabled with documented rationale (near-100% false positives against this codebase's classic Animated/fetch-on-mount patterns) |
-| CI (GitHub Actions) | BUILT | `.github/workflows/ci.yml` — 3 jobs: `logan_core`, `backend`, `mobile` |
+| `backend` test suite | BUILT | 15 tests (8 from V3.1.4 BATCH-1 + 7 new `/v1/opportunities` contract tests, BATCH-4) |
+| Mobile tooling (ESLint/Prettier/Jest) | BUILT | `mobile/eslint.config.js` (flat config, `eslint-config-expo`), `.prettierrc.json`; React-Compiler-readiness rules disabled with documented rationale. `jest-expo` + `@testing-library/react-native@13` (V3.1.4 BATCH-5) — 19 tests, this repository's first mobile test suite |
+| CI (GitHub Actions) | BUILT | `.github/workflows/ci.yml` — 3 jobs: `logan_core`, `backend`, `mobile` (mobile's `jest` step runs for real as of V3.1.4 BATCH-5, previously a no-op placeholder) |
 | TriggerEvent registry | NOT BUILT IN CODE | Documented in `TRIGGER_EVENT_FRAMEWORK.md`/`TRIGGER_REGISTRY_*.md`, explicitly relabeled SPECIFIED — NOT IMPLEMENTED across the doc set in V3.1.4 BATCH-3 (OD-009); no corresponding `logan_core/` module exists and none is planned for V3.1.4 |
 | `OpportunityLifecycle` / Decay Engine | NOT BUILT IN CODE | `10_OPPORTUNITY_ENGINE.md` relabeled SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009); current `opportunity/engine.py` produces a single-pass `AttentionRecommendation`, no stage machine, no decay accumulation |
-| Real (non-demo) API endpoint | NOT BUILT AS OF BATCH-3 | `/v1/demo/tesla` bridge still the only route; V3.1.4 BATCH-4 adds a versioned `/v1/opportunities` thin adapter over `logan_core` |
+| Real (non-demo) API endpoint | BUILT (V3.1.4 BATCH-4) | `GET /v1/opportunities` (`backend/app/opportunities.py`) — thin adapter over the real `logan_core` pipeline, `schema_version` metadata, `internal_rank_score` never serialized. `/v1/demo/tesla` and `/v1/demo/feed` marked `deprecated=True`, kept functional for the legacy screens |
 | WebSocket server | NOT BUILT | |
 
 **ADR-034 conflict — resolved in V3.1.4 BATCH-1:** the prior session's known conflict (`community.momentum_score`
@@ -82,25 +88,25 @@ Still the only thing actually deployed/running: `main.py`, `memory_engine.py`, `
 | Database/hosting | NOT DECIDED | Open per ADR-006; SQLite + local dev only |
 | CI/CD | NOT BUILT | |
 | Cloud deployment | NOT CONFIGURED | |
-| EAS build (mobile) | CONFIGURED | `eas.json`, `expo-dev-client` added for Skia dev-client builds (ADR-028) |
+| EAS build (mobile) | CONFIGURED, not executed | `eas.json` (development/preview/production profiles), `expo-dev-client` for Skia dev-client builds (ADR-028); bundle ID `com.garrisengineeringllc.loganmarketmobile` and EAS project ID present in `app.json`. Actual Apple-signed build (`eas build --profile development --platform ios`) requires interactive Apple ID auth this environment cannot perform — not attempted; see `V3.1.4_IMPLEMENTATION_SUMMARY.md` |
 
 ---
 
 ## What Exists
 
 1. **`logan_core/`** — all 18 pipeline layers implemented with real code and full per-layer unit tests (95 tests), plus a passing Tesla-scenario integration test. Receptors are simulated, not live. Type-checked (mypy), formatted (Black/Ruff).
-2. **Mobile app** — Attention Field (depth-of-focus) as the home screen, legacy radial Opportunity Field preserved, Skia atmosphere-layer preview, several legacy/demo screens. ESLint/Prettier configured.
-3. **`backend/app/`** — historical FastAPI/SQLite prototype, still running, bridged to `logan_core` via one demo endpoint (8 tests).
+2. **Mobile app** — Attention Field (depth-of-focus) as the home screen, wired to the real `/v1/opportunities` API with a subordinate Atmosphere background layer, reduced-motion support, and accessibility labels; legacy radial Opportunity Field and other demo screens preserved. ESLint/Prettier/Jest configured (19 tests).
+3. **`backend/app/`** — historical FastAPI/SQLite prototype, still running; `GET /v1/opportunities` is now a real thin adapter over `logan_core` (15 tests total).
 4. **Architecture documentation** — this v3.1.3 package (28 core files + TriggerEvent framework files + 6 new ML-foundation files), plus `source_material/` (original v1.3 spec). TriggerEvent and OpportunityLifecycle/Decay content relabeled SPECIFIED — NOT IMPLEMENTED in V3.1.4 BATCH-3 (OD-009).
-5. **CI** — GitHub Actions workflow running `logan_core`, `backend`, and `mobile` jobs on push/PR.
+5. **CI** — GitHub Actions workflow running `logan_core`, `backend`, and `mobile` (now including real Jest tests) jobs on push/PR.
 
 ---
 
 ## What Is Mocked vs. Real
 
-- **Real, tested, code-backed:** all 18 `logan_core/` layers, the Tesla pipeline integration test, the demo bridge endpoint, the Attention Field and legacy Opportunity Field UI.
-- **Simulated, not live:** every domain receptor (`logan_core/receptors/simulated.py`) — no external market/sports/news/etc. data source is actually polled.
-- **Not built at all:** TriggerEvent registry in code, `OpportunityLifecycle`/Decay Engine in code, any real (non-demo) API (until V3.1.4 BATCH-4), WebSocket layer, Opportunity Card as fully specified in `22_OPPORTUNITY_CARD_SPEC.md`, all infrastructure/deployment.
+- **Real, tested, code-backed:** all 18 `logan_core/` layers, the Tesla pipeline integration test, `GET /v1/opportunities`, the Attention Field (now wired to real data) and legacy Opportunity Field UI.
+- **Simulated, not live:** every domain receptor (`logan_core/receptors/simulated.py`) — no external market/sports/news/etc. data source is actually polled. `/v1/opportunities` is a real pipeline run over simulated input, not a real external data source.
+- **Not built at all:** TriggerEvent registry in code, `OpportunityLifecycle`/Decay Engine in code, WebSocket layer, Opportunity Card as fully specified in `22_OPPORTUNITY_CARD_SPEC.md`, auth, all infrastructure/deployment, an Apple-signed device build (configuration present — bundle ID, EAS project ID, dev-client build profile — but not executed in this environment; see `V3.1.4_IMPLEMENTATION_SUMMARY.md`).
 
 ---
 
@@ -137,3 +143,4 @@ After Sprint 2A passes:
 *v3.1.3 changes: Entire document rewritten from a direct repository inspection (git remote, logan_core/ and mobile/app/ directory listings) rather than left as an unverified placeholder — see the note at the top of this file. Repository, Mobile App, Backend, Infrastructure, "What Exists", and "What Is Mocked vs. Real" sections replaced with verified current state. Sprint 2A Target State section below is unchanged (it describes a future target, not current state).*
 *v3.1.3 code-foundation pass (2026-08-05): Backend table updated for the actual code changes — MemoryRecord.user_id, watch/remind interaction types, EvidenceTrust/ConclusionConfidence model-version reservations, OutcomeRecord v2, SourceObservation, and the process_outcome() stub, all BUILT this session (40 tests passing, up from 28). Added a "Known ADR-034 conflict, not fixed" note documenting two pre-existing priority_score/community_momentum issues found during required inspection but left unmodified as outside this pass's authorized scope. See V3.1.3_IMPLEMENTATION_SUMMARY.md for the full session record.*
 *V3.1.4 changes (BATCH-1/2/3): ADR-034 conflict fixed (community_momentum removed from ranking); priority_score renamed to internal_rank_score and made genuinely internal-only (ADR-029); ActiveContext.user_id added; decision_trace populated across all layers; contradiction path documented as reserved/unreachable rather than silently dead; fatigue/cooldown windows wired into real expiration logic; domain fields typed as the `Domain` Literal throughout; full per-layer unit test coverage added (95 logan_core + 8 backend tests, up from 40); Black/Ruff/mypy and ESLint/Prettier tooling added with CI; TriggerEvent and OpportunityLifecycle/Decay Engine content relabeled SPECIFIED — NOT IMPLEMENTED across the doc set (OD-009).*
+*V3.1.4 changes (BATCH-4/5, 2026-08-07): GET /v1/opportunities shipped as a real thin adapter over logan_core (backend/app/opportunities.py), replacing the old static-fixture route; /v1/demo/tesla and /v1/demo/feed marked deprecated, kept functional. Mobile home screen migrated to the real API; Opportunity Card components consolidated into one canonical DeliveredItem-based component; hardcoded LAN IP replaced with EXPO_PUBLIC_API_BASE_URL. Reduced motion (useReducedMotion) wired into every ambient animation across AttentionField/Vessel/LoganCore/OpportunityNode and the Atmosphere layer; accessibility labels/roles/hints/states added across interactive elements reached this pass; centralized fetch (lib/apiClient.ts) added with timeout/retry/cancellation and five distinct home-screen states (loading/loaded/empty/timeout/error); this repository's first Jest/RNTL test suite added (19 tests) and wired into CI; design tokens adopted on the flagship screen and Vessel; AttentionAtmosphere.tsx integrates a capped, feed-connected subordinate Atmosphere layer into the live screen, resolving ADR-028's open item. backend test count: 15 (up from 8). mobile test count: 19 (new). See V3.1.4_IMPLEMENTATION_SUMMARY.md for the full batch-by-batch record, including mobile deployment (Apple-signed iOS build) status.*

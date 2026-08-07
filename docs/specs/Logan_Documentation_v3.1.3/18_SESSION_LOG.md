@@ -29,7 +29,7 @@ This file is the institutional memory of the project.
 
 ---
 
-### 2026-08-06 — V3.1.4 implementation, BATCH-1 through BATCH-3 (in progress)
+### 2026-08-06/07 — V3.1.4 implementation, BATCH-1 through BATCH-5 (complete)
 `[VERIFIED]`
 
 **Context:** Full V3.1.4 implementation authorized in one continuous pass (BATCH-1 through BATCH-5),
@@ -100,9 +100,40 @@ review. Branch `feat/v3.1.4-implementation`, local commits only, no push/merge/d
   relabeled, not removed.
 - `23_CURRENT_IMPLEMENTATION_STATE.md` updated for all BATCH-1/2/3 changes, including resolving the prior
   session's "Known ADR-034 conflict, not fixed" note (now fixed).
-- Remaining before BATCH-3 closes: `DOCUMENTATION_REFERENCE_AUDIT.md` refresh, `28_PACKAGE_MANIFEST.md`
-  update, and this docs work committed as its own commit (or set of commits), separate from BATCH-1/2's
-  functional-code commits.
+- `DOCUMENTATION_REFERENCE_AUDIT.md` and `28_PACKAGE_MANIFEST.md` refreshed; all BATCH-3 doc changes
+  committed separately from BATCH-1/2's functional-code commits, per instruction.
+
+**BATCH-4 (real API, mobile migration) — complete:**
+- `GET /v1/opportunities` replaced its old static-fixture response with a thin adapter over the real
+  `logan_core` pipeline (`backend/app/opportunities.py`): `schema_version` metadata, `internal_rank_score`
+  never serialized, category filter preserved. `logan_feed.py`'s `_run_feed_pipeline()` extracted so this
+  route and the now-`deprecated=True` `/v1/demo/feed` share one computation.
+- Mobile home screen (`app/index.tsx`), the only primary-navigation `/v1/demo/*` consumer, migrated to
+  `/v1/opportunities`. `field-legacy.tsx`/`demo.tsx`/`classic.tsx` (preserved legacy screens) left as-is.
+- The two near-duplicate Opportunity Card components consolidated into one canonical
+  `DeliveredItem`-based `OpportunityCard`; the old static-fixture card renamed `LegacyOpportunityCard`,
+  kept only for `classic.tsx`.
+- `constants/config.ts`'s hardcoded LAN IP replaced with `EXPO_PUBLIC_API_BASE_URL` (Expo SDK 54 inlines
+  this at build time), falling back to the same dev IP for zero-config local `expo start`.
+
+**BATCH-5 (accessibility, quality, Atmosphere) — complete:**
+- `hooks/useReducedMotion.ts` wired into every ambient animation in AttentionField, Vessel, LoganCore, and
+  OpportunityNode; the Atmosphere/Skia layer uses Reanimated's own `useReducedMotion()`.
+- Accessibility labels/hints/roles/states added across every interactive element reached this pass.
+- `lib/apiClient.ts`'s `fetchJson()` (timeout, bounded retry, `AbortSignal` cancellation) replaced ad hoc
+  `fetch()` calls; the home screen now has five distinct, individually accessible states (loading, loaded,
+  empty, timeout, error) with Retry/Refresh actions.
+- This repository's first Jest/RNTL test suite: 19 tests across `apiClient`, `useReducedMotion`, the home
+  screen's state transitions, and the new Atmosphere layer's performance cap. CI's `jest` step now runs for
+  real instead of being a no-op placeholder.
+- Design tokens (`spacing`/`radius`/`type`) adopted on the flagship screen and Vessel wherever an exact
+  match existed, with nothing else touched.
+- `AttentionAtmosphere.tsx` resolves ADR-028's open item: a subordinate background layer for the live
+  Attention Field (capped at 4 clouds regardless of feed size, positions/colors drawn from real feed items,
+  `pointerEvents="none"`), deliberately narrower than the Sprint 1 preview it's built from.
+
+**Final artifacts:** see `V3.1.4_IMPLEMENTATION_SUMMARY.md` for the complete batch-by-batch record,
+including the mobile deployment (Apple-signed iOS build) status.
 
 ---
 

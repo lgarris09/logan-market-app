@@ -27,17 +27,17 @@
 | 15 | 15_DECISIONS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | DECISION-016 cross-referenced to ADR-034 clarification |
 | 16 | 16_ROADMAP.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains throughout (ADR-037); TriggerEvent phases already correctly future-tense, left as-is |
 | 17 | 17_CLAUDE_ENGINEERING_GUIDE.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Not governing authority (ADR-038); TriggerEvent registry rules tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
-| 18 | 18_SESSION_LOG.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | 2026-08-06 V3.1.4 BATCH-1/2/3 session entry added at top |
+| 18 | 18_SESSION_LOG.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | 2026-08-06/07 V3.1.4 BATCH-1 through BATCH-5 session entry (complete) |
 | 19 | 19_FUTURE_IDEAS.md | 3.1.2 | v3.1 base (updated) | VERIFIED | ML trigger discovery; already correctly tagged V2/future, left as-is |
 | 20 | 20_LOGAN_PRINCIPLES.md | 3.1.2 | v3.1 base (updated) | VERIFIED | Principle 13 added; not reconciled to v3.1.3 this pass |
 | 21 | 21_TRENDING_ENGAGEMENT.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Amplifier mechanism removed per ADR-034 (written by the prior session) |
 | 22 | 22_OPPORTUNITY_CARD_SPEC.md | 3.1.2 | v3.1 base (updated) | VERIFIED | 80-char headline; not reconciled to v3.1.3 this pass |
-| 23 | 23_CURRENT_IMPLEMENTATION_STATE.md | 3.1.4 | Direct repository inspection | VERIFIED | Updated for all V3.1.4 BATCH-1/2/3 changes (community_momentum/internal_rank_score fix, user_id, decision_trace, tooling, TriggerEvent/Lifecycle relabeling); 95+8 test count |
-| 24 | 24_API_SPECIFICATION.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | priority_score removed from public API response examples (ADR-029); trigger_events/trigger_event_fired tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009) |
+| 23 | 23_CURRENT_IMPLEMENTATION_STATE.md | 3.1.4 | Direct repository inspection | VERIFIED | Updated for all V3.1.4 BATCH-1 through BATCH-5 changes (scoring fixes, real /v1/opportunities, mobile reduced-motion/accessibility/Atmosphere, Jest suite); 95 logan_core + 15 backend + 19 mobile tests |
+| 24 | 24_API_SPECIFICATION.md | 3.1.4 | v3.1.2 base (updated) | VERIFIED | priority_score removed from public API response examples (ADR-029); trigger_events/trigger_event_fired tagged SPECIFIED — NOT IMPLEMENTED (V3.1.4 BATCH-3, OD-009); target-design-vs-actual-shipped gap made explicit for the real V3.1.4 BATCH-4 /v1/opportunities response shape |
 | 25 | 25_INTEGRATION_FEASIBILITY.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | 7→8 domains; News integration assessment flagged RESEARCH REQUIRED, not invented |
 | 26 | 26_GOLDEN_TEST_SCENARIOS.md | 3.1.3 | v3.1.2 base (updated) | VERIFIED | Scenario 13: 7→8 domains (ADR-037); TriggerEvent-dependent scenarios tagged SPECIFIED — NOT IMPLEMENTED, not part of V3.1.4 release gates (V3.1.4 BATCH-3, OD-009) |
 | 27 | 27_SECURITY_PRIVACY_COMPLIANCE.md | 3.1.4 | v3.1.2 base (updated) | VERIFIED | Fully rewritten (P0 gap-review item): every control tagged CURRENT / LOCAL-DEV LIMITATION / REQUIRED — TRUSTED ALPHA / FUTURE — PRODUCTION (V3.1.4 BATCH-3) |
-| 28 | 28_PACKAGE_MANIFEST.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | This file; updated for V3.1.4 BATCH-3 documentation changes |
+| 28 | 28_PACKAGE_MANIFEST.md | 3.1.4 | v3.1.3 base (updated) | VERIFIED | This file; updated for the full V3.1.4 BATCH-1 through BATCH-5 pass |
 
 ---
 
@@ -85,6 +85,7 @@
 | DOCUMENTATION_CHANGELOG_v3.1.2.md | 3.1.2 | WRITTEN | Full v3.1 → v3.1.2 delta — historical record, not updated for v3.1.3 |
 | DOCUMENTATION_REFERENCE_AUDIT.md | 3.1.2 | WRITTEN | Cross-reference check across all docs — not re-run this session |
 | V3.1.3_IMPLEMENTATION_SUMMARY.md | 3.1.3 | WRITTEN | New (2026-08-05) — records the first code-level pass on `logan_core/` following this doc package; see file for full detail |
+| V3.1.4_IMPLEMENTATION_SUMMARY.md | 3.1.4 | WRITTEN | New (2026-08-07) — records the full BATCH-1 through BATCH-5 implementation pass; see file for full detail |
 | source_material/ | 1.3 FINAL | PRESERVED | Original spec (2026-07-31); 10 files; ground truth for tech specs — untouched |
 
 ---
@@ -94,8 +95,8 @@
 - **Core files:** 29 numbered documents (00–28)
 - **TriggerEvent framework:** 13 files listed (12 written + 1 missing/flagged: TRIGGER_REGISTRY_NEWS.md)
 - **ML Foundation:** 6 new files
-- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + V3.1.3_IMPLEMENTATION_SUMMARY + source_material/ (10 files)
-- **Total:** 60 files present (29 + 12 + 6 + 3 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
+- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + V3.1.3_IMPLEMENTATION_SUMMARY + V3.1.4_IMPLEMENTATION_SUMMARY + source_material/ (10 files)
+- **Total:** 61 files present (29 + 12 + 6 + 4 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
 
 ---
 
@@ -117,6 +118,7 @@
 *v3.1.3 changes: Rebuilt to reflect the actual v3.1.3 package. Per-file Version column now reflects each file's real last-touched version rather than a blanket bump — most files remain honestly labeled 3.1.2 (bulk-copied, not reconciled this pass). 6 new ML Foundation files added. TRIGGER_REGISTRY_NEWS.md listed as missing/flagged rather than silently omitted. Total corrected to 59 present + 1 flagged missing.*
 *v3.1.3 code-foundation pass (2026-08-05): V3.1.3_IMPLEMENTATION_SUMMARY.md added to Supporting Files (new). ADR-036/037/038 accepted (see docs/DECISIONS.md). Total corrected to 60 present + 1 flagged missing.*
 *V3.1.4 BATCH-3 pass (2026-08-06): TriggerEvent Framework files section and every core-document row touched by the OD-009 relabeling pass annotated SPECIFIED — NOT IMPLEMENTED. `10_OPPORTUNITY_ENGINE.md` row updated to reflect whole-file OpportunityLifecycle/Decay Engine tagging. `27_SECURITY_PRIVACY_COMPLIANCE.md` and `28_PACKAGE_MANIFEST.md` bumped to 3.1.4 (real content changes this pass). `18_SESSION_LOG.md` and `23_CURRENT_IMPLEMENTATION_STATE.md` bumped to 3.1.4 for the V3.1.4 session entry and current-state refresh. File count and TriggerEvent-missing flag unchanged (no files added or removed this pass).*
+*V3.1.4 BATCH-4/5 + final pass (2026-08-07): `24_API_SPECIFICATION.md` bumped to 3.1.4 (target-vs-actual-shipped API gap made explicit). `V3.1.4_IMPLEMENTATION_SUMMARY.md` added to Supporting Files (new) — total corrected to 61 present + 1 flagged missing. `18_SESSION_LOG.md` and `23_CURRENT_IMPLEMENTATION_STATE.md` extended with the BATCH-4/5 record (real API, mobile accessibility/reduced-motion/Atmosphere/Jest suite). `Logan_Documentation_v3.1.4.zip` rebuilt from this package.*
 
 
 ## v3.1.2 Patch
