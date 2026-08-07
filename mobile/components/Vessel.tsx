@@ -3,7 +3,7 @@ import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from "r
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 
-import { theme } from "../constants/theme";
+import { spacing, theme, type } from "../constants/theme";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import { resolveSymbol } from "../lib/symbolResolver";
 import { VesselLayout } from "../lib/attentionLayout";
@@ -404,9 +404,14 @@ const styles = StyleSheet.create({
   confidenceDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
   confidenceText: {
     color: theme.textSecondary,
-    fontSize: 10,
+    fontSize: type.micro,
     fontWeight: "800",
     letterSpacing: 1.4,
   },
-  disclaimerText: { color: theme.muted, fontSize: 10, lineHeight: 15, marginTop: 10 },
+  disclaimerText: {
+    color: theme.muted,
+    fontSize: type.micro,
+    lineHeight: 15,
+    marginTop: spacing.sm,
+  },
 });

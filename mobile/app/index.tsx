@@ -11,7 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
-import { theme } from "../constants/theme";
+import { radius, spacing, theme, type } from "../constants/theme";
 import { AttentionField } from "../components/AttentionField";
 import { PressableScale } from "../components/PressableScale";
 import { fetchJson } from "../lib/apiClient";
@@ -208,17 +208,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: 6,
-    paddingBottom: 10,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.sm,
   },
   wordmark: { color: theme.textSecondary, fontSize: 13, fontWeight: "800", letterSpacing: 5 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.success },
-  centerFill: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24 },
+  centerFill: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
   error: {
     backgroundColor: theme.accentSoft,
     borderColor: theme.accent,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: radius.md,
     padding: 16,
     width: "100%",
   },
@@ -226,12 +231,12 @@ const styles = StyleSheet.create({
   errorText: { color: theme.textSecondary, lineHeight: 20, marginBottom: 4 },
   retryButton: {
     backgroundColor: theme.accent,
-    borderRadius: 13,
+    borderRadius: radius.sm,
     alignItems: "center",
-    paddingVertical: 12,
-    marginTop: 12,
+    paddingVertical: spacing.md,
+    marginTop: spacing.sm,
   },
-  retryText: { color: "#FFFFFF", fontWeight: "900" },
+  retryText: { color: theme.text, fontWeight: "900" },
   menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   menuCard: {
     backgroundColor: theme.surface,
@@ -245,15 +250,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1,
-    marginBottom: 14,
+    marginBottom: spacing.md,
   },
   menuItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 14,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
   },
-  menuItemText: { color: theme.text, fontSize: 15, fontWeight: "700" },
+  menuItemText: { color: theme.text, fontSize: type.body, fontWeight: "700" },
 });

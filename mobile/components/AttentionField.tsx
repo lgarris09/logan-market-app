@@ -4,6 +4,7 @@ import { Animated, LayoutChangeEvent, PanResponder, StyleSheet, View } from "rea
 import { useReducedMotion } from "../hooks/useReducedMotion";
 import { computeAtmosphereLayout, defaultFocus, shiftFocus } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
+import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
@@ -20,7 +21,7 @@ type Disclosure = 0 | 1 | 2;
 // Moving focus sends a real disturbance through the medium: whatever is
 // connected to the newly focused vessel visibly echoes a moment later.
 export function AttentionField({ items }: { items: FeedItem[] }) {
-  const [width, setWidth] = useState(0);
+  const [{ width, height }, setDimensions] = useState({ width: 0, height: 0 });
   const [focusedId, setFocusedId] = useState<string | null>(
     () => defaultFocus(items)?.event_id ?? null
   );
@@ -111,9 +112,18 @@ export function AttentionField({ items }: { items: FeedItem[] }) {
   return (
     <View
       style={styles.fill}
-      onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
+      onLayout={(e: LayoutChangeEvent) =>
+        setDimensions({
+          width: e.nativeEvent.layout.width,
+          height: e.nativeEvent.layout.height,
+        })
+      }
       {...panResponder.panHandlers}
     >
+      {width > 0 && (
+        <AttentionAtmosphere items={items} layouts={layouts} width={width} height={height} />
+      )}
+
       {width > 0 &&
         items.map((item) => {
           const layout = layouts.get(item.event_id);

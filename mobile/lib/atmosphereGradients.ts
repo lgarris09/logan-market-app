@@ -39,3 +39,22 @@ export const ATMOSPHERE_PALETTE: Record<string, { base: string; highlight: strin
   MARKETS: { base: "45,212,191", highlight: "205,250,245" },
   OIL: { base: "240,182,74", highlight: "255,240,205" },
 };
+
+// Turns any of symbolResolver.ts's per-entity hex colors into a cloud's
+// {base, highlight} pair -- used by the live Attention Field's atmosphere
+// (V3.1.4 BATCH-5), where clouds correspond to real feed items rather than
+// the fixed demo entity set above. Highlight is the base lightened toward
+// white by 75%, matching the qualitative relationship every hand-authored
+// entry above already has (the highlight is always a near-pastel version of
+// the base, never a different hue).
+export function paletteForHexColor(hex: string): { base: string; highlight: string } {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16) || 0;
+  const g = parseInt(clean.slice(2, 4), 16) || 0;
+  const b = parseInt(clean.slice(4, 6), 16) || 0;
+  const lighten = (channel: number) => Math.round(channel + (255 - channel) * 0.75);
+  return {
+    base: `${r},${g},${b}`,
+    highlight: `${lighten(r)},${lighten(g)},${lighten(b)}`,
+  };
+}
