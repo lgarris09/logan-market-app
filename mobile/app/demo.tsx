@@ -3,7 +3,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-nat
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
-import { LoganOpportunityCard } from "../components/LoganOpportunityCard";
+import { OpportunityCard } from "../components/OpportunityCard";
 import { FadeIn } from "../components/FadeIn";
 import { PressableScale } from "../components/PressableScale";
 import { TeslaDemoResponse } from "../types/loganDemo";
@@ -60,7 +60,7 @@ export default function DemoScreen() {
 
       {result && (
         <FadeIn distance={14}>
-          <LoganOpportunityCard item={result.delivered_item} />
+          <OpportunityCard item={result.delivered_item} />
 
           <View style={styles.detailsCard}>
             <Text style={styles.detailsLabel}>CONCLUSION CONFIDENCE</Text>

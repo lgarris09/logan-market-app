@@ -1,4 +1,5 @@
-// Mirrors backend/app/logan_feed.py's DemoFeedResponse/FeedItem.
+// Mirrors backend/app/logan_feed.py's DemoFeedResponse/FeedItem and
+// backend/app/opportunities.py's OpportunitiesResponse.
 
 export type DeliveredItem = {
   event_id: string;
@@ -33,6 +34,14 @@ export type FeedItem = {
 };
 
 export type DemoFeedResponse = {
+  items: FeedItem[];
+  generated_at: string;
+};
+
+// /v1/opportunities' response shape (V3.1.4 BATCH-4) -- same FeedItem shape as the
+// deprecated /v1/demo/feed, plus schema_version metadata.
+export type OpportunitiesResponse = {
+  schema_version: string;
   items: FeedItem[];
   generated_at: string;
 };

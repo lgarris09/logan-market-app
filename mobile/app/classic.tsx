@@ -12,7 +12,7 @@ import { router } from "expo-router";
 
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
-import { Opportunity, OpportunityCard } from "../components/OpportunityCard";
+import { LegacyOpportunityCard, Opportunity } from "../components/LegacyOpportunityCard";
 import { FadeIn } from "../components/FadeIn";
 import { PressableScale } from "../components/PressableScale";
 
@@ -112,7 +112,7 @@ export default function ClassicBriefingScreen() {
 
         {briefing?.opportunities.map((item, index) => (
           <FadeIn key={item.id} delay={index * 60}>
-            <OpportunityCard item={item} />
+            <LegacyOpportunityCard item={item} />
           </FadeIn>
         ))}
 

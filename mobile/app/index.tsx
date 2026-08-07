@@ -14,7 +14,7 @@ import { router } from "expo-router";
 import { API_BASE_URL } from "../constants/config";
 import { theme } from "../constants/theme";
 import { AttentionField } from "../components/AttentionField";
-import { DemoFeedResponse } from "../types/loganFeed";
+import { OpportunitiesResponse } from "../types/loganFeed";
 
 const LEGACY_SCREENS: {
   label: string;
@@ -32,16 +32,16 @@ const LEGACY_SCREENS: {
 // Logan is tracking present only as soft, ambient light around it. Swipe, or
 // touch a glow directly, to bring something else into focus.
 export default function AttentionFieldScreen() {
-  const [feed, setFeed] = useState<DemoFeedResponse | null>(null);
+  const [feed, setFeed] = useState<OpportunitiesResponse | null>(null);
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
   const loadFeed = useCallback(async () => {
     try {
       setError("");
-      const response = await fetch(`${API_BASE_URL}/v1/demo/feed`);
+      const response = await fetch(`${API_BASE_URL}/v1/opportunities`);
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      setFeed((await response.json()) as DemoFeedResponse);
+      setFeed((await response.json()) as OpportunitiesResponse);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to reach Logan.");
     }
