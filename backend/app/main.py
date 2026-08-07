@@ -14,7 +14,8 @@ from .memory_models import (
     MemoryDecision,
     MemoryRecord,
 )
-from .models import AskRequest, AskResponse, BriefingResponse, Opportunity
+from .models import AskRequest, AskResponse, BriefingResponse
+from .opportunities import OpportunitiesResponse, run_opportunities
 
 app = FastAPI(
     title="Logan Intelligence API",
@@ -49,11 +50,19 @@ def briefing() -> BriefingResponse:
     )
 
 
-@app.get("/v1/opportunities", response_model=list[Opportunity])
-def opportunities(category: str | None = None) -> list[Opportunity]:
+@app.get("/v1/opportunities", response_model=OpportunitiesResponse)
+def opportunities(category: str | None = None) -> OpportunitiesResponse:
+    """Real, versioned opportunities API -- a thin adapter over `logan_core`
+    (V3.1.4 BATCH-4). Runs the actual pipeline (simulated receptors, real scoring/
+    policy/prioritization) rather than returning the static `DEMO_OPPORTUNITIES`
+    fixture the old version of this route used. `internal_rank_score` is never
+    serialized (ADR-029) -- only the resulting ordinal `rank` is public.
+    """
+    response = run_opportunities()
     if category is None:
-        return DEMO_OPPORTUNITIES
-    return [item for item in DEMO_OPPORTUNITIES if item.category == category.lower()]
+        return response
+    filtered = [item for item in response.items if item.category == category.lower()]
+    return OpportunitiesResponse(items=filtered, generated_at=response.generated_at)
 
 
 @app.post("/v1/memories", response_model=MemoryDecision)
@@ -90,21 +99,26 @@ def confirm_memory(memory_id: str, request: MemoryConfirm) -> MemoryRecord:
     return memory
 
 
-@app.post("/v1/demo/tesla", response_model=TeslaDemoResponse)
+@app.post("/v1/demo/tesla", response_model=TeslaDemoResponse, deprecated=True)
 def demo_tesla() -> TeslaDemoResponse:
     """Runs the logan_core Tesla scenario (simulated data) end-to-end and returns the
     generated opportunity card, confidence, policy result, and an execution trace
-    summary. Demo/proof-of-connectivity endpoint -- see ADR-022.
+    summary. Demo/proof-of-connectivity endpoint -- see ADR-022. Deprecated as of
+    V3.1.4 BATCH-4: kept for single-entity debugging, superseded by `/v1/opportunities`
+    for anything client-facing.
     """
     return run_tesla_demo()
 
 
-@app.get("/v1/demo/feed", response_model=DemoFeedResponse)
+@app.get("/v1/demo/feed", response_model=DemoFeedResponse, deprecated=True)
 def demo_feed() -> DemoFeedResponse:
     """Runs all five simulated domain fixtures through logan_core on one shared
     Orchestrator and returns a multi-item feed, ranked by priority and annotated with
-    cross-item ripple connections, for the mobile Opportunity Wheel. Demo/proof-of-
-    connectivity endpoint -- see ADR-022.
+    cross-item ripple connections. Demo/proof-of-connectivity endpoint -- see ADR-022.
+    Deprecated as of V3.1.4 BATCH-4 in favor of the versioned `/v1/opportunities`,
+    which runs the identical pipeline (see `logan_feed._run_feed_pipeline`) behind a
+    schema-versioned response. Kept only so existing callers don't break during the
+    mobile migration window (BATCH-4 mobile task).
     """
     return run_demo_feed()
 

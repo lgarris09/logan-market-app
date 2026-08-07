@@ -80,15 +80,20 @@ def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]
     ]
 
 
-def run_demo_feed() -> DemoFeedResponse:
+def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
     """Runs the simulated entity fixtures (Tesla, NVIDIA, Apple, Bitcoin, Federal
     Reserve, NFL, Music, Polymarket, Markets, Oil, AI) through one shared Orchestrator
-    instance and returns a feed for the Opportunity Field. Sharing one Orchestrator
-    (and therefore one World Model, Memory Store, and Prioritization state) across all
-    events lets genuinely overlapping entities (e.g. Tesla's downstream ripple
-    touching NVIDIA and the AI sector, which have their own direct fixtures too)
-    connect to each other, the same way related opportunities would in a real
-    session -- not independent runs stitched together after the fact.
+    instance and builds the ranked, connected feed shared by every route that exposes
+    this data. Sharing one Orchestrator (and therefore one World Model, Memory Store,
+    and Prioritization state) across all events lets genuinely overlapping entities
+    (e.g. Tesla's downstream ripple touching NVIDIA and the AI sector, which have
+    their own direct fixtures too) connect to each other, the same way related
+    opportunities would in a real session -- not independent runs stitched together
+    after the fact.
+
+    Single source of truth for both the versioned `/v1/opportunities` API
+    (`opportunities.py`) and the legacy `/v1/demo/feed` route below -- neither
+    duplicates this computation.
     """
     now = datetime.now(timezone.utc)
 
@@ -172,4 +177,14 @@ def run_demo_feed() -> DemoFeedResponse:
             )
         )
 
+    return items, now
+
+
+def run_demo_feed() -> DemoFeedResponse:
+    """Deprecated in favor of `/v1/opportunities` (see `opportunities.py`), kept for
+    existing callers during the V3.1.4 migration window -- see ADR-022 and the
+    V3.1.4 BATCH-4 API work. Delegates to the same pipeline run as the versioned API;
+    the two do not compute this independently.
+    """
+    items, now = _run_feed_pipeline()
     return DemoFeedResponse(items=items, generated_at=now)
