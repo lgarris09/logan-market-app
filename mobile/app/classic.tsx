@@ -36,7 +36,7 @@ export default function ClassicBriefingScreen() {
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       setBriefing((await response.json()) as Briefing);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reach Logan.");
+      setError(err instanceof Error ? err.message : "Unable to reach STRATUS.");
     }
   }, []);
 
@@ -60,8 +60,8 @@ export default function ClassicBriefingScreen() {
       >
         <View style={styles.topbar}>
           <View>
-            <Text style={styles.kicker}>PERSONAL INTELLIGENCE</Text>
-            <Text style={styles.product}>APP NAME TBD</Text>
+            <Text style={styles.kicker}>PERSONAL OPPORTUNITY INTELLIGENCE</Text>
+            <Text style={styles.product}>STRATUS</Text>
           </View>
           <View style={styles.status}>
             <View style={styles.dot} />
@@ -119,9 +119,9 @@ export default function ClassicBriefingScreen() {
         <PressableScale
           style={styles.primaryButton}
           onPress={() => router.push("/ask")}
-          accessibilityLabel="Ask Logan"
+          accessibilityLabel="Ask STRATUS"
         >
-          <Text style={styles.primaryButtonText}>Ask Logan</Text>
+          <Text style={styles.primaryButtonText}>Ask STRATUS</Text>
         </PressableScale>
 
         <PressableScale
@@ -135,9 +135,9 @@ export default function ClassicBriefingScreen() {
         <PressableScale
           style={styles.secondaryButton}
           onPress={() => router.push("/demo")}
-          accessibilityLabel="Run Logan demo"
+          accessibilityLabel="Run STRATUS demo"
         >
-          <Text style={styles.secondaryButtonText}>Run Logan Demo</Text>
+          <Text style={styles.secondaryButtonText}>Run STRATUS Demo</Text>
         </PressableScale>
       </ScrollView>
     </SafeAreaView>

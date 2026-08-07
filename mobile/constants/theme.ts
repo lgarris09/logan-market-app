@@ -1,3 +1,7 @@
+// STRATUS brand accent: burnt orange, hex #F47A2A (Pantone 1655C closest),
+// per the approved brand reference (2026-08-07). Used sparingly, as a single
+// intentional accent against black/white/graphite -- not a general-purpose
+// warm color; `warning` below remains a distinct semantic color.
 export const theme = {
   background: "#0A0D12",
   surface: "#11161D",
@@ -7,8 +11,8 @@ export const theme = {
   text: "#F5F7FA",
   textSecondary: "#9AA5B4",
   muted: "#5B6472",
-  accent: "#F04444",
-  accentSoft: "#2D1719",
+  accent: "#F47A2A",
+  accentSoft: "#2A1C10",
   success: "#4FD1A5",
   warning: "#F0B64A",
 };

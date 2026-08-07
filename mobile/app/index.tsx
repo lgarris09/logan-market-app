@@ -31,14 +31,15 @@ const LEGACY_SCREENS: {
   { label: "Atmosphere (Sprint 1 preview)", href: "/atmosphere-preview" },
   { label: "Opportunity Field (previous)", href: "/field-legacy" },
   { label: "Classic briefing (pre-Field home)", href: "/classic" },
-  { label: "Ask Logan", href: "/ask" },
+  { label: "Ask STRATUS", href: "/ask" },
   { label: "Memory inbox", href: "/memory" },
   { label: "Tesla-only pipeline demo", href: "/demo" },
 ];
 
-// Logan's home screen. One opportunity held in clear focus, everything else
-// Logan is tracking present only as soft, ambient light around it. Swipe, or
-// touch a glow directly, to bring something else into focus.
+// STRATUS's home screen (the Attention Field, powered by LGI). One opportunity
+// held in clear focus, everything else STRATUS is tracking present only as
+// soft, ambient light around it. Swipe, or touch a glow directly, to bring
+// something else into focus.
 export default function AttentionFieldScreen() {
   const [state, setState] = useState<FeedState>({ kind: "loading" });
   const [menuOpen, setMenuOpen] = useState(false);
@@ -94,7 +95,7 @@ export default function AttentionFieldScreen() {
         >
           <Ionicons name="menu" size={22} color={theme.textSecondary} />
         </Pressable>
-        <Text style={styles.wordmark}>LOGAN</Text>
+        <Text style={styles.wordmark}>STRATUS</Text>
         <View style={styles.liveDot} accessibilityElementsHidden importantForAccessibility="no" />
       </View>
 
@@ -130,7 +131,7 @@ export default function AttentionFieldScreen() {
           <View style={styles.error} accessibilityLiveRegion="polite">
             <Text style={styles.errorTitle}>Taking longer than expected</Text>
             <Text style={styles.errorText}>
-              Logan didn&apos;t respond in time. Check that the backend is running and reachable.
+              STRATUS didn&apos;t respond in time. Check that the backend is running and reachable.
             </Text>
             <PressableScale
               style={styles.retryButton}
@@ -149,7 +150,7 @@ export default function AttentionFieldScreen() {
           <View style={styles.error} accessibilityLiveRegion="polite">
             <Text style={styles.errorTitle}>Nothing to show yet</Text>
             <Text style={styles.errorText}>
-              Logan isn&apos;t tracking any opportunities right now.
+              STRATUS isn&apos;t tracking any opportunities right now.
             </Text>
             <PressableScale
               style={styles.retryButton}

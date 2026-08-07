@@ -108,7 +108,7 @@ export function LoganCore({ pulseKey }: { pulseKey?: string | number }) {
           style={StyleSheet.absoluteFill}
         />
         <View style={styles.ring} />
-        <Text style={styles.glyph}>L</Text>
+        <Text style={styles.glyph}>S</Text>
       </Animated.View>
     </View>
   );

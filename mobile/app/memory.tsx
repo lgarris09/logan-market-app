@@ -61,7 +61,7 @@ export default function MemoryInboxScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Memory inbox</Text>
       <Text style={styles.subtitle}>
-        Logan holds uncertain but potentially useful learning here until it is confirmed.
+        STRATUS holds uncertain but potentially useful learning here until it is confirmed.
       </Text>
 
       {memories.length === 0 ? (

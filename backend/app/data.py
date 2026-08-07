@@ -44,7 +44,7 @@ DEMO_OPPORTUNITIES = [
             "not yet reflected consistently across similar markets."
         ),
         why_it_matters=(
-            "You asked Logan to flag large probability shifts and explain the event "
+            "You asked STRATUS to flag large probability shifts and explain the event "
             "driving the move before you open the market."
         ),
         score=84,

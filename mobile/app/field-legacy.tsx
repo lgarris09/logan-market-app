@@ -24,7 +24,7 @@ export default function LegacyOpportunityFieldScreen() {
       setFeed(data);
       setSelected((current) => current ?? data.items[0] ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reach Logan.");
+      setError(err instanceof Error ? err.message : "Unable to reach STRATUS.");
     }
   }, []);
 

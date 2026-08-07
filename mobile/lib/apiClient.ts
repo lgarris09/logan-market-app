@@ -97,7 +97,7 @@ export async function fetchJson<T>(
       }
       return {
         status: "error",
-        message: error instanceof Error ? error.message : "Unable to reach Logan.",
+        message: error instanceof Error ? error.message : "Unable to reach STRATUS.",
       };
     } finally {
       clearTimeout(timer);
@@ -107,5 +107,5 @@ export async function fetchJson<T>(
 
   // Unreachable (the loop always returns), but keeps the function's return type
   // total rather than implicitly `undefined` for TypeScript's control-flow analysis.
-  return { status: "error", message: "Unable to reach Logan." };
+  return { status: "error", message: "Unable to reach STRATUS." };
 }

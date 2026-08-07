@@ -22,7 +22,7 @@ export default function DemoScreen() {
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       setResult((await response.json()) as TeslaDemoResponse);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reach Logan.");
+      setError(err instanceof Error ? err.message : "Unable to reach STRATUS.");
       setResult(null);
     } finally {
       setLoading(false);
@@ -31,7 +31,7 @@ export default function DemoScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.kicker}>LOGAN INTELLIGENCE SYSTEM</Text>
+      <Text style={styles.kicker}>LGI PIPELINE DEMO</Text>
       <Text style={styles.title}>Pipeline demo</Text>
       <Text style={styles.subtitle}>
         Runs the &ldquo;Tesla announces a major AI chip partnership&rdquo; scenario through the full
@@ -42,14 +42,14 @@ export default function DemoScreen() {
         style={styles.button}
         onPress={runDemo}
         disabled={loading}
-        accessibilityLabel="Run Logan demo"
+        accessibilityLabel="Run STRATUS demo"
         accessibilityHint="Runs the Tesla pipeline scenario against the backend"
         accessibilityState={{ disabled: loading, busy: loading }}
       >
         {loading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.buttonText}>Run Logan Demo</Text>
+          <Text style={styles.buttonText}>Run STRATUS Demo</Text>
         )}
       </PressableScale>
 

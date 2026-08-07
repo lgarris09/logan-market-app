@@ -19,9 +19,9 @@ export default function RootLayout() {
         <Stack.Screen name="atmosphere-preview" options={{ title: "Atmosphere (Sprint 1)" }} />
         <Stack.Screen name="field-legacy" options={{ title: "Opportunity Field (previous)" }} />
         <Stack.Screen name="classic" options={{ title: "Classic Briefing" }} />
-        <Stack.Screen name="ask" options={{ title: "Ask Logan" }} />
+        <Stack.Screen name="ask" options={{ title: "Ask STRATUS" }} />
         <Stack.Screen name="memory" options={{ title: "Memory" }} />
-        <Stack.Screen name="demo" options={{ title: "Logan Demo" }} />
+        <Stack.Screen name="demo" options={{ title: "STRATUS Demo" }} />
       </Stack>
     </>
   );

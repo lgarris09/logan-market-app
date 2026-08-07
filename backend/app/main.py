@@ -18,7 +18,7 @@ from .models import AskRequest, AskResponse, BriefingResponse
 from .opportunities import OpportunitiesResponse, run_opportunities
 
 app = FastAPI(
-    title="Logan Intelligence API",
+    title="STRATUS API — Powered by LGI",
     version="1.0.0",
     description="Mobile intelligence backend with branch-based user memory.",
 )

@@ -42,7 +42,7 @@ export default function AskScreen() {
       setAnswer(data.answer);
       setMessage("");
     } catch (error) {
-      setAnswer(error instanceof Error ? error.message : "Unable to reach Logan.");
+      setAnswer(error instanceof Error ? error.message : "Unable to reach STRATUS.");
     } finally {
       setLoading(false);
     }
@@ -54,7 +54,7 @@ export default function AskScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.answerCard}>
-        <Text style={styles.label}>LOGAN</Text>
+        <Text style={styles.label}>STRATUS</Text>
         <FadeIn key={answer} distance={6}>
           <Text style={styles.answer}>{answer}</Text>
         </FadeIn>
@@ -64,18 +64,18 @@ export default function AskScreen() {
         <TextInput
           value={message}
           onChangeText={setMessage}
-          placeholder="Ask Logan..."
+          placeholder="Ask STRATUS..."
           placeholderTextColor={theme.muted}
           multiline
           style={styles.input}
-          accessibilityLabel="Message to Logan"
+          accessibilityLabel="Message to STRATUS"
         />
         <PressableScale
           style={styles.send}
           onPress={submit}
           disabled={loading}
           accessibilityLabel="Send"
-          accessibilityHint="Sends your message to Logan"
+          accessibilityHint="Sends your message to STRATUS"
           accessibilityState={{ disabled: loading, busy: loading }}
         >
           {loading ? (
