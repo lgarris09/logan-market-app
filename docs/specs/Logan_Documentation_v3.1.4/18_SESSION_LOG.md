@@ -1,5 +1,5 @@
 # Logan Intelligence — Session Log
-**Version:** 3.1.3
+**Version:** 3.1.4
 *Chronological development history. Every session, every breakthrough, every major change.*
 
 ---
@@ -26,6 +26,35 @@ This file is the institutional memory of the project.
 ---
 
 ## Session Log
+
+---
+
+### 2026-08-07 — Post-V3.1.4 packaging cleanup (Phase 1 of the STRATUS readiness sequence)
+`[VERIFIED]`
+
+**Context:** V3.1.4 accepted as the technical baseline. Before branding/build-readiness work, cleaned up
+documentation/versioning inconsistencies left from the V3.1.4 pass.
+
+**What was accomplished:**
+- Renamed `docs/specs/Logan_Documentation_v3.1.3/` → `docs/specs/Logan_Documentation_v3.1.4/` (`git mv`,
+  history preserved) — see ADR-041. Confirmed safe first: the old path appeared only in Markdown links and
+  two code comments (`pyproject.toml`, `backend/app/opportunities.py`), no functional/import dependency.
+- Fixed 4 files whose own `**Version:** 3.1.3` header banner was stale relative to real V3.1.4 content
+  changes already recorded for them in `28_PACKAGE_MANIFEST.md`: `18_SESSION_LOG.md` (this file),
+  `24_API_SPECIFICATION.md`, `27_SECURITY_PRIVACY_COMPLIANCE.md`, `28_PACKAGE_MANIFEST.md`. Also fixed the
+  reverse mismatch: `DOCUMENTATION_REFERENCE_AUDIT.md`'s own header already said 3.1.4 but the manifest's
+  table row for it still said 3.1.2 — corrected the manifest row to match.
+- Did **not** bump every file's version header — per instruction, only files that actually incorrectly
+  identified current V3.1.4 material as V3.1.3 were touched. The ~45 files genuinely last touched in a
+  prior session (bulk-copied v3.1.2 content, or v3.1.3-era reconciliation not revisited this pass) keep
+  their accurate 3.1.2/3.1.3 headers.
+- Updated all functional/navigational path references to the renamed folder: `CLAUDE.md`,
+  `docs/ARCHITECTURE.md`, `pyproject.toml`, `backend/app/opportunities.py`, and this package's own
+  current-state files (`DOCUMENTATION_REFERENCE_AUDIT.md`, `V3.1.4_IMPLEMENTATION_SUMMARY.md`, and this
+  file's still-current BATCH-3/4/5 entries below). Left prior ADR bodies (ADR-029, ADR-038, ADR-040) and
+  genuinely historical session-log narrative (the 2026-08-04/05 entry) untouched — see ADR-041.
+- Added `RELEASE_NOTES_V3.1.4.md`.
+- Rebuilt `Logan_Documentation_v3.1.4.zip` from the renamed folder with all fixes applied.
 
 ---
 
@@ -78,7 +107,8 @@ review. Branch `feat/v3.1.4-implementation`, local commits only, no push/merge/d
 
 **BATCH-3 (documentation reconciliation) — in progress:**
 - TriggerEvent and `OpportunityLifecycle`/Decay Engine content relabeled SPECIFIED — NOT IMPLEMENTED across
-  ~20 files in `docs/specs/Logan_Documentation_v3.1.3/` (OD-009): both trigger framework files, all 7
+  ~20 files in `docs/specs/Logan_Documentation_v3.1.4/` (folder renamed from `_v3.1.3/` in the V3.1.4
+  packaging cleanup, OD-009): both trigger framework files, all 7
   `TRIGGER_REGISTRY_*.md` files, `02_LOGAN_INTELLIGENCE_BRAIN.md`, `10_OPPORTUNITY_ENGINE.md` (entire file
   — both Lifecycle and Decay Engine parts), `06_LAYER_INTERFACE_SPECIFICATION.md`, `07_DATA_CONTRACTS.md`,
   `24_API_SPECIFICATION.md`, `26_GOLDEN_TEST_SCENARIOS.md`, `00_MASTER_BRIEF.md`, `08_BUILD_ORDER.md`,
@@ -90,7 +120,8 @@ review. Branch `feat/v3.1.4-implementation`, local commits only, no push/merge/d
   code; adding them is out of V3.1.4 scope (broad domain expansion excluded).
 - ADR-039 added: "Attention Field" ratified as the product-facing name, closing the open question ADR-027
   left unresolved (OD-005).
-- ADR-040 added: `docs/specs/Logan_Documentation_v3.1.3/` ratified as the authoritative spec lineage; the
+- ADR-040 added: `docs/specs/Logan_Documentation_v3.1.4/` (named `_v3.1.3/` at the time ADR-040 was
+  written; see ADR-041 for the rename) ratified as the authoritative spec lineage; the
   older `docs/specs/*.md` numbered files and `LOGAN_*_v1.0.md` files marked historical, preserved unchanged
   (OD-010). `CLAUDE.md` and `docs/ARCHITECTURE.md` required-reading pointers updated accordingly.
 - `27_SECURITY_PRIVACY_COMPLIANCE.md` fully rewritten (P0 gap-review item): every principle, control, and

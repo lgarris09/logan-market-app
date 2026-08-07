@@ -38,7 +38,7 @@ warn_unused_ignores = true
 # V3.1.4 BATCH-2: this codebase has never been type-checked before. Rather
 # than block the release on a full-strict pass, start at a pragmatic baseline
 # (imports resolve, obvious errors caught) and tighten incrementally -- see
-# docs/specs/Logan_Documentation_v3.1.3/V3.1.4_IMPLEMENTATION_SUMMARY.md for
+# docs/specs/Logan_Documentation_v3.1.4/V3.1.4_IMPLEMENTATION_SUMMARY.md for
 # the exact list of currently-suppressed categories and why.
 disallow_untyped_defs = false
 check_untyped_defs = true

@@ -1,7 +1,7 @@
 # Logan Intelligence — Package Manifest
-**Version:** 3.1.3
+**Version:** 3.1.4
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/28_PACKAGE_MANIFEST.md” (historical label).*
-*Complete index of all documents in the v3.1.3 package. Per-row Version reflects the actual last-touched version of that specific file — most files were bulk-copied from v3.1.2 unchanged and are honestly labeled 3.1.2; only files with real v3.1.3 content changes (this session, see `18_SESSION_LOG.md`) are labeled 3.1.3.*
+*Complete index of all documents in the package (folder renamed `Logan_Documentation_v3.1.3/` → `Logan_Documentation_v3.1.4/` in the post-V3.1.4 packaging cleanup — see ADR-041; content lineage unchanged). Per-row Version reflects the actual last-touched version of that specific file — most files were bulk-copied from v3.1.2 unchanged and are honestly labeled 3.1.2 or 3.1.3; only files with real content changes in a given session are bumped (see `18_SESSION_LOG.md`).*
 
 ---
 
@@ -83,9 +83,10 @@
 | File | Version | Status | Notes |
 |------|---------|--------|-------|
 | DOCUMENTATION_CHANGELOG_v3.1.2.md | 3.1.2 | WRITTEN | Full v3.1 → v3.1.2 delta — historical record, not updated for v3.1.3 |
-| DOCUMENTATION_REFERENCE_AUDIT.md | 3.1.2 | WRITTEN | Cross-reference check across all docs — not re-run this session |
+| DOCUMENTATION_REFERENCE_AUDIT.md | 3.1.4 | WRITTEN | Cross-reference check across all docs; refreshed for V3.1.4 BATCH-3 (manual pass) and the post-V3.1.4 packaging cleanup |
 | V3.1.3_IMPLEMENTATION_SUMMARY.md | 3.1.3 | WRITTEN | New (2026-08-05) — records the first code-level pass on `logan_core/` following this doc package; see file for full detail |
 | V3.1.4_IMPLEMENTATION_SUMMARY.md | 3.1.4 | WRITTEN | New (2026-08-07) — records the full BATCH-1 through BATCH-5 implementation pass; see file for full detail |
+| RELEASE_NOTES_V3.1.4.md | 3.1.4 | WRITTEN | New (2026-08-07) — reader-facing summary of the V3.1.4 release, added during the post-V3.1.4 packaging cleanup |
 | source_material/ | 1.3 FINAL | PRESERVED | Original spec (2026-07-31); 10 files; ground truth for tech specs — untouched |
 
 ---
@@ -95,8 +96,8 @@
 - **Core files:** 29 numbered documents (00–28)
 - **TriggerEvent framework:** 13 files listed (12 written + 1 missing/flagged: TRIGGER_REGISTRY_NEWS.md)
 - **ML Foundation:** 6 new files
-- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + V3.1.3_IMPLEMENTATION_SUMMARY + V3.1.4_IMPLEMENTATION_SUMMARY + source_material/ (10 files)
-- **Total:** 61 files present (29 + 12 + 6 + 4 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
+- **Supporting:** DOCUMENTATION_CHANGELOG + DOCUMENTATION_REFERENCE_AUDIT + V3.1.3_IMPLEMENTATION_SUMMARY + V3.1.4_IMPLEMENTATION_SUMMARY + RELEASE_NOTES_V3.1.4 + source_material/ (10 files)
+- **Total:** 62 files present (29 + 12 + 6 + 5 + 10 source_material) + 1 flagged missing (TRIGGER_REGISTRY_NEWS.md)
 
 ---
 
@@ -119,6 +120,7 @@
 *v3.1.3 code-foundation pass (2026-08-05): V3.1.3_IMPLEMENTATION_SUMMARY.md added to Supporting Files (new). ADR-036/037/038 accepted (see docs/DECISIONS.md). Total corrected to 60 present + 1 flagged missing.*
 *V3.1.4 BATCH-3 pass (2026-08-06): TriggerEvent Framework files section and every core-document row touched by the OD-009 relabeling pass annotated SPECIFIED — NOT IMPLEMENTED. `10_OPPORTUNITY_ENGINE.md` row updated to reflect whole-file OpportunityLifecycle/Decay Engine tagging. `27_SECURITY_PRIVACY_COMPLIANCE.md` and `28_PACKAGE_MANIFEST.md` bumped to 3.1.4 (real content changes this pass). `18_SESSION_LOG.md` and `23_CURRENT_IMPLEMENTATION_STATE.md` bumped to 3.1.4 for the V3.1.4 session entry and current-state refresh. File count and TriggerEvent-missing flag unchanged (no files added or removed this pass).*
 *V3.1.4 BATCH-4/5 + final pass (2026-08-07): `24_API_SPECIFICATION.md` bumped to 3.1.4 (target-vs-actual-shipped API gap made explicit). `V3.1.4_IMPLEMENTATION_SUMMARY.md` added to Supporting Files (new) — total corrected to 61 present + 1 flagged missing. `18_SESSION_LOG.md` and `23_CURRENT_IMPLEMENTATION_STATE.md` extended with the BATCH-4/5 record (real API, mobile accessibility/reduced-motion/Atmosphere/Jest suite). `Logan_Documentation_v3.1.4.zip` rebuilt from this package.*
+*Post-V3.1.4 packaging cleanup, Phase 1 (2026-08-07): Package folder renamed `Logan_Documentation_v3.1.3/` → `Logan_Documentation_v3.1.4/` (ADR-041; `git mv`, history preserved). `18_SESSION_LOG.md` and `28_PACKAGE_MANIFEST.md` (this file) headers bumped to 3.1.4 — their own `**Version:**` banners had been left stale after real V3.1.4 content changes. `DOCUMENTATION_REFERENCE_AUDIT.md` row corrected from 3.1.2 to 3.1.4 to match its own already-current header. `RELEASE_NOTES_V3.1.4.md` added to Supporting Files (new) — total corrected to 62 present + 1 flagged missing. All internal path references updated to the renamed folder; historical ADR bodies and genuinely-historical session-log narrative left untouched by design.*
 
 
 ## v3.1.2 Patch

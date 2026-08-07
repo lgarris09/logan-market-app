@@ -12,10 +12,11 @@ user recognize something meaningful they'd otherwise have missed?" See
 Read the rest based on the task, not always all five:
 - Any product/UX-adjacent task, or anything touching Memory, User Model, or reasoning: read
   `docs/PRODUCT.md` and `docs/ARCHITECTURE.md` first.
-- **Any work inside `logan_core/`**: read `docs/specs/Logan_Documentation_v3.1.3/06_LAYER_INTERFACE_SPECIFICATION.md`,
-  `docs/specs/Logan_Documentation_v3.1.3/07_DATA_CONTRACTS.md`, and
-  `docs/specs/Logan_Documentation_v3.1.3/08_BUILD_ORDER.md` first — these are the locked, canonical
-  interface/contract specification as of V3.1.3+ (see
+- **Any work inside `logan_core/`**: read `docs/specs/Logan_Documentation_v3.1.4/06_LAYER_INTERFACE_SPECIFICATION.md`,
+  `docs/specs/Logan_Documentation_v3.1.4/07_DATA_CONTRACTS.md`, and
+  `docs/specs/Logan_Documentation_v3.1.4/08_BUILD_ORDER.md` first — these are the locked, canonical
+  interface/contract specification as of V3.1.3+ (folder renamed to `Logan_Documentation_v3.1.4/` in the
+  V3.1.4 packaging cleanup; content lineage unchanged, see
   [ADR-040](docs/DECISIONS.md#adr-040-docsspecslogan_documentation_v313-ratified-as-the-authoritative-spec-lineage-older-docsspecsmd-numbered-files-marked-historical)),
   not background reading. Do not implement a layer without reading its interface section. The
   older `docs/specs/LOGAN_ARCHITECTURE_v1.0.md` / `LOGAN_DATA_CONTRACTS_v1.0.md` / `LOGAN_IMPLEMENTATION_PLAN.md`
@@ -86,7 +87,7 @@ not a shortcut:
   communication. Only **Presentation** chooses surface/format. Only **Presentation** sends notifications.
 - If a task seems to require crossing one of these boundaries to work, that's a sign the task needs a
   different design, not a one-off exception — stop and flag it rather than routing around the boundary.
-- Full ownership table: `docs/specs/Logan_Documentation_v3.1.3/06_LAYER_INTERFACE_SPECIFICATION.md` →
+- Full ownership table: `docs/specs/Logan_Documentation_v3.1.4/06_LAYER_INTERFACE_SPECIFICATION.md` →
   per-layer "Forbidden" sections and the "What no layer may do without authorization" summary table near
   the end of the file. (The older `docs/specs/LOGAN_ARCHITECTURE_v1.0.md` is historical — see below.)
 

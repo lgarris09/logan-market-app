@@ -666,4 +666,33 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   similarly. The old lineage files are not individually annotated with a superseded-banner in this pass
   (out of proportion to the ADR); this entry is the authoritative record that they are historical. A
   future pass may add short pointer banners to the old files themselves if contributors are found reading
-  them by habit.
+  them by habit. **Folder subsequently renamed** to `Logan_Documentation_v3.1.4/` — see
+  [ADR-041](#adr-041-logan_documentation_v313-folder-renamed-to-logan_documentation_v314); this entry's
+  prose is left as originally written (the folder was in fact named `_v3.1.3/` when this decision was
+  made) rather than retroactively edited.
+
+## ADR-041: `Logan_Documentation_v3.1.3/` folder renamed to `Logan_Documentation_v3.1.4/`
+- Date: 2026-08-07
+- Status: Accepted (post-V3.1.4 packaging cleanup, Phase 1)
+- Context: ADR-040 ratified `docs/specs/Logan_Documentation_v3.1.3/` as the authoritative spec lineage.
+  After the full V3.1.4 implementation pass, the folder still carried the `_v3.1.3` name while several of
+  its files (`18_SESSION_LOG.md`, `23_CURRENT_IMPLEMENTATION_STATE.md`, `24_API_SPECIFICATION.md`,
+  `27_SECURITY_PRIVACY_COMPLIANCE.md`, `28_PACKAGE_MANIFEST.md`, plus the new
+  `V3.1.4_IMPLEMENTATION_SUMMARY.md`) now genuinely represented V3.1.4 content — a real risk of a reader
+  assuming the whole package was still v3.1.3. A repository-wide reference check found the path used only
+  in Markdown links and two code comments (`pyproject.toml`, `backend/app/opportunities.py`) — no
+  functional/import dependency anywhere — confirming the rename was safe with no application-behavior risk.
+- Decision: Rename the folder to `docs/specs/Logan_Documentation_v3.1.4/` (`git mv`, preserving history).
+  Content lineage is unchanged — this is a packaging/naming fix, not a new reconciliation pass. Per-file
+  `**Version:**` headers and `28_PACKAGE_MANIFEST.md`'s per-row Version column continue to reflect each
+  file's actual last-touched version (most files remain honestly labeled 3.1.2/3.1.3, per the manifest's
+  existing convention) — the rename does not bump every file to 3.1.4.
+- Consequences: All functional/navigational path references updated (`CLAUDE.md`, `docs/ARCHITECTURE.md`,
+  the two code comments, and the doc package's own current-state files: `18_SESSION_LOG.md`'s
+  still-current BATCH-3/4/5 entries, `DOCUMENTATION_REFERENCE_AUDIT.md`, `V3.1.4_IMPLEMENTATION_SUMMARY.md`).
+  Prior ADR bodies (ADR-029, ADR-038, ADR-040) that reference the old path in their own historical prose
+  are **not** rewritten — decisions are treated as immutable once accepted (the same pattern used for
+  ADR-027, superseded via ADR-039 rather than edited in place); those bodies accurately describe what was
+  true when they were written. `docs/specs/Logan_Documentation_v3.1.3.zip` and `_v3.1.2.zip` (prior
+  point-in-time archive snapshots) are untouched; `Logan_Documentation_v3.1.4.zip` is rebuilt from the
+  renamed folder.

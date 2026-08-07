@@ -12,9 +12,11 @@
 
 **PASS (at time of generation):** Zero unresolved local Markdown references. This scan was not re-run
 mechanically during the V3.1.4 BATCH-3 pass — no automated markdown-link-checking tool was available in
-this session. The package now contains 50 `.md` files directly under `Logan_Documentation_v3.1.3/` (plus
-`source_material/`), up from 42 at last automated scan; the delta is the ML Foundation files, TriggerEvent
-framework files, and supporting docs added across the v3.1.3 and V3.1.4 sessions. All new cross-references
+this session. The package now contains 51 `.md`/summary files directly under `Logan_Documentation_v3.1.4/`
+(folder renamed from `_v3.1.3/` in the V3.1.4 packaging cleanup — see ADR-041), plus `source_material/`
+(61 total files in the package, per `28_PACKAGE_MANIFEST.md`), up from 42 at last automated scan; the
+delta is the ML Foundation files, TriggerEvent framework files, and supporting docs added across the
+v3.1.3 and V3.1.4 sessions. All new cross-references
 added in V3.1.4 BATCH-3 (pointers to `06_LAYER_INTERFACE_SPECIFICATION.md`, `07_DATA_CONTRACTS.md`,
 `08_BUILD_ORDER.md`, `TRIGGER_EVENT_FRAMEWORK.md`, ADR-039/ADR-040 anchors in `docs/DECISIONS.md`) were
 verified by directly reading the target file/anchor during this session, not by an automated scan — a full

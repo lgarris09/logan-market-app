@@ -7,7 +7,7 @@ duplicated here -- see CLAUDE.md's layer ownership rules.
 
 Receptors remain simulated (`logan_core/receptors/simulated.py`); "real" here means a
 real logan_core pipeline run producing this response, not a real external data source.
-See `docs/specs/Logan_Documentation_v3.1.3/23_CURRENT_IMPLEMENTATION_STATE.md`.
+See `docs/specs/Logan_Documentation_v3.1.4/23_CURRENT_IMPLEMENTATION_STATE.md`.
 """
 
 from datetime import datetime

@@ -223,8 +223,8 @@ require re-deriving the architecture from scratch.
 2. `logan_core/normalization/normalize.py` — add a `SIGNAL_TYPE_REGISTRY` entry listing that domain's
    valid `signal_type`s.
 3. Follow the "Adding a new entity" steps above for at least one entity in the new domain.
-4. Update [docs/specs/Logan_Documentation_v3.1.3/07_DATA_CONTRACTS.md](specs/Logan_Documentation_v3.1.3/07_DATA_CONTRACTS.md)
-   and [06_LAYER_INTERFACE_SPECIFICATION.md](specs/Logan_Documentation_v3.1.3/06_LAYER_INTERFACE_SPECIFICATION.md)
+4. Update [docs/specs/Logan_Documentation_v3.1.4/07_DATA_CONTRACTS.md](specs/Logan_Documentation_v3.1.4/07_DATA_CONTRACTS.md)
+   and [06_LAYER_INTERFACE_SPECIFICATION.md](specs/Logan_Documentation_v3.1.4/06_LAYER_INTERFACE_SPECIFICATION.md)
    (domain lists, signal type registry) — this package supersedes the older `LOGAN_ARCHITECTURE_v1.0.md`/
    `LOGAN_DATA_CONTRACTS_v1.0.md` lineage per [ADR-040](DECISIONS.md#adr-040-docsspecslogan_documentation_v313-ratified-as-the-authoritative-spec-lineage-older-docsspecsmd-numbered-files-marked-historical) —
    and log an ADR — see [ADR-020](DECISIONS.md#adr-020-news-added-as-a-fifth-domain-receptor) and

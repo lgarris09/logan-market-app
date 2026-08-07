@@ -1,5 +1,5 @@
 # Logan Intelligence — Security, Privacy & Compliance
-**Version:** 3.1.3
+**Version:** 3.1.4
 *Source: Architecture v1.3 FINAL (2026-07-31). Original: “source_material/27_SECURITY_PRIVACY_COMPLIANCE.md” (historical label).*
 
 ---
