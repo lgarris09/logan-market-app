@@ -5,6 +5,7 @@ duplicated business logic), and the category filter behaves like the old
 static-data route it replaces.
 """
 
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from backend.app.logan_feed import run_demo_feed
@@ -72,7 +73,7 @@ def test_opportunities_route_unknown_category_returns_empty():
 
 def test_demo_feed_route_still_works_but_is_deprecated():
     demo_route = next(
-        r for r in app.routes if getattr(r, "path", None) == "/v1/demo/feed"
+        r for r in app.routes if isinstance(r, APIRoute) and r.path == "/v1/demo/feed"
     )
     assert demo_route.deprecated is True
     response = client.get("/v1/demo/feed")
