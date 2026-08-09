@@ -54,6 +54,7 @@ def _prioritized(event_id, visibility="primary", interruption="digest"):
         interruption=interruption,
         rank=1,
         changed_since_view=True,
+        is_new_for_user=True,
         prioritized_at=NOW,
     )
 

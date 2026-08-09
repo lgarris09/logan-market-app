@@ -15,6 +15,13 @@ class PrioritizedItem(BaseModel):
     rank: int = Field(ge=1)
     cooldown_until: Optional[datetime] = None
     changed_since_view: bool
+    # Whether *this user* has acknowledged/reviewed this event_id before --
+    # deliberately not derived from World Model event identity/dedup
+    # (EnrichedEvent.is_new answers "is this the same underlying event," a
+    # separate question). Computed from AttentionState.notifications_reviewed
+    # in PrioritizationEngine.prioritize(); cleared only by an explicit
+    # mark_reviewed() call, never by re-observing the same event again.
+    is_new_for_user: bool
     prioritized_at: datetime
     decision_trace: list = Field(default_factory=list)
 
@@ -53,6 +60,19 @@ class FatigueRecord(BaseModel):
     window: datetime
 
 
+# Deliberately a new, narrowly-named record rather than reusing DismissRecord:
+# "reviewed the notification list" and "dismissed this opportunity" are
+# different user actions with different implications (dismiss is documented
+# as a future signal to stop *re-surfacing* an item at all; reviewing a
+# notification only clears its unread badge, the opportunity itself stays
+# fully visible/interactive in the field). Conflating the two would make a
+# future real "dismiss" feature inherit unread-badge semantics it doesn't
+# want, or vice versa.
+class NotificationReviewRecord(BaseModel):
+    event_id: UUID
+    reviewed_at: datetime
+
+
 class AttentionState(BaseModel):
     schema_version: str = "1.0"
     user_id: str
@@ -61,4 +81,5 @@ class AttentionState(BaseModel):
     alerted: list[AlertRecord] = Field(default_factory=list)
     cooldowns: list[CooldownRecord] = Field(default_factory=list)
     fatigue: list[FatigueRecord] = Field(default_factory=list)
+    notifications_reviewed: list[NotificationReviewRecord] = Field(default_factory=list)
     last_updated: datetime

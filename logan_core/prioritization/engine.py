@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from uuid import UUID
 
 from logan_core.contracts import (
     AttentionRecommendation,
@@ -8,6 +9,7 @@ from logan_core.contracts import (
     DecisionTraceEntry,
     Domain,
     FatigueRecord,
+    NotificationReviewRecord,
     PolicyResult,
     PrioritizedItem,
     SurfaceRecord,
@@ -48,6 +50,18 @@ class PrioritizationEngine:
         now = now or datetime.now(timezone.utc)
         state = self._state_for(user_id, now)
         event_id = policy_result.event_id
+
+        # Attention/user-view state, deliberately independent of World Model
+        # event identity: whether *this user* has acknowledged this exact
+        # event_id before, not whether World Model considers it a "new"
+        # underlying event (EnrichedEvent.is_new/prior_event_id -- a
+        # different question, answered upstream in world_model/model.py).
+        # An event that's been surfaced five times but never reviewed stays
+        # is_new_for_user=True on every one of those five surfacings; only
+        # mark_reviewed() clears it, not re-observation.
+        is_new_for_user = not any(
+            r.event_id == event_id for r in state.notifications_reviewed
+        )
 
         cooldown = next(
             (c for c in state.cooldowns if c.event_id == event_id and c.until > now),
@@ -133,12 +147,14 @@ class PrioritizationEngine:
             rank=rank,
             cooldown_until=cooldown.until if cooldown else None,
             changed_since_view=changed_since_view,
+            is_new_for_user=is_new_for_user,
             prioritized_at=now,
             decision_trace=[
                 DecisionTraceEntry(
                     layer="prioritization",
                     rule=f"visibility={visibility}, interruption={interruption} "
-                    f"(in_cooldown={in_cooldown}, domain_fatigued={domain_fatigued})",
+                    f"(in_cooldown={in_cooldown}, domain_fatigued={domain_fatigued}, "
+                    f"is_new_for_user={is_new_for_user})",
                     timestamp=now,
                 )
             ],
@@ -146,3 +162,26 @@ class PrioritizationEngine:
 
     def attention_state(self, user_id: str) -> AttentionState | None:
         return self._states.get(user_id)
+
+    def mark_reviewed(
+        self,
+        user_id: str,
+        event_ids: list[UUID],
+        now: datetime | None = None,
+    ) -> None:
+        """Records that `user_id` has reviewed each of `event_ids` -- the only
+        way is_new_for_user ever clears for a given event_id (re-observing the
+        same event again does not clear it; see prioritize()'s comment).
+        Idempotent: an event_id already in notifications_reviewed is skipped
+        rather than duplicated.
+        """
+        now = now or datetime.now(timezone.utc)
+        state = self._state_for(user_id, now)
+        already_reviewed = {r.event_id for r in state.notifications_reviewed}
+        for event_id in event_ids:
+            if event_id not in already_reviewed:
+                state.notifications_reviewed.append(
+                    NotificationReviewRecord(event_id=event_id, reviewed_at=now)
+                )
+                already_reviewed.add(event_id)
+        state.last_updated = now

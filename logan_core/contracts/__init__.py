@@ -29,6 +29,7 @@ from .prioritization import (
     CooldownRecord,
     DismissRecord,
     FatigueRecord,
+    NotificationReviewRecord,
     PrioritizedItem,
     SurfaceRecord,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "AlertRecord",
     "CooldownRecord",
     "FatigueRecord",
+    "NotificationReviewRecord",
     "DeliveredItem",
     "FeedbackSignal",
     "InteractionType",

@@ -8,7 +8,7 @@ static-data route it replaces.
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from backend.app.logan_feed import run_demo_feed
+from backend.app.logan_feed import reset_pipeline_state, run_demo_feed
 from backend.app.main import app
 from backend.app.opportunities import OPPORTUNITIES_SCHEMA_VERSION, run_opportunities
 
@@ -32,8 +32,19 @@ def test_opportunities_response_has_no_internal_score_fields():
 def test_opportunities_matches_demo_feed_pipeline_output():
     """Both routes must be thin wrappers over the same pipeline run -- not two
     independent computations that could silently drift apart.
+
+    Resets pipeline state between the two calls deliberately: the pipeline's
+    Orchestrator now persists *across* calls (see logan_feed.py), so a second
+    call within the dedup window legitimately corroborates the first (more
+    supporting evidence -> higher trust_score -> possibly different rank
+    order) rather than recomputing identically. That's the intended fix, not
+    a bug -- but it means this test needs both calls to start from the same
+    fresh state to isolate what it actually checks (two routes, one
+    computation) from that new, deliberate cross-request behavior.
     """
+    reset_pipeline_state()
     opportunities_result = run_opportunities()
+    reset_pipeline_state()
     demo_result = run_demo_feed()
     assert [item.entity_id for item in opportunities_result.items] == [
         item.entity_id for item in demo_result.items

@@ -1,4 +1,5 @@
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -13,7 +14,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.community_intelligence import EngagementSample  # noqa: E402
-from logan_core.contracts import DeliveredItem, Holding, Interest  # noqa: E402
+from logan_core.contracts import (  # noqa: E402
+    LOCAL_FOUNDER_USER_ID,
+    DeliveredItem,
+    Holding,
+    Interest,
+)
 from logan_core.orchestrator import Orchestrator  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     simulated_fixtures,
@@ -22,6 +28,75 @@ from logan_core.receptors import (  # noqa: E402
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
 from .entity_registry import resolve  # noqa: E402
+
+# --- Process-lifetime pipeline state (notification/identity fix) ---
+#
+# Previously, `_run_feed_pipeline()` built a brand-new `Orchestrator()` on
+# every single call -- which meant a brand-new World Model too, so its event
+# dedup index (see world_model/model.py's `_recent`) never had anything to
+# compare against and handed out a fresh random `event_id` for the same
+# underlying opportunity on every request. This broke both event identity
+# stability *and* Prioritization's AttentionState (surfaced/cooldowns/
+# fatigue/notification-review), which the spec already designed for exactly
+# this "is this new to the user" use case but nothing had ever wired up.
+#
+# The fix: one Orchestrator instance for the life of this process, not one
+# per request. World Model's dedup and Prioritization's AttentionState can
+# now actually do their jobs across repeated `/v1/opportunities` calls.
+#
+# IMPORTANT LIMITATION, by design for this stage (see the owner conversation
+# this shipped from): this is in-memory, process-lifetime state only. A
+# backend restart (including `uvicorn --reload` triggering on a file change)
+# resets it completely -- every event_id and every notification-reviewed
+# record is gone, and the next request re-establishes a fresh baseline. This
+# is intentional: real durable per-user history needs actual persistence,
+# which is an open, undecided question for this repo (ADR-006) and not
+# something to back into as a side effect of this fix. A `threading.Lock`
+# guards access since FastAPI runs sync `def` routes in a worker thread pool
+# by default, so concurrent requests could otherwise race on the same
+# in-memory dicts.
+_state_lock = threading.Lock()
+_orchestrator: Orchestrator | None = None
+# user_ids whose very first `/v1/opportunities` request has already been
+# processed -- lets that first response stay notification-silent (nothing is
+# "new" relative to a user who's never seen anything yet) without treating
+# every subsequent, genuinely-new event the same way.
+_baseline_established: set[str] = set()
+
+
+def _get_orchestrator() -> Orchestrator:
+    global _orchestrator
+    with _state_lock:
+        if _orchestrator is None:
+            _orchestrator = Orchestrator()
+        return _orchestrator
+
+
+def reset_pipeline_state() -> None:
+    """Test-only (and general-purpose "start over") hook: drops the persistent
+    Orchestrator and baseline tracking, so the next call behaves like a fresh
+    process start. Tests that compare two pipeline runs and expect them to be
+    independent (rather than exercising the new deliberate cross-request
+    persistence) should call this between runs -- see
+    backend/tests/test_opportunities_api.py and test_logan_feed.py.
+    """
+    global _orchestrator
+    with _state_lock:
+        _orchestrator = None
+        _baseline_established.clear()
+
+
+def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
+    """Called by the `/v1/notifications/review` route -- the only way an
+    event_id's `is_new_for_user` clears (re-observing the same event again
+    does not clear it; see PrioritizationEngine.prioritize()).
+    """
+    orchestrator = _get_orchestrator()
+    with _state_lock:
+        orchestrator.deps.prioritization_engine.mark_reviewed(
+            LOCAL_FOUNDER_USER_ID, event_ids
+        )
+
 
 # Per-entity simulated engagement, tuned for visual variety in the demo field --
 # not meant to represent real-world volumes. Entities not listed fall back to a
@@ -59,6 +134,21 @@ class FeedItem(BaseModel):
     confidence_score: float
     confidence_label: str
     connected_event_ids: list[UUID]
+    # Whether this event_id is unread for the current user (see
+    # PrioritizationEngine.prioritize()/mark_reviewed() -- deliberately not
+    # the same concept as World Model's EnrichedEvent.is_new). False on a
+    # user's very first-ever response (see _run_feed_pipeline's baseline
+    # handling) and after an explicit POST /v1/notifications/review.
+    is_new_for_user: bool
+    # The real Normalization-layer signal_type behind this opportunity's
+    # primary/first signal (e.g. "earnings_signal", "volatility_spike") --
+    # exposed so the mobile field can show a short, honest reason tag on
+    # each vessel instead of inventing one. Real data, not a polished
+    # human-authored label -- see the owner conversation this shipped from
+    # for why: no field for a hand-tuned short descriptor exists anywhere in
+    # the pipeline, and fabricating one client-side would violate this
+    # project's "don't fake capabilities" rule.
+    signal_type: str
 
 
 class DemoFeedResponse(BaseModel):
@@ -94,11 +184,17 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
     Single source of truth for both the versioned `/v1/opportunities` API
     (`opportunities.py`) and the legacy `/v1/demo/feed` route below -- neither
     duplicates this computation.
+
+    The shared Orchestrator instance now also persists *across* calls to this
+    function (see `_get_orchestrator()` above), not just within one -- this
+    is what lets the same underlying opportunity keep a stable `event_id` and
+    correct `is_new_for_user` across repeated requests, for the life of this
+    process.
     """
     now = datetime.now(timezone.utc)
 
     user_model = UserModelBuilder().seed(
-        user_id="demo_user",
+        user_id=LOCAL_FOUNDER_USER_ID,
         holdings=[
             Holding(
                 domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now
@@ -117,65 +213,92 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
         risk_tolerance="moderate",
     )
 
-    orchestrator = Orchestrator()
+    orchestrator = _get_orchestrator()
     fixtures = simulated_fixtures(now)
 
-    results = []
-    for entity_id, raw_signal in fixtures.items():
-        raw_signals = [raw_signal]
-        if entity_id == "TSLA":
-            raw_signals.append(tesla_ai_partnership_corroboration(now))
+    # One lock for the whole request's pipeline run, not just per-call: two
+    # concurrent requests interleaving their individual entity.run() calls
+    # against the same shared World Model/Prioritization state would produce
+    # genuinely tangled results (e.g. one request's dedup window absorbing
+    # signals from a different request), not just a data race.
+    with _state_lock:
+        results = []
+        for entity_id, raw_signal in fixtures.items():
+            raw_signals = [raw_signal]
+            if entity_id == "TSLA":
+                raw_signals.append(tesla_ai_partnership_corroboration(now))
 
-        result = orchestrator.run(
-            raw_signals=raw_signals,
-            user_id="demo_user",
-            user_model=user_model,
-            engagement_samples=_engagement_samples(entity_id, now),
-            domain=raw_signal.domain,
-        )
-        results.append((entity_id, result))
-
-    # Connections: two events are "rippled" to each other if the entities either one
-    # touches (directly or via World Model's downstream mapping) overlap.
-    touched: dict[UUID, set[str]] = {
-        r.event.event_id: {e.entity_id for e in r.event.entities}
-        | set(r.event.downstream)
-        for _, r in results
-    }
-    connections: dict[UUID, list[UUID]] = {event_id: [] for event_id in touched}
-    event_ids = list(touched.keys())
-    for i, a in enumerate(event_ids):
-        for b in event_ids[i + 1 :]:
-            if touched[a] & touched[b]:
-                connections[a].append(b)
-                connections[b].append(a)
-
-    # Sort by the internal-only ranking score before building the public
-    # response -- the score itself is never serialized (ADR-029); only the
-    # resulting order (as `rank`, below) is public-facing.
-    results.sort(
-        key=lambda pair: pair[1].recommendation.internal_rank_score, reverse=True
-    )
-
-    items = []
-    for position, (entity_id, r) in enumerate(results, start=1):
-        entity = r.event.entities[0]
-        canonical = resolve(entity_id, entity.display_name, r.event.domain)
-        items.append(
-            FeedItem(
-                event_id=r.event.event_id,
-                entity_id=canonical.entity_id,
-                display_name=canonical.display_name,
-                category=canonical.category,
-                ticker=canonical.ticker,
-                domain=r.event.domain,
-                delivered_item=r.delivered_item,
-                rank=position,
-                confidence_score=r.confidence.confidence_score,
-                confidence_label=r.delivered_item.confidence_label,
-                connected_event_ids=connections[r.event.event_id],
+            result = orchestrator.run(
+                raw_signals=raw_signals,
+                user_id=LOCAL_FOUNDER_USER_ID,
+                user_model=user_model,
+                engagement_samples=_engagement_samples(entity_id, now),
+                domain=raw_signal.domain,
             )
+            results.append((entity_id, result))
+
+        # Connections: two events are "rippled" to each other if the entities either one
+        # touches (directly or via World Model's downstream mapping) overlap.
+        touched: dict[UUID, set[str]] = {
+            r.event.event_id: {e.entity_id for e in r.event.entities}
+            | set(r.event.downstream)
+            for _, r in results
+        }
+        connections: dict[UUID, list[UUID]] = {event_id: [] for event_id in touched}
+        event_ids = list(touched.keys())
+        for i, a in enumerate(event_ids):
+            for b in event_ids[i + 1 :]:
+                if touched[a] & touched[b]:
+                    connections[a].append(b)
+                    connections[b].append(a)
+
+        # Sort by the internal-only ranking score before building the public
+        # response -- the score itself is never serialized (ADR-029); only the
+        # resulting order (as `rank`, below) is public-facing.
+        results.sort(
+            key=lambda pair: pair[1].recommendation.internal_rank_score, reverse=True
         )
+
+        # First-ever request for this user: nothing is "new" relative to a
+        # user who's never seen anything yet. Each item's is_new_for_user was
+        # already computed True during its own orchestrator.run() above
+        # (notifications_reviewed was empty going in) -- silence this specific
+        # response by marking everything reviewed now, so both this response
+        # and every future one reflect the same honest baseline.
+        is_first_load = LOCAL_FOUNDER_USER_ID not in _baseline_established
+        if is_first_load:
+            _baseline_established.add(LOCAL_FOUNDER_USER_ID)
+            orchestrator.deps.prioritization_engine.mark_reviewed(
+                LOCAL_FOUNDER_USER_ID, [r.event.event_id for _, r in results]
+            )
+
+        items = []
+        for position, (entity_id, r) in enumerate(results, start=1):
+            entity = r.event.entities[0]
+            canonical = resolve(entity_id, entity.display_name, r.event.domain)
+            items.append(
+                FeedItem(
+                    event_id=r.event.event_id,
+                    entity_id=canonical.entity_id,
+                    display_name=canonical.display_name,
+                    category=canonical.category,
+                    ticker=canonical.ticker,
+                    domain=r.event.domain,
+                    delivered_item=r.delivered_item,
+                    rank=position,
+                    confidence_score=r.confidence.confidence_score,
+                    confidence_label=r.delivered_item.confidence_label,
+                    connected_event_ids=connections[r.event.event_id],
+                    is_new_for_user=(
+                        False if is_first_load else r.prioritized_item.is_new_for_user
+                    ),
+                    # First signal drives the primary event for this entity
+                    # (see world_model/model.py's process()) -- TSLA is the
+                    # only fixture with a second, corroborating signal, and
+                    # both share the same underlying signal_type.
+                    signal_type=r.normalized_signals[0].signal_type,
+                )
+            )
 
     return items, now
 

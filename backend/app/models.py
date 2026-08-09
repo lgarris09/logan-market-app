@@ -1,4 +1,5 @@
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -29,3 +30,11 @@ class AskRequest(BaseModel):
 
 class AskResponse(BaseModel):
     answer: str
+
+
+class NotificationsReviewRequest(BaseModel):
+    event_ids: list[UUID]
+
+
+class NotificationsReviewResponse(BaseModel):
+    reviewed_count: int

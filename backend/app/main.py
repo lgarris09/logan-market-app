@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
-from .logan_feed import DemoFeedResponse, run_demo_feed
+from .logan_feed import DemoFeedResponse, mark_notifications_reviewed, run_demo_feed
 from .memory_engine import MemoryEngine
 from .memory_models import (
     CategoryContext,
@@ -14,7 +14,13 @@ from .memory_models import (
     MemoryDecision,
     MemoryRecord,
 )
-from .models import AskRequest, AskResponse, BriefingResponse
+from .models import (
+    AskRequest,
+    AskResponse,
+    BriefingResponse,
+    NotificationsReviewRequest,
+    NotificationsReviewResponse,
+)
 from .opportunities import OpportunitiesResponse, run_opportunities
 
 app = FastAPI(
@@ -63,6 +69,22 @@ def opportunities(category: str | None = None) -> OpportunitiesResponse:
         return response
     filtered = [item for item in response.items if item.category == category.lower()]
     return OpportunitiesResponse(items=filtered, generated_at=response.generated_at)
+
+
+@app.post("/v1/notifications/review", response_model=NotificationsReviewResponse)
+def review_notifications(
+    request: NotificationsReviewRequest,
+) -> NotificationsReviewResponse:
+    """Marks event_ids as reviewed by the current (single, local) user -- the
+    only way an item's `is_new_for_user` clears on a later `/v1/opportunities`
+    call. See `logan_feed.mark_notifications_reviewed` and
+    `PrioritizationEngine.mark_reviewed` for why this is deliberately a
+    separate concept from World Model event identity/dedup. In-memory,
+    process-lifetime only -- resets on backend restart, same as the rest of
+    this notification state.
+    """
+    mark_notifications_reviewed(request.event_ids)
+    return NotificationsReviewResponse(reviewed_count=len(request.event_ids))
 
 
 @app.post("/v1/memories", response_model=MemoryDecision)
@@ -125,21 +147,30 @@ def demo_feed() -> DemoFeedResponse:
 
 @app.post("/v1/ask", response_model=AskResponse)
 def ask_logan(request: AskRequest) -> AskResponse:
+    """V3.1.4.2 brand correction pass: the returned copy was exposing internal
+    implementation language ("confirmed memory", "V1", "category-linked
+    memories") directly to consumers -- a wording-only fix, the underlying
+    behavior (checking for related stored memories, branching on whether any
+    exist) is unchanged. See docs/sessions for the session note covering this
+    pass; the general principle -- translate limitations into natural
+    consumer language, never expose version/architecture/pipeline terms -- is
+    intended to apply anywhere else user-facing text is generated, not just
+    here.
+    """
     clean_message = request.message.strip()
     if not clean_message:
-        return AskResponse(answer="Ask what changed or why something matters.")
+        return AskResponse(
+            answer="Ask what changed, why it matters, or what deserves your attention."
+        )
 
     relevant = memory_engine.list_memories(category="markets")[:3]
-    context_note = (
-        f"I found {len(relevant)} relevant stored memories to use as context. "
-        if relevant
-        else "I do not have enough confirmed memory yet, so this answer is generic. "
-    )
 
-    return AskResponse(
-        answer=(
-            context_note
-            + "V1 is now structured to retrieve category-linked memories before reasoning. "
-            + f'Your question was: "{clean_message}"'
+    if relevant:
+        context_note = "I'm drawing on what I've learned from your activity so far to help answer that. "
+    else:
+        context_note = (
+            "I'm still learning what matters most to you. I can help you understand what changed, "
+            "why it matters, or what deserves your attention. "
         )
-    )
+
+    return AskResponse(answer=context_note + f'You asked: "{clean_message}"')

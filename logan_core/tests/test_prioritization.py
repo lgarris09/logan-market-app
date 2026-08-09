@@ -148,3 +148,114 @@ def test_not_permitted_is_always_hidden():
     )
     assert result.visibility == "hidden"
     assert result.interruption == "none"
+
+
+# --- is_new_for_user / mark_reviewed (notification badge) ---
+#
+# Deliberately a different concept from World Model event identity/dedup
+# (EnrichedEvent.is_new/prior_event_id, world_model/model.py): these answer
+# "has *this user* reviewed this event_id," not "is this the same
+# underlying event." See PrioritizedItem.is_new_for_user's own comment.
+
+
+def test_is_new_for_user_true_for_a_never_reviewed_event():
+    engine = PrioritizationEngine()
+    result = _surface_once(engine, BASE_NOW)
+    assert result.is_new_for_user is True
+
+
+def test_is_new_for_user_false_after_mark_reviewed():
+    engine = PrioritizationEngine()
+    recommendation = _recommendation(BASE_NOW)
+    policy_result = _policy_result(recommendation.event_id, BASE_NOW)
+    first = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    assert first.is_new_for_user is True
+
+    engine.mark_reviewed("demo_user", [recommendation.event_id], now=BASE_NOW)
+
+    second = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW + timedelta(minutes=1),
+    )
+    assert second.is_new_for_user is False
+
+
+def test_re_observing_an_already_reviewed_event_does_not_re_alert():
+    """Re-surfacing the same event_id again (e.g. a later poll re-observing
+    the same underlying opportunity) must not clear/reset is_new_for_user by
+    itself -- only an explicit mark_reviewed() call does.
+    """
+    engine = PrioritizationEngine()
+    recommendation = _recommendation(BASE_NOW)
+    policy_result = _policy_result(recommendation.event_id, BASE_NOW)
+    engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    engine.mark_reviewed("demo_user", [recommendation.event_id], now=BASE_NOW)
+
+    for minutes in (5, 10, 30):
+        result = engine.prioritize(
+            user_id="demo_user",
+            domain="stocks",
+            policy_result=policy_result,
+            recommendation=recommendation,
+            now=BASE_NOW + timedelta(minutes=minutes),
+        )
+        assert result.is_new_for_user is False
+
+
+def test_is_new_for_user_is_independent_per_event():
+    """Reviewing one event must not silence a genuinely different one."""
+    engine = PrioritizationEngine()
+    reviewed_recommendation = _recommendation(BASE_NOW)
+    reviewed_policy = _policy_result(reviewed_recommendation.event_id, BASE_NOW)
+    engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=reviewed_policy,
+        recommendation=reviewed_recommendation,
+        now=BASE_NOW,
+    )
+    engine.mark_reviewed("demo_user", [reviewed_recommendation.event_id], now=BASE_NOW)
+
+    other_recommendation = _recommendation(BASE_NOW)
+    other_policy = _policy_result(other_recommendation.event_id, BASE_NOW)
+    other_result = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=other_policy,
+        recommendation=other_recommendation,
+        now=BASE_NOW + timedelta(minutes=1),
+    )
+    assert other_result.is_new_for_user is True
+
+
+def test_mark_reviewed_is_idempotent():
+    """Calling mark_reviewed twice for the same event_id must not duplicate
+    the record.
+    """
+    engine = PrioritizationEngine()
+    recommendation = _recommendation(BASE_NOW)
+    engine.mark_reviewed("demo_user", [recommendation.event_id], now=BASE_NOW)
+    engine.mark_reviewed(
+        "demo_user", [recommendation.event_id], now=BASE_NOW + timedelta(minutes=1)
+    )
+    state = engine.attention_state("demo_user")
+    assert state is not None
+    matching = [
+        r for r in state.notifications_reviewed if r.event_id == recommendation.event_id
+    ]
+    assert len(matching) == 1
