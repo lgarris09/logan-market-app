@@ -34,38 +34,36 @@ const CATEGORY_ICONS: Record<string, string> = {
   technology: "microchip",
 };
 
-// Per-entity accent colors (mirrors the reference render's per-entity coloring,
-// not a flat per-category palette -- three "stocks" entities look distinct).
-const ENTITY_COLORS: Record<string, string> = {
-  TSLA: "#F04444",
-  NVDA: "#4FD1A5",
-  AAPL: "#E8E8E8",
-  MARKETS: "#2DD4BF",
-  OIL: "#F0B64A",
-  BTC: "#F7931A",
-  FED: "#4A90D9",
-  NFL: "#3B82F6",
-  MUSIC: "#A78BFA",
-  POLY: "#A78BFA",
-  AI_SECTOR: "#4FD1A5",
+// V3.1.4.2 brand correction pass: this app's category taxonomy collapses
+// onto the owner's reference "Markets / Odds / Trends" grouping (its color
+// palette panel gives exact hex values for exactly those three, plus a
+// neutral) -- not the wider per-category rainbow (teal/gold/violet/etc.)
+// from the prior pass. STRATUS orange is reserved for brand chrome/active
+// states and is never returned here, so it keeps meaning "this is STRATUS
+// itself." Same-category entities share a color family and are told apart
+// by ticker/icon/name, not by hue.
+const CATEGORY_COLORS: Record<string, string> = {
+  // Markets: muted green -- stocks, broad markets, commodities, technology,
+  // and crypto (the reference shows BTC grouped under "MARKETS", not a
+  // separate crypto hue).
+  stocks: "#22C55E",
+  markets: "#22C55E",
+  commodities: "#22C55E",
+  technology: "#22C55E",
+  crypto: "#22C55E",
+  // Odds: muted red -- sports and prediction markets are genuinely
+  // wager/risk-adjacent, which is what muted red is reserved for.
+  sports: "#EF4444",
+  "prediction-markets": "#EF4444",
+  // Trends: muted violet -- culture/social signals.
+  culture: "#A78BFA",
 };
+// macro (e.g. Fed policy) has no clear home in Markets/Odds/Trends and
+// isn't shown in the reference -- kept neutral rather than guessed.
+const NEUTRAL_COLOR = "#9A9AA2";
 
-// Stable fallback palette for entities with no explicit color, keyed by a cheap
-// hash of entity_id so the same unknown entity always gets the same color.
-const FALLBACK_PALETTE = ["#F04444", "#4FD1A5", "#2DD4BF", "#F0B64A", "#A78BFA", "#4A90D9"];
-
-function hashString(value: string): number {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-}
-
-function colorFor(entityId: string): string {
-  return (
-    ENTITY_COLORS[entityId] ?? FALLBACK_PALETTE[hashString(entityId) % FALLBACK_PALETTE.length]
-  );
+function colorFor(category: string): string {
+  return CATEGORY_COLORS[category] ?? NEUTRAL_COLOR;
 }
 
 function initialsFor(displayName: string): string {
@@ -81,7 +79,7 @@ export function resolveSymbol(entity: {
   category: string;
   ticker: string | null;
 }): ResolvedSymbol {
-  const color = colorFor(entity.entity_id);
+  const color = colorFor(entity.category);
 
   const logo = KNOWN_LOGOS[entity.entity_id];
   if (logo) return { kind: "logo", iconName: logo, color };

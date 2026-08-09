@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet } from "react-native";
 import {
   Canvas,
   Circle,
@@ -9,7 +9,9 @@ import {
   vec,
   RadialGradient,
 } from "@shopify/react-native-skia";
-import {
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
   useDerivedValue,
   useReducedMotion,
   useSharedValue,
@@ -48,11 +50,18 @@ export function AttentionAtmosphere({
   layouts,
   width,
   height,
+  dampened = false,
 }: {
   items: FeedItem[];
   layouts: Map<string, VesselLayout>;
   width: number;
   height: number;
+  /** True while an Opportunity Card is open. Round 2 (real-device
+   * screenshots): the ambient field needs to strongly recede, not just
+   * subtly, for the focused card to read clearly against it -- the field
+   * stays alive underneath (still Atmosphere, not switched off), just
+   * dimmed well down. */
+  dampened?: boolean;
 }) {
   const time = useSharedValue(0);
   // Reanimated's own hook (this layer is Reanimated/Skia-driven), same as
@@ -67,6 +76,14 @@ export function AttentionAtmosphere({
       false
     );
   }, [time, reducedMotion]);
+
+  const dampenAnim = useSharedValue(0);
+  useEffect(() => {
+    dampenAnim.value = withTiming(dampened ? 1 : 0, { duration: 300 });
+  }, [dampened, dampenAnim]);
+  const dampenStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dampenAnim.value, [0, 1], [1, 0.2]),
+  }));
 
   const clouds = useMemo<CloudSpec[]>(() => {
     if (width === 0 || height === 0) return [];
@@ -123,14 +140,19 @@ export function AttentionAtmosphere({
   if (width === 0 || height === 0) return null;
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <Canvas style={StyleSheet.absoluteFill}>
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, dampenStyle]}>
+      {/* pointerEvents is set on both this wrapper and the Canvas itself --
+          Skia's Canvas is backed by its own native view on iOS and has been
+          observed not to fully inherit a parent's pointerEvents="none" under
+          New Architecture, which would otherwise intercept vessel taps
+          (Sprint 3.5 device-validation fix). */}
+      <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
         <Group transform={hazeTransformA}>
           <Circle c={vec(width * 0.2, height * 0.25)} r={hazeR}>
             <RadialGradient
               c={vec(width * 0.2, height * 0.25)}
               r={hazeR}
-              colors={[`rgba(${hazePalette.base},0.10)`, `rgba(${hazePalette.base},0)`]}
+              colors={[`rgba(${hazePalette.base},0.08)`, `rgba(${hazePalette.base},0)`]}
             />
           </Circle>
         </Group>
@@ -147,6 +169,6 @@ export function AttentionAtmosphere({
           <FractalNoise freqX={0.8} freqY={0.8} octaves={2} />
         </Rect>
       </Canvas>
-    </View>
+    </Animated.View>
   );
 }

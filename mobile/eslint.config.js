@@ -14,13 +14,17 @@ module.exports = [
     // rules assume React Compiler-style components (no ref access, no
     // Math.random(), during render). This app's classic Animated API usage
     // (useRef(new Animated.Value(...)) then .interpolate() during render --
-    // e.g. Vessel.tsx, FadeIn.tsx, AttentionField.tsx) and one-time
-    // useMemo-seeded Math.random() layout generation (AtmosphereField.tsx)
-    // are both standard, correct React Native patterns that predate and
-    // aren't compatible with those rules; they accounted for ~95 of the ~97
+    // e.g. FadeIn.tsx, LoganCore.tsx) and one-time useMemo-seeded
+    // Math.random() layout generation (AtmosphereField.tsx) are both
+    // standard, correct React Native patterns that predate and aren't
+    // compatible with those rules; they accounted for ~95 of the ~97
     // findings on first run (V3.1.4 BATCH-2). Rewriting the animation/
     // atmosphere architecture to be React-Compiler-pure is out of scope for
     // adding lint tooling -- disabled here rather than silenced per-line.
+    // (Vessel.tsx/AttentionField.tsx moved off classic Animated onto
+    // Reanimated in V3.1.4.1, a Sprint 3.5 device-validation fix -- they no
+    // longer need this exception, but the rules stay off globally for the
+    // files that still do.)
     rules: {
       "react-hooks/refs": "off",
       "react-hooks/purity": "off",

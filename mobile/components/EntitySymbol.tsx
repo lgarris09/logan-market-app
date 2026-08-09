@@ -36,7 +36,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   text: {
-    fontWeight: "900",
+    fontWeight: "700",
     letterSpacing: 0.5,
   },
 });

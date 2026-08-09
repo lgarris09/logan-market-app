@@ -57,13 +57,15 @@ function makeItem(id: string, rank: number): FeedItem {
     confidence_score: 0.5,
     confidence_label: "Moderate",
     connected_event_ids: [],
+    is_new_for_user: false,
+    signal_type: "test_signal",
   };
 }
 
 describe("AttentionAtmosphere", () => {
   it("renders nothing until the field has real dimensions", () => {
     const items = [makeItem("a", 1)];
-    const layouts = computeAtmosphereLayout(items);
+    const layouts = computeAtmosphereLayout(items, 390, 844);
 
     const { toJSON } = render(
       <AttentionAtmosphere items={items} layouts={layouts} width={0} height={0} />
@@ -77,7 +79,7 @@ describe("AttentionAtmosphere", () => {
     // cloud per item -- a feed of 11 items (the real simulated fixture size)
     // must still only render MAX_CLOUDS (4) clouds, not 11.
     const items = Array.from({ length: 11 }, (_, i) => makeItem(`event-${i}`, i + 1));
-    const layouts = computeAtmosphereLayout(items);
+    const layouts = computeAtmosphereLayout(items, 390, 844);
 
     const { getAllByTestId } = render(
       <AttentionAtmosphere items={items} layouts={layouts} width={390} height={844} />
