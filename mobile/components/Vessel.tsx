@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
+import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 import { Ionicons } from "@expo/vector-icons";
 import Animated, {
   Easing,
@@ -26,7 +27,7 @@ import { relativeTimeFrom } from "../lib/relativeTime";
 import { resolveSymbol } from "../lib/symbolResolver";
 import { shouldShowOverflowFade } from "../lib/cardOverflow";
 import { humanizeSignalType } from "../lib/signalType";
-import { VesselLayout } from "../lib/attentionLayout";
+import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const MIN_TOUCH_TARGET = 44;
@@ -37,6 +38,18 @@ const MIN_TOUCH_TARGET = 44;
 // numbers.
 export const CARD_HEIGHT = 372;
 export const CARD_SAFE_MARGIN = 16;
+
+// Attention Gravity motion (see the class comment below). A new vessel's
+// position starts this many times farther from the field center than its
+// own target, along the same angle -- pushed toward the periphery, not
+// off-field -- so its first spring visibly arrives from the outer field.
+const ENTRY_PUSH_MULTIPLIER = 1.6;
+// Gentler than the disclosure/focus springs elsewhere in this file --
+// those are direct interaction feedback (should feel immediate); this is
+// the field "continuously reorganizing itself," which reads better as an
+// unhurried settle than a snappy one, especially for a position change
+// that can cover real distance (a rank promotion migrating toward center).
+const POSITION_SPRING = { damping: 18, stiffness: 50 };
 
 // Every entity on the Attention Field renders through this one component --
 // there is no separate "card" anywhere. A vessel is always alive (drifting,
@@ -64,6 +77,23 @@ export const CARD_SAFE_MARGIN = 16;
 // safe on-screen position as it grows, independent of the glow/label, which
 // stay at the vessel's natural field position -- the card "detaches" for
 // legibility, the glow still marks where the opportunity structurally lives.
+//
+// Attention Gravity motion architecture: `layout.x/y` used to be consumed
+// as a static `left/top` percentage -- if the target changed between polls
+// (a re-ranked item, a newly-admitted one), the vessel would snap there
+// instantly. Position is now owned by a pair of Reanimated shared values
+// (`posX`/`posY`, in real px) that spring toward whatever target this
+// render's `layout` provides, the same "animate toward the latest prop"
+// pattern already used for `disclosureAnim`/`focusAnim` below. Because
+// Reanimated shared values live on the mounted component instance (not
+// recreated per render), a vessel that's still on-screen across polls
+// keeps whatever position it's currently mid-spring toward -- continuity
+// is a property of the component staying mounted (same `event_id` key in
+// AttentionField.tsx), not anything persisted externally. A newly-mounted
+// vessel seeds `posX/posY` at a point pushed outward from its own target
+// (toward the field's periphery) instead of the target itself, so it
+// visibly arrives from the outer field on its very first spring rather
+// than materializing in place.
 export function Vessel({
   item,
   layout,
@@ -75,6 +105,9 @@ export function Vessel({
   cardOffsetY,
   maxCardHeight,
   echoSignal,
+  fieldWidth,
+  fieldHeight,
+  isExiting,
   onPress,
 }: {
   item: FeedItem;
@@ -87,6 +120,15 @@ export function Vessel({
   cardOffsetY: number;
   maxCardHeight: number;
   echoSignal: SharedValue<number>;
+  /** Real field dimensions in px -- lets this vessel convert its own
+   * layout.x/y fraction into a pixel position it can animate toward
+   * (Attention Gravity motion architecture; see the class comment). */
+  fieldWidth: number;
+  fieldHeight: number;
+  /** True once this event_id has left the live feed but AttentionField is
+   * still holding it on-screen to let it fade out rather than vanish
+   * instantly -- see AttentionField.tsx's departure tracking. */
+  isExiting?: boolean;
   onPress: () => void;
 }) {
   const symbol = resolveSymbol(item);
@@ -101,6 +143,26 @@ export function Vessel({
   const [detailContainerH, setDetailContainerH] = useState(0);
   const [detailContentH, setDetailContentH] = useState(0);
 
+  // Attention Gravity: this vessel's real-pixel target position, from the
+  // layout fraction this render provides.
+  const targetX = layout.x * fieldWidth;
+  const targetY = layout.y * fieldHeight;
+  // A brand-new vessel's position shared values start pushed outward from
+  // the target -- toward the field's periphery, same angle from center,
+  // farther out -- rather than at the target itself, so its first spring
+  // visibly arrives from the outer field (see the class comment). Only
+  // matters at mount: useSharedValue's initializer is ignored on
+  // subsequent renders, same as useState's.
+  const fieldCenterX = fieldWidth / 2;
+  const fieldCenterY = fieldHeight / 2;
+  const entryOffsetX = targetX - fieldCenterX;
+  const entryOffsetY = targetY - fieldCenterY;
+  const entryDist = Math.hypot(entryOffsetX, entryOffsetY);
+  const entryX = entryDist < 1 ? targetX : fieldCenterX + entryOffsetX * ENTRY_PUSH_MULTIPLIER;
+  const entryY = entryDist < 1 ? targetY : fieldCenterY + entryOffsetY * ENTRY_PUSH_MULTIPLIER;
+
+  const posX = useSharedValue(entryX);
+  const posY = useSharedValue(entryY);
   const entrance = useSharedValue(0);
   const drift = useSharedValue(0);
   const breath = useSharedValue(0);
@@ -109,10 +171,36 @@ export function Vessel({
   const focusAnim = useSharedValue(isFocused ? 1 : 0);
   const dimAnim = useSharedValue(0);
 
+  // Springs toward whatever target this render's `layout` provides --
+  // covers both the mount case (spring from the peripheral entry point
+  // above to the real target) and every later poll where rank/relationships
+  // moved this vessel's target (spring from wherever it currently is,
+  // mid-flight or settled, to the new one). Reduced motion still moves,
+  // just without the spring's overshoot/settle feel.
+  useEffect(() => {
+    if (reducedMotion) {
+      posX.value = withTiming(targetX, { duration: 260 });
+      posY.value = withTiming(targetY, { duration: 260 });
+      return;
+    }
+    posX.value = withSpring(targetX, POSITION_SPRING);
+    posY.value = withSpring(targetY, POSITION_SPRING);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetX, targetY, reducedMotion]);
+
   // Condensation: this vessel did not simply appear -- it accreted, starting
   // diffuse and settling. Staggered per entity so the whole field doesn't
-  // form in unison.
+  // form in unison. Also owns the reverse: dissolving back out once this
+  // event_id has left the live feed (see AttentionField.tsx's departure
+  // tracking) reuses the same shared value rather than a second, separate
+  // opacity concept -- kept in one effect (not a second one also writing
+  // `entrance.value`) since Reanimated's lint rules disallow a shared
+  // value being mutated from two different effects.
   useEffect(() => {
+    if (isExiting) {
+      entrance.value = withTiming(0, { duration: reducedMotion ? 160 : 420 });
+      return;
+    }
     if (reducedMotion) {
       entrance.value = 1;
       return;
@@ -120,7 +208,7 @@ export function Vessel({
     const delay = stableDelay(item.event_id);
     entrance.value = withDelay(delay, withSpring(1, { damping: 11, stiffness: 90 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reducedMotion]);
+  }, [reducedMotion, isExiting]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -215,18 +303,70 @@ export function Vessel({
   // every vessel's glow used the same fixed opacity regardless of how
   // important it actually was, so a field with many secondary vessels
   // stayed uniformly bright even though `layout.size` (and therefore ring
-  // radius) already scales down for them. Opacity and outer-ring radius now
-  // both scale with `prominence` (0..1, rank-derived, already computed by
-  // attentionLayout.ts) so the strongest bloom is reserved for the
-  // highest-attention vessels and secondary vessels recede toward true
-  // negative space instead of contributing an equally-bright halo.
-  const outer = dormantSize * (1.0 + prominence * 0.3);
-  const mid = dormantSize * (0.5 + prominence * 0.16);
-  const core = dormantSize * 0.3;
-  const outerOpacity = 0.05 + prominence * 0.13;
-  const midOpacity = 0.18 + prominence * 0.32;
-  const coreOpacityBase = 0.26 + prominence * 0.2;
-  const glowBoxSize = Math.max(outer, readingWidth) + 40;
+  // radius) already scales down for them. Bloom opacity and the bubble's own
+  // gradient/stroke intensity all scale with `prominence` (0..1, rank-
+  // derived, already computed by attentionLayout.ts) so the strongest bloom
+  // is reserved for the highest-attention vessels and secondary vessels
+  // recede toward true negative space instead of contributing an
+  // equally-bright halo.
+  //
+  // Sprint 3.6 (bubble-match pass): the vessel used to be three stacked
+  // flat-color circles (outer/mid/core), which read as a fairly solid disc
+  // rather than a glowing sphere. First gradient attempt had this backwards
+  // (bright/opaque center fading to a transparent edge) -- the owner's
+  // reference is the other way around: the center, where the label sits, is
+  // the *most transparent* part, and the color thickens into a darker,
+  // more saturated "smoke" ring toward the bubble's edge. `bubbleSize` is
+  // the crisp gradient-filled sphere itself (matches `dormantSize`, so it
+  // lines up with the existing touch-target/label-footprint math
+  // elsewhere); `bloom` is a separate, much fainter halo bleeding beyond it
+  // for ambient depth.
+  const bubbleSize = dormantSize;
+  // Second gradient pass (owner review of the first): still read as too
+  // dark/filled through the middle. The fix isn't more stops, it's that
+  // rank/prominence was darkening the *center*, not just the edge -- a
+  // vessel's importance should show up as a stronger, denser outer shell,
+  // never as a less transparent middle. The center 40-50% of the radius
+  // (offsets 0 and 0.35 below) is now a fixed, near-nothing opacity
+  // regardless of prominence; only the outer-third stops (0.60/0.80/1.00)
+  // scale with it, so a high-priority vessel gets a denser "smoke" shell,
+  // not a darker hole. Five stops (not three) so the build from transparent
+  // to smoke is gradual through the middle and only becomes obvious in the
+  // outer third, rather than one linear ramp across the whole radius. This
+  // profile itself is unchanged by the third (material-softening) pass
+  // below -- that pass is entirely about structure/layering, not these
+  // numbers.
+  const gradientCenterOpacity = 0.01; // offset 0 -- not prominence-scaled, by design
+  const gradientInnerOpacity = 0.03; // offset 0.35 -- still "the center," not prominence-scaled
+  const gradientTransitionOpacity = 0.08 + prominence * 0.04; // offset 0.60
+  const gradientOuterOpacity = 0.22 + prominence * 0.1; // offset 0.80
+  const gradientRimFillOpacity = 0.45 + prominence * 0.15; // offset 1.00 -- softer than the stroke rim below
+  // SVG element ids must be unique per screen and stable across re-renders;
+  // event_id already satisfies both, just sanitized of characters SVG ids
+  // don't allow.
+  const gradientId = `vgrad-${item.event_id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+  // Third pass (owner review of the second) added a second gradient shell,
+  // three off-center "smoke lobe" blobs, a split two-layer bloom, and an
+  // inner haze blob -- explicitly walked back (owner review of the third):
+  // too many overlapping translucent layers, reading as a washed-out region
+  // rather than a precise object, and the lobes/broadened bloom could bleed
+  // into neighboring vessels' space. The opacity *profile* from the second
+  // pass above (fixed-transparent center, prominence-scaled outer third) is
+  // still right and untouched; this is back to the minimum set of distinct
+  // layers that can carry "soft volumetric bubble" without reading as
+  // stacked discs: one faint bloom outside the bubble, the single gradient
+  // shell (its own 5-stop curve already carries transparent-center ->
+  // subtle-inner -> stronger-outer, no second shell needed), and one
+  // restrained rim stroke. No lobes, no separate haze, no split bloom.
+  const bloom = dormantSize * (1.15 + prominence * 0.25);
+  const bloomOpacity = 0.03 + prominence * 0.05;
+
+  // Restrained -- defines the edge without becoming a hard perimeter line;
+  // the gradient shell's own outer stops (above) carry most of that job.
+  const rimOpacity = 0.18 + prominence * 0.18;
+
+  const glowBoxSize = Math.max(bloom, readingWidth) + 40;
 
   const relatedCount = item.connected_event_ids.length;
   // STRATUS's own interpretation, not a second copy of "what happened" --
@@ -237,26 +377,39 @@ export function Vessel({
     item.delivered_item.why_it_matters_to_me?.trim() || item.delivered_item.why_it_matters?.trim();
   const lastUpdated = relativeTimeFrom(item.delivered_item.delivered_at);
 
+  // Attention Gravity: position itself (posX/posY) is now the animated
+  // part of this style, not a static left/top percentage -- see the class
+  // comment. Combined with the existing drift wobble in one transform
+  // (rather than a second wrapping Animated.View) since RN sums multiple
+  // translateX/Y transform entries; host is centered on (posX,posY) via
+  // the -glowBoxSize/2 offset here instead of host's own marginLeft/Top.
   const containerStyle = useAnimatedStyle(() => {
-    const translateX = interpolate(drift.value, [-1, 1], [-5, 5]);
-    const translateY = interpolate(drift.value, [-1, 1], [-7, 7]);
+    const driftX = interpolate(drift.value, [-1, 1], [-5, 5]);
+    const driftY = interpolate(drift.value, [-1, 1], [-7, 7]);
     return {
       opacity: entrance.value * (1 - dimAnim.value * 0.85),
-      transform: [{ translateX }, { translateY }],
+      transform: [
+        { translateX: posX.value - glowBoxSize / 2 + driftX },
+        { translateY: posY.value - glowBoxSize / 2 + driftY },
+      ],
     };
   });
 
-  const coreStyle = useAnimatedStyle(() => {
-    const coreOpacity = interpolate(
+  // Drives the gradient bubble itself (replaces the old tiny "core" dot's
+  // coreStyle -- the whole bubble now breathes/pulses together, not just a
+  // small inner point, since the gradient fill carries the visual weight
+  // the stacked flat circles used to split across three layers).
+  const bubbleStyle = useAnimatedStyle(() => {
+    const breatheOpacity = interpolate(
       breath.value,
       [0, 1],
-      [coreOpacityBase * (1 - instability * 0.45), coreOpacityBase * (1 + instability * 0.45)]
+      [1 - instability * 0.12, 1 + instability * 0.12]
     );
     const pulseScale = interpolate(pulse.value, [0, 1], [1, 1 + 0.05 + prominence * 0.14]);
     const focusScale = interpolate(focusAnim.value, [0, 1], [1, 1.14]);
     const entranceScale = interpolate(entrance.value, [0, 0.6, 1], [0.3, 1.12, 1]);
     return {
-      opacity: coreOpacity,
+      opacity: breatheOpacity,
       transform: [{ scale: entranceScale }, { scale: pulseScale }, { scale: focusScale }],
     };
   });
@@ -317,12 +470,10 @@ export function Vessel({
       style={[
         styles.host,
         {
-          left: `${layout.x * 100}%`,
-          top: `${layout.y * 100}%`,
+          left: 0,
+          top: 0,
           width: glowBoxSize,
           height: glowBoxSize,
-          marginLeft: -glowBoxSize / 2,
-          marginTop: -glowBoxSize / 2,
         },
         containerStyle,
       ]}
@@ -331,29 +482,25 @@ export function Vessel({
       {/* The glow -- always present, never text-bearing. This is Logan
           reasoning about this entity whether or not it is being read. Stays
           at the vessel's natural field position even when the card (below)
-          detaches for legibility. */}
+          detaches for legibility.
+          Sprint 3.6 (bubble-match pass, softened, then simplified back down
+          -- see the constants block above): a soft volumetric bubble, built
+          from the minimum number of distinct layers rather than several
+          stacked translucent discs. Render order (back to front): one
+          faint bloom, the interaction ripple, the single gradient shell
+          (its own 5-stop curve carries transparent-center ->
+          subtle-inner -> stronger-outer on its own), then the rim stroke
+          on top. */}
       <View pointerEvents="none" style={styles.glowLayerHost}>
         <View
           style={[
             styles.glowRing,
             {
-              width: outer,
-              height: outer,
-              borderRadius: outer / 2,
+              width: bloom,
+              height: bloom,
+              borderRadius: bloom / 2,
               backgroundColor: symbol.color,
-              opacity: outerOpacity,
-            },
-          ]}
-        />
-        <View
-          style={[
-            styles.glowRing,
-            {
-              width: mid,
-              height: mid,
-              borderRadius: mid / 2,
-              backgroundColor: symbol.color,
-              opacity: midOpacity,
+              opacity: bloomOpacity,
             },
           ]}
         />
@@ -361,28 +508,54 @@ export function Vessel({
           style={[
             styles.echoRing,
             {
-              width: core * 2.2,
-              height: core * 2.2,
-              borderRadius: core * 1.1,
+              width: bubbleSize * 0.66,
+              height: bubbleSize * 0.66,
+              borderRadius: bubbleSize * 0.33,
               borderColor: symbol.color,
             },
             echoRingStyle,
           ]}
         />
-        <Animated.View
-          style={[
-            styles.glowCore,
-            {
-              width: core,
-              height: core,
-              borderRadius: core / 2,
-              backgroundColor: symbol.color,
-              shadowColor: symbol.color,
-              shadowRadius: core,
-            },
-            coreStyle,
-          ]}
-        />
+        <Animated.View style={[{ width: bubbleSize, height: bubbleSize }, bubbleStyle]}>
+          <Svg width={bubbleSize} height={bubbleSize}>
+            <Defs>
+              {/* Concentric, not off-center -- the reference reads as a
+                  hollow, evenly transparent middle with a "smoke" ring
+                  thickening toward the edge, not a directional highlight.
+                  r="100%" (not a smaller fraction) so each Stop's offset
+                  maps directly to a fraction of the bubble's true radius --
+                  otherwise SVG pads the last stop's color flat across
+                  whatever radius is left outside r, which would flatten
+                  exactly the outer-third gradation this profile depends on. */}
+              <RadialGradient id={gradientId} cx="50%" cy="50%" r="100%">
+                <Stop offset="0" stopColor={symbol.color} stopOpacity={gradientCenterOpacity} />
+                <Stop offset="0.35" stopColor={symbol.color} stopOpacity={gradientInnerOpacity} />
+                <Stop
+                  offset="0.6"
+                  stopColor={symbol.color}
+                  stopOpacity={gradientTransitionOpacity}
+                />
+                <Stop offset="0.8" stopColor={symbol.color} stopOpacity={gradientOuterOpacity} />
+                <Stop offset="1" stopColor={symbol.color} stopOpacity={gradientRimFillOpacity} />
+              </RadialGradient>
+            </Defs>
+            <Circle
+              cx={bubbleSize / 2}
+              cy={bubbleSize / 2}
+              r={bubbleSize / 2 - 1}
+              fill={`url(#${gradientId})`}
+            />
+            <Circle
+              cx={bubbleSize / 2}
+              cy={bubbleSize / 2}
+              r={bubbleSize / 2 - 1}
+              fill="none"
+              stroke={symbol.color}
+              strokeWidth={0.9}
+              strokeOpacity={rimOpacity}
+            />
+          </Svg>
+        </Animated.View>
       </View>
 
       {/* Persistent resting-state identity -- so the field never reads as a
@@ -392,50 +565,64 @@ export function Vessel({
           rest) -- identity + confidence tier only. Prominence is carried by
           glow size/brightness alone, not by how much text a vessel gets.
           "none" is reserved for feed sizes well beyond what's been designed
-          for. Fades out as this vessel grows into its own card. */}
+          for. Fades out as this vessel grows into its own card.
+          Sprint 3.6 (bubble-match pass): this used to sit just below the
+          glow (`top` computed from dormantSize/glowBoxSize) -- the owner's
+          reference shows it centered inside the bubble instead. Filling the
+          whole host and centering with flexbox (rather than a fixed `top`
+          offset) puts it at the host's true center, which is also the
+          bubble's center, regardless of glowBoxSize's own padding. */}
       {layout.labelTier !== "none" && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.restLabel,
-            { top: `${50 + (dormantSize * 0.72 * 50) / glowBoxSize}%` },
-            restLabelStyle,
-          ]}
-        >
+        <Animated.View pointerEvents="none" style={[styles.restLabel, restLabelStyle]}>
           {/* Owner reference (Field Bias mockup, Sprint 3.6): name + real
               confidence percentage + a short real-data reason tag, no icon
               badge -- a ticker/name badge repeating the name text right
               next to it (the previous EntitySymbol-in-a-circle treatment)
               was redundant, and the reference's own cleanest vessels show
               plain text with no icon at all. EntitySymbol itself is
-              untouched and still used in the opened card's header below. */}
-          <Text
-            style={[
-              styles.restLabelName,
-              layout.labelTier === "compact" && styles.restLabelNameCompact,
-            ]}
-            numberOfLines={1}
+              untouched and still used in the opened card's header below.
+              `maxWidth` is derived from this vessel's own bubble diameter
+              via LABEL_WIDTH_FRACTION -- the same fraction
+              attentionLayout.ts's minDiameterForLabel used to grow this
+              vessel's `size` in the first place, so ordinarily the text
+              already fits with room to spare. numberOfLines/ellipsis below
+              is only a last-resort safety net (e.g. unusually long real
+              content beyond what the sizing heuristic estimated for), not
+              the primary mechanism -- growing the bubble is. */}
+          <View
+            style={{
+              maxWidth: Math.max(44, bubbleSize * LABEL_WIDTH_FRACTION),
+              alignItems: "center",
+            }}
           >
-            {item.ticker ?? item.display_name}
-          </Text>
-          <Text
-            style={[
-              styles.restLabelPct,
-              { color: symbol.color },
-              layout.labelTier === "compact" && styles.restLabelPctCompact,
-            ]}
-          >
-            {Math.round(item.confidence_score * 100)}%
-          </Text>
-          <Text
-            style={[
-              styles.restLabelDescriptor,
-              layout.labelTier === "compact" && styles.restLabelDescriptorCompact,
-            ]}
-            numberOfLines={1}
-          >
-            {humanizeSignalType(item.signal_type)}
-          </Text>
+            <Text
+              style={[
+                styles.restLabelName,
+                layout.labelTier === "compact" && styles.restLabelNameCompact,
+              ]}
+              numberOfLines={1}
+            >
+              {item.ticker ?? item.display_name}
+            </Text>
+            <Text
+              style={[
+                styles.restLabelPct,
+                { color: symbol.color },
+                layout.labelTier === "compact" && styles.restLabelPctCompact,
+              ]}
+            >
+              {Math.round(item.confidence_score * 100)}%
+            </Text>
+            <Text
+              style={[
+                styles.restLabelDescriptor,
+                layout.labelTier === "compact" && styles.restLabelDescriptorCompact,
+              ]}
+              numberOfLines={1}
+            >
+              {humanizeSignalType(item.signal_type)}
+            </Text>
+          </View>
         </Animated.View>
       )}
 
@@ -651,32 +838,26 @@ const styles = StyleSheet.create({
   glowLayerHost: { position: "absolute", alignItems: "center", justifyContent: "center" },
   glowRing: { position: "absolute" },
   echoRing: { position: "absolute", borderWidth: 1.5 },
-  glowCore: {
-    position: "absolute",
-    shadowOpacity: 0.9,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 1,
-  },
   // V3.1.4.2 (real-device screenshot review): this relied on the parent
   // host's alignItems:"center" to horizontally center an absolutely
-  // positioned child with no explicit `left` -- RN/Yoga does not reliably
-  // apply cross-axis alignItems to position:"absolute" children (CSS
-  // position:absolute is removed from flow and only respects left/right/
-  // margin), so the label centered inconsistently depending on host width.
-  // `left: "50%"` makes centering on the host's true center explicit.
-  // Widened (100 -> 118) for the new three-line content (name, percentage,
-  // descriptor) -- trimmed down from an initial 132 estimate; that didn't
-  // leave the highest-priority vessels' tightly-packed inner radius band
-  // (large glows, close together by design) enough room to also satisfy
-  // this much label footprint. Must stay in sync with
-  // lib/attentionLayout.ts's LABEL_WIDTH/FULL_LABEL_HEIGHT/
-  // COMPACT_LABEL_HEIGHT or the collision math under-reserves real space.
+  // positioned child with no explicit `left`/`top` -- RN/Yoga does not
+  // reliably apply cross-axis alignItems to position:"absolute" children
+  // (CSS position:absolute is removed from flow and only respects
+  // left/right/top/bottom/margin). Sprint 3.6 (bubble-match pass): the
+  // label now sits centered *inside* the bubble (previously it hung just
+  // below the glow) -- filling the host with inset 0 and centering via
+  // flexbox on this (non-absolutely-positioned-relative-to-itself)
+  // container works reliably, unlike the old single `left: "50%"` +
+  // fixed-width + negative-margin approach, and needs no per-vessel size
+  // constant to stay in sync with.
   restLabel: {
     position: "absolute",
-    left: "50%",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: "center",
-    width: 118,
-    marginLeft: -59,
+    justifyContent: "center",
   },
   // Owner reference (Field Bias mockup): name reads as the primary
   // identity, bold and legible, not the quiet instrument-label treatment

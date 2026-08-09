@@ -2,7 +2,6 @@ import { ReactNode } from "react";
 import { render } from "@testing-library/react-native";
 
 import { AttentionAtmosphere } from "../AttentionAtmosphere";
-import { computeAtmosphereLayout } from "../../../lib/attentionLayout";
 import { FeedItem } from "../../../types/loganFeed";
 
 // @shopify/react-native-skia ships an ESM build that Jest's default
@@ -65,34 +64,28 @@ function makeItem(id: string, rank: number): FeedItem {
 describe("AttentionAtmosphere", () => {
   it("renders nothing until the field has real dimensions", () => {
     const items = [makeItem("a", 1)];
-    const layouts = computeAtmosphereLayout(items, 390, 844);
 
-    const { toJSON } = render(
-      <AttentionAtmosphere items={items} layouts={layouts} width={0} height={0} />
-    );
+    const { toJSON } = render(<AttentionAtmosphere items={items} width={0} height={0} />);
 
     expect(toJSON()).toBeNull();
   });
 
-  it("caps rendered clouds regardless of feed size", () => {
-    // Performance guard: the atmosphere is a fixed-cost ambient layer, not one
-    // cloud per item -- a feed of 11 items (the real simulated fixture size)
-    // must still only render MAX_CLOUDS (4) clouds, not 11.
+  it("renders a fixed-cost ambient layer regardless of feed size", () => {
+    // Sprint 3.6 (bubble-match pass): this used to also assert a capped
+    // per-item "cloud" count -- those clouds sat directly behind the top
+    // vessels and washed out Vessel.tsx's own hollow-centered bubble
+    // gradient, so they were removed. What's left is one global haze
+    // region, whose cost doesn't grow with feed size at all.
     const items = Array.from({ length: 11 }, (_, i) => makeItem(`event-${i}`, i + 1));
-    const layouts = computeAtmosphereLayout(items, 390, 844);
 
     const { getAllByTestId } = render(
-      <AttentionAtmosphere items={items} layouts={layouts} width={390} height={844} />
+      <AttentionAtmosphere items={items} width={390} height={844} />
     );
 
-    // 1 haze circle + 2 circles per cloud (AtmosphereCloud's main lobe + secondary
-    // lobe) -- 4 capped clouds -> 1 + 4*2 = 9, never 1 + 11*2 = 23.
-    expect(getAllByTestId("Circle")).toHaveLength(9);
+    expect(getAllByTestId("Circle")).toHaveLength(1);
   });
 
   it("renders without crashing for an empty feed", () => {
-    expect(() =>
-      render(<AttentionAtmosphere items={[]} layouts={new Map()} width={390} height={844} />)
-    ).not.toThrow();
+    expect(() => render(<AttentionAtmosphere items={[]} width={390} height={844} />)).not.toThrow();
   });
 });

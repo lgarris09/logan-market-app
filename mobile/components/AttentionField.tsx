@@ -9,13 +9,29 @@ import {
 } from "react-native-reanimated";
 
 import { useReducedMotion } from "../hooks/useReducedMotion";
-import { computeAtmosphereLayout, defaultFocus, shiftFocus } from "../lib/attentionLayout";
+import {
+  computeAtmosphereLayout,
+  defaultFocus,
+  shiftFocus,
+  VesselLayout,
+} from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
 const READING_WIDTH_RATIO = 0.82;
+// Must comfortably exceed Vessel.tsx's own exit-fade duration (420ms, or
+// 160ms under reduced motion) -- this is how long a departed vessel keeps
+// rendering (frozen at its last known position) after leaving `items`, so
+// it can fade out instead of vanishing the instant a poll drops it.
+const EXIT_HOLD_MS = 480;
+const EXIT_HOLD_REDUCED_MOTION_MS = 220;
+
+/** A vessel that has left the live feed but is still on-screen, fading
+ * out -- frozen at its last known item content/layout, since it's no
+ * longer present in `items`/`layouts` to look either up fresh. */
+type DepartedVessel = { item: FeedItem; layout: VesselLayout };
 
 type Disclosure = 0 | 1;
 
@@ -67,6 +83,93 @@ export function AttentionField({
     [items, width, height]
   );
   const reducedMotion = useReducedMotion();
+
+  // Attention Gravity: continuity means a departed event_id shouldn't just
+  // vanish the instant a poll drops it -- it keeps rendering, frozen at its
+  // last known item/layout (both are gone from `items`/`layouts` the
+  // moment it's no longer live, so there's nothing fresh to look up), long
+  // enough for Vessel.tsx's own exit-fade to actually play. `departed` is
+  // real state (not a ref) so removal after the hold re-renders; the timer
+  // handles live in a ref so they can be cancelled on unmount or if the
+  // same event_id reappears before its hold finishes.
+  const [departed, setDeparted] = useState<Map<string, DepartedVessel>>(new Map());
+  const departureTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>()).current;
+  const prevItemsRef = useRef<FeedItem[]>(items);
+  const prevLayoutsRef = useRef<Map<string, VesselLayout>>(layouts);
+
+  useEffect(() => {
+    const prevItems = prevItemsRef.current;
+    const prevLayouts = prevLayoutsRef.current;
+    const currentIds = new Set(items.map((item) => item.event_id));
+
+    const justDeparted: DepartedVessel[] = [];
+    for (const prevItem of prevItems) {
+      if (currentIds.has(prevItem.event_id)) continue;
+      const prevLayout = prevLayouts.get(prevItem.event_id);
+      if (!prevLayout) continue;
+      justDeparted.push({ item: prevItem, layout: prevLayout });
+    }
+
+    if (justDeparted.length > 0) {
+      setDeparted((current) => {
+        const next = new Map(current);
+        for (const entry of justDeparted) next.set(entry.item.event_id, entry);
+        return next;
+      });
+      const holdMs = reducedMotion ? EXIT_HOLD_REDUCED_MOTION_MS : EXIT_HOLD_MS;
+      for (const entry of justDeparted) {
+        const id = entry.item.event_id;
+        const existing = departureTimers.get(id);
+        if (existing) clearTimeout(existing);
+        departureTimers.set(
+          id,
+          setTimeout(() => {
+            departureTimers.delete(id);
+            setDeparted((current) => {
+              if (!current.has(id)) return current;
+              const next = new Map(current);
+              next.delete(id);
+              return next;
+            });
+          }, holdMs)
+        );
+      }
+    }
+
+    // An event_id that reappears before its hold finishes just resumes as
+    // a normal live vessel -- cancel the pending removal rather than
+    // fading it out and immediately back in.
+    let anyReappeared = false;
+    departed.forEach((_, id) => {
+      if (currentIds.has(id)) anyReappeared = true;
+    });
+    if (anyReappeared) {
+      setDeparted((current) => {
+        const next = new Map(current);
+        currentIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      currentIds.forEach((id) => {
+        const timer = departureTimers.get(id);
+        if (timer) {
+          clearTimeout(timer);
+          departureTimers.delete(id);
+        }
+      });
+    }
+
+    prevItemsRef.current = items;
+    prevLayoutsRef.current = layouts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, layouts, reducedMotion]);
+
+  useEffect(() => {
+    return () => {
+      departureTimers.forEach((timer) => clearTimeout(timer));
+      departureTimers.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // V3.1.4.1: ported from classic Animated.Value to Reanimated's makeMutable
   // (the same underlying primitive useSharedValue uses, minus the hook --
@@ -176,13 +279,7 @@ export function AttentionField({
       {...panResponder.panHandlers}
     >
       {width > 0 && (
-        <AttentionAtmosphere
-          items={items}
-          layouts={layouts}
-          width={width}
-          height={height}
-          dampened={anyExpanded}
-        />
+        <AttentionAtmosphere items={items} width={width} height={height} dampened={anyExpanded} />
       )}
 
       {width > 0 &&
@@ -227,10 +324,38 @@ export function AttentionField({
               cardOffsetY={safeY - anchorY}
               maxCardHeight={maxCardHeight}
               echoSignal={echoSignalFor(item.event_id)}
+              fieldWidth={width}
+              fieldHeight={height}
               onPress={() => handlePress(item)}
             />
           );
         })}
+
+      {/* Departed vessels: still fading out (see the departure-tracking
+          effect above), frozen at their last known item/layout since
+          they're no longer present in `items`/`layouts`. Never focusable,
+          never interactive, no card -- only Vessel.tsx's own exit-fade
+          matters here. */}
+      {width > 0 &&
+        Array.from(departed.values()).map(({ item, layout }) => (
+          <Vessel
+            key={item.event_id}
+            item={item}
+            layout={layout}
+            isFocused={false}
+            disclosure={0}
+            isDimmed={anyExpanded}
+            readingWidth={readingWidth}
+            cardOffsetX={0}
+            cardOffsetY={0}
+            maxCardHeight={maxCardHeight}
+            echoSignal={echoSignalFor(item.event_id)}
+            fieldWidth={width}
+            fieldHeight={height}
+            isExiting
+            onPress={() => {}}
+          />
+        ))}
     </View>
   );
 }

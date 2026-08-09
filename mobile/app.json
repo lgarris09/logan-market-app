@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.garrisengineeringllc.loganmarketmobile",
+      "icon": "./assets/images/stratus-app-icon.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }

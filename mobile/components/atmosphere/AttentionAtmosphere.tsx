@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { StyleSheet } from "react-native";
 import {
   Canvas,
@@ -20,16 +20,9 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 
-import { AtmosphereCloud, CloudSpec } from "./AtmosphereCloud";
-import { paletteForHexColor, ringGradient } from "../../lib/atmosphereGradients";
-import { VesselLayout } from "../../lib/attentionLayout";
+import { paletteForHexColor } from "../../lib/atmosphereGradients";
 import { resolveSymbol } from "../../lib/symbolResolver";
 import { FeedItem } from "../../types/loganFeed";
-
-// A small, fixed cap regardless of feed size -- this is ambient depth, not a
-// rendering of every entity. Keeps the layer's cost constant (a handful of
-// blurred circles sharing one clock) rather than growing with the feed.
-const MAX_CLOUDS = 4;
 
 // The Attention Field's subordinate atmosphere layer (V3.1.4 BATCH-5, ADR-028's
 // "not yet merged into the live screen" resolved). This is NOT the Sprint 1
@@ -40,20 +33,26 @@ const MAX_CLOUDS = 4;
 // screen: every Vessel here IS a resolved, informative item, so duplicating that
 // as decorative clouds behind it would be a second, competing visual mode, not a
 // subordinate one. What's kept is only what's genuinely ambient and adds depth
-// without carrying its own claim to attention: two low-opacity haze regions
-// (tinted from the current highest-priority item, so the room's overall tone
-// still tracks the real feed) plus a handful of soft, blurred color regions at
-// each of the top few items' real layout positions -- material depth behind the
-// Vessels, never text, never interactive, never louder than what it sits behind.
+// without carrying its own claim to attention: two low-opacity haze regions,
+// tinted from the current highest-priority item so the room's overall tone
+// still tracks the real feed.
+//
+// Sprint 3.6 (bubble-match pass): this used to also render a handful of soft,
+// blurred color "cloud" regions at each of the top few items' own real layout
+// positions -- material depth sitting directly behind those Vessels. Once
+// Vessel.tsx's own bubble became a hollow-centered gradient (transparent
+// where the label sits, thickening toward the rim, so the black field shows
+// through the middle), those clouds sat in exactly the same spot and washed
+// the hollow center back toward solid -- two overlapping colored layers where
+// the design now calls for one. Removed; the far fainter, purely global haze
+// below is what remains.
 export function AttentionAtmosphere({
   items,
-  layouts,
   width,
   height,
   dampened = false,
 }: {
   items: FeedItem[];
-  layouts: Map<string, VesselLayout>;
   width: number;
   height: number;
   /** True while an Opportunity Card is open. Round 2 (real-device
@@ -84,37 +83,6 @@ export function AttentionAtmosphere({
   const dampenStyle = useAnimatedStyle(() => ({
     opacity: interpolate(dampenAnim.value, [0, 1], [1, 0.2]),
   }));
-
-  const clouds = useMemo<CloudSpec[]>(() => {
-    if (width === 0 || height === 0) return [];
-    const ranked = [...items].sort((a, b) => a.rank - b.rank).slice(0, MAX_CLOUDS);
-    return ranked.flatMap((item) => {
-      const layout = layouts.get(item.event_id);
-      if (!layout) return [];
-      const symbol = resolveSymbol({
-        entity_id: item.entity_id,
-        display_name: item.display_name,
-        category: item.category,
-        ticker: item.ticker,
-      });
-      const palette = paletteForHexColor(symbol.color);
-      const { colors, positions } = ringGradient(palette.base, palette.highlight);
-      return [
-        {
-          id: item.event_id,
-          cx: layout.x * width,
-          cy: layout.y * height,
-          // Larger than the vessel's own dormant glow so it reads as the room
-          // around the item, not a duplicate of the item itself.
-          r: layout.size * 1.4,
-          colors,
-          positions,
-          driftPhase: layout.driftPhase,
-          driftFreq: layout.driftFreq * 0.4, // slower than the vessel's own drift
-        },
-      ];
-    });
-  }, [items, layouts, width, height]);
 
   const topItem = [...items].sort((a, b) => a.rank - b.rank)[0];
   const hazePalette = topItem
@@ -155,12 +123,6 @@ export function AttentionAtmosphere({
               colors={[`rgba(${hazePalette.base},0.08)`, `rgba(${hazePalette.base},0)`]}
             />
           </Circle>
-        </Group>
-
-        <Group>
-          {clouds.map((c) => (
-            <AtmosphereCloud key={c.id} {...c} time={time} />
-          ))}
         </Group>
 
         {/* Fine grain so the field reads as a material, not a flat vector fill --
