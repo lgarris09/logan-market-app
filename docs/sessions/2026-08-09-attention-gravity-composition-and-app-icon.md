@@ -6,8 +6,52 @@ session has four parts: (1) several rounds of Attention Field bubble-material tu
 real-device screenshots, (2) a full rewrite of the field's placement algorithm from random
 sector-scatter to a physics-like "Attention Gravity" model, (3) two composition-hierarchy refinement
 passes on that new model (also owner on-device screenshot driven), and (4) integrating the approved
-STRATUS app icon into the native iOS build configuration. **Nothing in this session has been
-committed** — see "How to resume" below.
+STRATUS app icon into the native iOS build configuration. **This session's work is committed**
+(`d491ccd`, branch `feat/v3.1.4-implementation`, not pushed) — see "Start here tomorrow" immediately
+below before doing anything else.
+
+## Addendum — 2026-08-10
+
+Attention Gravity (Parts 2–3 below) has since been **physically reviewed on the iPhone and accepted
+for this phase**: rank #1 clearly owns the center, and the composition reads as intended. The solver
+(`lib/attentionLayout.ts`) is now **locked for this phase** — not to be reopened, retuned, or rewritten
+unless a later feature (FIELD BIAS or otherwise) exposes a genuine implementation-blocking limitation,
+in which case that comes back as an explicit decision, not an incidental change.
+
+This supersedes every "not yet verified on-device" statement below regarding Parts 2/3 (see "Start
+here tomorrow" step 4, "What was verified," and the corresponding items in "Known issues" / "Next
+recommended steps"). Those sections are left as originally written for the historical record of what
+was and wasn't known at the close of that session — they are no longer the current status.
+
+The next scoped work is **FIELD BIAS** (a bottom-of-field ALL/MARKETS/ODDS/TRENDS presentation-bias
+control) and **bubble presentation polish** (larger resting-state name text + a contextual per-vessel
+icon), both proceeding in parallel from a fresh checkpoint building on this session's `d491ccd`.
+
+## Start here tomorrow
+
+The owner is closing out for the night and starting fresh tomorrow, splitting into two parallel
+Claude Code sessions (FIELD BIAS, and bubble text/icon polish). For the **first** instance started
+tomorrow, in order:
+
+1. **Confirm the checkpoint is there**: `git log --oneline -1` should show `d491ccd feat(mobile):
+   Attention Gravity layout rewrite, composition hierarchy, STRATUS app icon`. `git status` should be
+   clean. If either looks different, stop and reconcile before touching anything else.
+2. **Restart backend + Metro** — they will not have survived closing this session. See the
+   PowerShell block under "How to resume next session" below (includes the orphaned-`python.exe`
+   check from the saved memory note; don't skip it).
+3. **Decide the parallel-session setup before starting either FIELD BIAS or bubble polish.** Both
+   will likely touch overlapping files (FIELD BIAS → `lib/attentionLayout.ts`; bubble polish →
+   `components/Vessel.tsx`), and both would otherwise be editing the same working directory at once.
+   From this clean checkpoint, the safe option is two git worktrees (one branch per track) rather than
+   two sessions sharing one working tree — ask this first instance to set that up if the owner wants
+   true parallelism, or just proceed sequentially in one working tree if not.
+4. **See Parts 2/3 (the gravity rewrite + both composition passes) on the physical iPhone before
+   scoping new layout work on top of them.** They were never device-verified this session (see "What
+   was verified" below) — FIELD BIAS in particular is going to build directly on this layout code, so
+   confirming it looks right first avoids building on a shaky foundation.
+5. **FIELD BIAS and bubble text/icon polish both still need real requirements from the owner** — see
+   "Known issues" below for what's already anticipated vs. genuinely unscoped. Don't let either new
+   session start implementing from assumptions.
 
 ## Part 1 — Bubble material tuning (before the gravity rewrite)
 
@@ -171,13 +215,9 @@ Card, notification logic, FIELD BIAS UI/logic, splash screen, `StratusWordmark.t
 
 ## Known issues / open items carried forward
 
-- **Nothing from this session has been committed.** `git status` shows: `mobile/app.json`,
-  `mobile/components/AttentionField.tsx`, `mobile/components/Vessel.tsx`,
-  `mobile/components/atmosphere/AttentionAtmosphere.tsx`,
-  `mobile/components/atmosphere/__tests__/AttentionAtmosphere.test.tsx`,
-  `mobile/lib/__tests__/attentionLayout.test.ts`, `mobile/lib/attentionLayout.ts` modified, plus
-  `mobile/assets/images/stratus-app-icon.png` untracked. This is now a very large uncommitted arc
-  spanning this session and the two prior same-day/prior-day sessions.
+- **Committed** as `d491ccd` on `feat/v3.1.4-implementation` — **not pushed** to `origin`. If you want
+  it on the remote (e.g. before splitting into separate worktrees/branches for FIELD BIAS and bubble
+  polish), that still needs an explicit push.
 - **The gravity rewrite + both composition passes have not been seen on the physical iPhone.** This is
   the single most important thing to do before any further layout tuning — everything past this point
   is currently well-reasoned math and Jest-verified geometry, not confirmed pixels.
@@ -207,8 +247,8 @@ Card, notification logic, FIELD BIAS UI/logic, splash screen, `StratusWordmark.t
 ## How to resume next session
 
 Backend and Metro were both left running in this session's background shells (verified listening on
-ports 8000 and 8081 as of this note), but — per the established pattern in every prior session note —
-these do **not** reliably survive a new Claude Code session/terminal. Before trusting either:
+ports 8000 and 8081 as of this note), but the owner is closing this session out for the night — treat
+both as **definitely not running** tomorrow, not just possibly. Before trusting either:
 
 ```powershell
 # Verify no leftover/orphaned backend processes first (see the saved memory
@@ -232,13 +272,15 @@ visible on-device** — explicitly not triggered this session, owner's call when
 
 ## Next recommended steps
 
+(See "Start here tomorrow" near the top for the ordered version of the first three of these.)
+
 1. **See the gravity rewrite + both composition passes on the physical iPhone.** Everything in Parts
    2-3 is untested outside Jest/reasoning.
-2. Decide whether/when to commit — this uncommitted arc is now the largest yet, spanning multiple
-   sessions and touching core layout architecture plus the app icon.
-3. If splitting into parallel sessions (see the chat response accompanying this note for the
-   coordination risk that creates), scope **FIELD BIAS** and **bubble text/icon polish** precisely
-   before either starts — neither has real requirements captured yet beyond a name.
+2. Set up the parallel-session split (worktrees/branches from `d491ccd`, or run sequentially instead)
+   before starting FIELD BIAS or bubble polish.
+3. Scope **FIELD BIAS** and **bubble text/icon polish** precisely before either starts implementing —
+   neither has real requirements captured yet beyond a name (see "Known issues" above for what's
+   already anticipated vs. genuinely open).
 4. Once round 2 is device-confirmed, revisit `RADIUS_MIN_FRACTION` for rank 2+ specifically (see
    "Known issues" above).
 5. Trigger the new EAS development build when ready to see the STRATUS app icon on the actual
