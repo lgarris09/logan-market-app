@@ -1,6 +1,7 @@
 import {
   ANCHOR_MAX_RADIUS_FRACTION,
   computeAtmosphereLayout,
+  LABEL_WIDTH_FRACTION,
   NAME_ICON_ALLOWANCE,
 } from "../attentionLayout";
 import { FeedItem } from "../../types/loganFeed";
@@ -592,23 +593,24 @@ describe("computeAtmosphereLayout", () => {
     });
   });
 
-  describe("resting label sizing reserves room for the name-row icon (bubble-polish pass)", () => {
-    it("grows a full-tier vessel's minimum size comfortably past the icon allowance alone, for a long real name", () => {
-      // Vessel.tsx's resting label now renders icon + gap + name on one
-      // row instead of bare name text -- attentionLayout.ts's
+  describe("resting label sizing accounts for the icon-above-name layout (Sprint 3.6.5)", () => {
+    it("grows a full-tier vessel's minimum size well past the icon's own width floor, for a long real name", () => {
+      // Vessel.tsx's resting label now renders the contextual icon in its
+      // own centered row *above* the name, not sharing a line with it (see
+      // Vessel.tsx's restLabelIconWrap) -- attentionLayout.ts's
       // minDiameterForLabel (not exported directly, exercised here through
-      // its effect on the returned `size`) adds NAME_ICON_ALLOWANCE on top
-      // of the estimated text width so a bubble sized only for the text
-      // wouldn't end up too narrow for the real rendered row. This isn't a
-      // pinned-pixel snapshot (that would break on every unrelated font/
-      // char-width tweak) -- it's a sanity floor: for a representative
-      // long name ("Federal Reserve", the same case called out in the
-      // Attention Gravity comments elsewhere in this file), the resulting
-      // minimum size must clear the allowance by a comfortable multiple,
-      // proving the label-sizing helper is actually adding real text-width
-      // on top of the allowance, not returning something close to the
-      // allowance alone (which would mean the text measurement silently
-      // broke).
+      // its effect on the returned `size`) therefore estimates the name
+      // line's width from the text alone, with NAME_ICON_ALLOWANCE only
+      // acting as an independent floor (the bubble must be at least as wide
+      // as the icon itself). This isn't a pinned-pixel snapshot (that would
+      // break on every unrelated font/char-width tweak) -- it's a sanity
+      // floor: for a representative long name ("Federal Reserve", the same
+      // case called out in the Attention Gravity comments elsewhere in this
+      // file), the resulting minimum size must clear the icon-width floor
+      // by a comfortable multiple, proving the label-sizing helper is
+      // actually driven by the long name's real text width, not just
+      // returning something close to the icon floor alone (which would mean
+      // the text measurement silently broke).
       //
       // Three items with large, closely-clustered rank values (rather than
       // 1/2/3) keeps every item's rank-derived `t` near zero -- see the
@@ -628,6 +630,26 @@ describe("computeAtmosphereLayout", () => {
 
       expect(fed.labelTier).toBe("full");
       expect(fed.size).toBeGreaterThan(NAME_ICON_ALLOWANCE * 3);
+    });
+
+    it("still floors a full-tier vessel's minimum size at the icon's own width for a very short name", () => {
+      // The inverse case: a short name/ticker ("AI") whose text width alone
+      // would be narrower than the icon now sitting above it -- the bubble
+      // must still be at least NAME_ICON_ALLOWANCE wide (divided by
+      // LABEL_WIDTH_FRACTION, same as every other candidate in `widest`) so
+      // the icon itself isn't left overflowing a too-narrow bubble.
+      const items = [
+        makeItem(1000, { event_id: "short", connected_event_ids: [] }),
+        makeItem(1001, { event_id: "evt-b" }),
+        makeItem(1002, { event_id: "evt-c" }),
+      ];
+      items[0] = { ...items[0], display_name: "AI", ticker: "AI" };
+
+      const layout = computeAtmosphereLayout(items, IPHONE_WIDTH, IPHONE_HEIGHT);
+      const short = layout.get("short")!;
+
+      expect(short.labelTier).toBe("full");
+      expect(short.size).toBeGreaterThanOrEqual(NAME_ICON_ALLOWANCE / LABEL_WIDTH_FRACTION - 1); // 1px float slack
     });
   });
 });

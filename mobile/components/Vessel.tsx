@@ -31,14 +31,23 @@ import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const MIN_TOUCH_TARGET = 44;
-// Bubble-polish pass: small contextual icon on the resting label's name
-// line (icon + gap + name), kept visually subordinate to the name itself
-// (smaller, reduced opacity -- see restLabelIconWrap/EntitySymbol usage
-// below). Sizes must stay in sync with attentionLayout.ts's
-// NAME_ICON_ALLOWANCE, which reserves room for the larger of these two
-// plus the row gap.
-const FULL_NAME_ICON_SIZE = 13;
-const COMPACT_NAME_ICON_SIZE = 10;
+// Sprint 3.6.5 device-feedback pass: moved from inline-before-the-name to
+// its own centered row above the name (icon / name / confidence% /
+// descriptor stack) and sized up -- on a physical iPhone the original
+// 13/10px inline icon read as incidental rather than intentional. Sizes
+// must stay in sync with attentionLayout.ts's NAME_ICON_ALLOWANCE, which
+// now reserves the icon's own footprint as an independent width floor
+// (icon-above-name no longer shares a line with the name text, so it no
+// longer needs to widen the *name line's* estimate the way the old
+// inline layout did).
+const FULL_NAME_ICON_SIZE = 18;
+const COMPACT_NAME_ICON_SIZE = 14;
+// Vertical gap between the icon and the name below it -- deliberately
+// tighter than the icon-to-percentage/percentage-to-descriptor gaps
+// (restLabelPct's marginTop, restLabelDescriptor's marginTop) so the icon
+// reads as attached to the name it identifies, not as a floating fourth
+// line with equal weight.
+const ICON_NAME_GAP = 3;
 // Shared with AttentionField.tsx's viewport-clamp math (round 2, real-device
 // screenshot review: the card could render partially off-screen for vessels
 // near the field's edges since it grew symmetrically from the vessel's own
@@ -137,14 +146,15 @@ export function Vessel({
   /** FIELD BIAS presentation state (see lib/fieldBias.ts and
    * AttentionField.tsx's per-item computation): "neutral" when no lens is
    * active or this vessel wasn't judged either way, "emphasized" when it
-   * matches the active lens (a small, subtle scale bump -- paint order,
-   * never brightness, per the product guardrail against overstating a
-   * low-priority item), "receded" when it doesn't match (dimmer, via the
-   * same opacity-multiplier pattern `dimAnim` already uses for the
-   * focused-card spotlight effect -- never fully invisible; ranking stays
-   * authoritative, this is presentation only). Defaults to "neutral" so
-   * every existing call site keeps behaving exactly as before this prop
-   * existed.
+   * matches the active lens (a modest scale bump plus a small breathing-
+   * opacity floor lift -- paint order and visual definition, still bounded
+   * well under a rank promotion's own effect, per the product guardrail
+   * against a low-priority matching item becoming the dominant
+   * opportunity), "receded" when it doesn't match (dimmer, via the same
+   * opacity-multiplier pattern `dimAnim` already uses for the focused-card
+   * spotlight effect -- never fully invisible; ranking stays authoritative,
+   * this is presentation only). Defaults to "neutral" so every existing
+   * call site keeps behaving exactly as before this prop existed.
    */
   biasState?: "neutral" | "emphasized" | "receded";
   /** True once this event_id has left the live feed but AttentionField is
@@ -378,9 +388,15 @@ export function Vessel({
   // numbers.
   const gradientCenterOpacity = 0.01; // offset 0 -- not prominence-scaled, by design
   const gradientInnerOpacity = 0.03; // offset 0.35 -- still "the center," not prominence-scaled
-  const gradientTransitionOpacity = 0.08 + prominence * 0.04; // offset 0.60
-  const gradientOuterOpacity = 0.22 + prominence * 0.1; // offset 0.80
-  const gradientRimFillOpacity = 0.45 + prominence * 0.15; // offset 1.00 -- softer than the stroke rim below
+  // Sprint 3.6.5 device-feedback pass: widened every prominence-scaled
+  // coefficient below (lower baseline, larger range) -- on a physical
+  // device, secondary/contextual vessels still competed too closely with
+  // the primary one for visual weight. Purely a presentation-layer
+  // sharpening of the existing prominence signal (already 0..1, rank-
+  // derived) -- no change to rank, Attention Gravity, or any geometry.
+  const gradientTransitionOpacity = 0.06 + prominence * 0.06; // offset 0.60
+  const gradientOuterOpacity = 0.16 + prominence * 0.16; // offset 0.80
+  const gradientRimFillOpacity = 0.38 + prominence * 0.24; // offset 1.00 -- softer than the stroke rim below
   // SVG element ids must be unique per screen and stable across re-renders;
   // event_id already satisfies both, just sanitized of characters SVG ids
   // don't allow.
@@ -399,12 +415,13 @@ export function Vessel({
   // shell (its own 5-stop curve already carries transparent-center ->
   // subtle-inner -> stronger-outer, no second shell needed), and one
   // restrained rim stroke. No lobes, no separate haze, no split bloom.
-  const bloom = dormantSize * (1.15 + prominence * 0.25);
-  const bloomOpacity = 0.03 + prominence * 0.05;
+  const bloom = dormantSize * (1.12 + prominence * 0.32);
+  const bloomOpacity = 0.02 + prominence * 0.08;
 
   // Restrained -- defines the edge without becoming a hard perimeter line;
   // the gradient shell's own outer stops (above) carry most of that job.
-  const rimOpacity = 0.18 + prominence * 0.18;
+  // Widened range (Sprint 3.6.5, see the gradient-opacity comment above).
+  const rimOpacity = 0.14 + prominence * 0.26;
 
   const glowBoxSize = Math.max(bloom, readingWidth) + 40;
 
@@ -428,12 +445,16 @@ export function Vessel({
     const driftY = interpolate(drift.value, [-1, 1], [-7, 7]);
     return {
       // FIELD BIAS: a third multiplicative factor, same "recede but stay
-      // visible" pattern as dimAnim just above -- 0.5 (not 0.85 like the
+      // visible" pattern as dimAnim just above -- 0.58 (not 0.85 like the
       // focused-card spotlight dim) is deliberately gentler, since a
       // bias-receded vessel is still meant to "provide context," not
       // disappear into the background the way the rest of the field does
-      // once a card is open.
-      opacity: entrance.value * (1 - dimAnim.value * 0.85) * (1 - biasRecedeAnim.value * 0.5),
+      // once a card is open. Strengthened from 0.5 (Sprint 3.6.5
+      // device-feedback pass: on a physical device the original effect read
+      // as a slight highlight rather than a meaningful rebalance) -- still
+      // well short of dimAnim's own 0.85, so a bias-receded vessel never
+      // reads as strongly suppressed as one sitting behind an open card.
+      opacity: entrance.value * (1 - dimAnim.value * 0.85) * (1 - biasRecedeAnim.value * 0.58),
       transform: [
         { translateX: posX.value - glowBoxSize / 2 + driftX },
         { translateY: posY.value - glowBoxSize / 2 + driftY },
@@ -451,17 +472,29 @@ export function Vessel({
       [0, 1],
       [1 - instability * 0.12, 1 + instability * 0.12]
     );
-    const pulseScale = interpolate(pulse.value, [0, 1], [1, 1 + 0.05 + prominence * 0.14]);
+    // Widened range (Sprint 3.6.5, see the gradient-opacity comment above)
+    // -- the primary vessel's own priority pulse now reads more distinctly
+    // against secondary/contextual ones.
+    const pulseScale = interpolate(pulse.value, [0, 1], [1, 1 + 0.03 + prominence * 0.19]);
     const focusScale = interpolate(focusAnim.value, [0, 1], [1, 1.14]);
     const entranceScale = interpolate(entrance.value, [0, 0.6, 1], [0.3, 1.12, 1]);
     // FIELD BIAS: a small additional scale term, meaningfully smaller than
-    // focusScale's 1.14 tap-to-open bump (1.06, not something that could
-    // read as "this vessel was opened"). Scale/paint-order only, never
-    // brightness -- see the biasState prop doc: overstating a low-priority
-    // matching item's visual importance is explicitly out of bounds.
-    const biasEmphasisScale = interpolate(biasEmphasisAnim.value, [0, 1], [1, 1.06]);
+    // focusScale's 1.14 tap-to-open bump (1.10, not something that could
+    // read as "this vessel was opened"). Strengthened from 1.06 (Sprint
+    // 3.6.5 device-feedback pass: the original effect read as a slight
+    // highlight rather than a meaningful rebalance) -- still bounded well
+    // under a rank promotion's own effect, so a low-priority matching item
+    // still can't out-scale a genuinely higher-ranked one.
+    const biasEmphasisScale = interpolate(biasEmphasisAnim.value, [0, 1], [1, 1.1]);
+    // New (Sprint 3.6.5): emphasis also lifts the breathing-opacity floor a
+    // touch -- "clearer visibility"/"stronger visual definition" without a
+    // second, separate brightness concept. Reuses this file's existing
+    // breathing-opacity mechanism (values >1 clamp to fully opaque, same as
+    // every other opacity style here) rather than adding new animated SVG
+    // stop/stroke opacity plumbing for a modest, bounded effect.
+    const biasDefinitionBoost = 1 + biasEmphasisAnim.value * 0.08;
     return {
-      opacity: breatheOpacity,
+      opacity: breatheOpacity * biasDefinitionBoost,
       transform: [
         { scale: entranceScale },
         { scale: pulseScale },
@@ -636,47 +669,46 @@ export function Vessel({
               3.6 deliberately dropped a per-vessel icon badge here -- a
               ticker/name badge repeating the name text right next to it
               (the previous EntitySymbol-in-a-circle treatment) read as
-              redundant. Bubble-polish pass (V3.1.4.3): reintroduced, but
-              not that treatment -- a small (12-14px), reduced-opacity
-              EntitySymbol sits inline before the name (restLabelNameRow/
-              restLabelIconWrap below), quiet enough to read as context, not
-              a second copy of the identity. `symbol` is computed once for
-              the whole vessel (used by the glow/rim colors above and the
-              opened card's header below too) and reused here, not
-              re-resolved. `maxWidth` is derived from this vessel's own bubble diameter
-              via LABEL_WIDTH_FRACTION -- the same fraction
-              attentionLayout.ts's minDiameterForLabel used to grow this
-              vessel's `size` in the first place, so ordinarily the text
-              already fits with room to spare. numberOfLines/ellipsis below
-              is only a last-resort safety net (e.g. unusually long real
-              content beyond what the sizing heuristic estimated for), not
-              the primary mechanism -- growing the bubble is. */}
+              redundant. Bubble-polish pass (V3.1.4.3) reintroduced it
+              inline before the name; Sprint 3.6.5 device-feedback pass
+              moved it to its own centered row above the name instead (icon
+              / name / confidence% / descriptor stack) and sized it up --
+              on a physical device the inline treatment read as incidental
+              rather than intentional. Still restrained: moderately larger
+              and centered, but reduced-opacity (restLabelIconWrap) so it
+              stays subordinate to the name below it, not a badge. `symbol`
+              is computed once for the whole vessel (used by the glow/rim
+              colors above and the opened card's header below too) and
+              reused here, not re-resolved. `maxWidth` is derived from this
+              vessel's own bubble diameter via LABEL_WIDTH_FRACTION -- the
+              same fraction attentionLayout.ts's minDiameterForLabel used to
+              grow this vessel's `size` in the first place, so ordinarily
+              the text already fits with room to spare. numberOfLines/
+              ellipsis below is only a last-resort safety net (e.g.
+              unusually long real content beyond what the sizing heuristic
+              estimated for), not the primary mechanism -- growing the
+              bubble is. */}
           <View
             style={{
               maxWidth: Math.max(44, bubbleSize * LABEL_WIDTH_FRACTION),
               alignItems: "center",
             }}
           >
-            <View style={styles.restLabelNameRow}>
-              <View style={styles.restLabelIconWrap}>
-                <EntitySymbol
-                  symbol={symbol}
-                  size={
-                    layout.labelTier === "compact" ? COMPACT_NAME_ICON_SIZE : FULL_NAME_ICON_SIZE
-                  }
-                />
-              </View>
-              <Text
-                style={[
-                  styles.restLabelName,
-                  layout.labelTier === "compact" && styles.restLabelNameCompact,
-                  styles.restLabelNameText,
-                ]}
-                numberOfLines={1}
-              >
-                {item.ticker ?? item.display_name}
-              </Text>
+            <View style={styles.restLabelIconWrap}>
+              <EntitySymbol
+                symbol={symbol}
+                size={layout.labelTier === "compact" ? COMPACT_NAME_ICON_SIZE : FULL_NAME_ICON_SIZE}
+              />
             </View>
+            <Text
+              style={[
+                styles.restLabelName,
+                layout.labelTier === "compact" && styles.restLabelNameCompact,
+              ]}
+              numberOfLines={1}
+            >
+              {item.ticker ?? item.display_name}
+            </Text>
             <Text
               style={[
                 styles.restLabelPct,
@@ -955,26 +987,19 @@ const styles = StyleSheet.create({
   // clear headline number. No letter-spacing at this size -- tight tracking
   // reads fine at 14px but starts to fight legibility this small.
   restLabelNameCompact: { fontSize: 11, opacity: 0.9 },
-  // Bubble-polish pass: the name now renders as icon + gap + name, not bare
-  // text -- see the resting-label JSX above. flexShrink on the name Text
-  // (not a style change to restLabelName's own type spec) is what lets
-  // numberOfLines={1} truncation still work correctly once the Text is a
-  // row sibling next to a fixed-width icon rather than a lone column child.
-  restLabelNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  restLabelNameText: {
-    flexShrink: 1,
-  },
-  // Reduced opacity is what keeps the icon visually subordinate to the
-  // name text next to it -- small size alone (FULL_NAME_ICON_SIZE/
+  // Sprint 3.6.5: the icon now sits in its own centered row above the name
+  // (see the resting-label JSX above) rather than inline before it, so this
+  // is just a bottom-margin wrapper, not a row layout -- the parent View's
+  // own `alignItems: "center"` centers it horizontally. Opacity keeps it
+  // visually subordinate to the name below -- size alone (FULL_NAME_ICON_SIZE/
   // COMPACT_NAME_ICON_SIZE above) wasn't enough on its own in earlier
-  // per-vessel badge treatments (see the JSX comment above for why that
-  // was removed once already); this is deliberately quieter than that.
+  // per-vessel badge treatments (see the JSX comment above for why a badge
+  // treatment was removed once already); slightly higher than the previous
+  // inline treatment's 0.75 since the larger Sprint 3.6.5 icon size reads as
+  // washed-out at that opacity, but still clearly quieter than the name.
   restLabelIconWrap: {
-    opacity: 0.75,
+    marginBottom: ICON_NAME_GAP,
+    opacity: 0.82,
   },
   // The confidence percentage is real data (confidence_score), shown
   // up-front on the field itself rather than only after opening the card --

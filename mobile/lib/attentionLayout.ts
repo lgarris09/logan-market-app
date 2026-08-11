@@ -218,17 +218,19 @@ const COMPACT_DESCRIPTOR_SIZE = 6.5;
 // exported so both files size against the same fraction instead of two
 // independently-guessed numbers drifting apart.
 export const LABEL_WIDTH_FRACTION = 0.82;
-// Bubble-polish pass: the resting label's name line now renders as a small
-// icon (EntitySymbol) + gap + name, not bare text -- see Vessel.tsx's
-// restLabelNameRow. That row is wider than the name text alone, so the
-// name line's width estimate below needs a fixed allowance for the icon +
-// row gap on top of the text itself, or a bubble could size itself just
-// wide enough for the name alone while the real rendered row overflows it
-// (most visible on long names like "Federal Reserve"). Sized generously
-// for the larger of Vessel.tsx's two icon sizes (13px, full tier) plus its
-// row gap (4px), not tuned to the exact pixel -- erring wide only costs a
-// slightly bigger bubble, same philosophy as the rest of this heuristic.
-export const NAME_ICON_ALLOWANCE = 18;
+// Sprint 3.6.5 device-feedback pass: the resting label's contextual icon
+// moved from inline-before-the-name to its own centered row *above* the
+// name (see Vessel.tsx's restLabelIconWrap) -- it no longer shares a line
+// with the name text, so it no longer needs to widen the *name line's*
+// width estimate the way the earlier inline layout did. Instead it's its
+// own independent floor in `widest` below: the bubble must be at least as
+// wide as the icon itself, regardless of how short the name/pct/descriptor
+// text is (mainly matters for very short names like "AI" or "BTC" paired
+// with the larger full-tier icon). Sized generously for the larger of
+// Vessel.tsx's two icon sizes (18px, full tier) plus a little breathing
+// room, not tuned to the exact pixel -- erring wide only costs a slightly
+// bigger bubble, same philosophy as the rest of this heuristic.
+export const NAME_ICON_ALLOWANCE = 24;
 
 function estimatedLineWidth(
   text: string,
@@ -255,14 +257,18 @@ function minDiameterForLabel(item: FeedItem, tier: LabelTier): number {
       compact ? COMPACT_NAME_SIZE : FULL_NAME_SIZE,
       NAME_CHAR_WIDTH,
       compact ? 0 : tracking.vessel
-    ) + NAME_ICON_ALLOWANCE,
+    ),
     estimatedLineWidth(pct, compact ? COMPACT_PCT_SIZE : FULL_PCT_SIZE, PCT_CHAR_WIDTH),
     estimatedLineWidth(
       descriptor,
       compact ? COMPACT_DESCRIPTOR_SIZE : FULL_DESCRIPTOR_SIZE,
       DESCRIPTOR_CHAR_WIDTH,
       tracking.metadata
-    )
+    ),
+    // The icon (its own row above the name, not sharing a line with it --
+    // see the NAME_ICON_ALLOWANCE comment above) needs the bubble to be at
+    // least this wide regardless of what the text lines above require.
+    NAME_ICON_ALLOWANCE
   );
 
   return widest / LABEL_WIDTH_FRACTION;

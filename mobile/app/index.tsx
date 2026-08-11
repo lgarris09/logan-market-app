@@ -23,7 +23,7 @@ import Animated, {
 
 import { font, radius, spacing, theme, tracking, type } from "../constants/theme";
 import { AttentionField, OpenRequest } from "../components/AttentionField";
-import { FIELD_BIAS_CONTROL_HEIGHT, FieldBiasControl } from "../components/FieldBiasControl";
+import { FieldBiasControl } from "../components/FieldBiasControl";
 import { PressableScale } from "../components/PressableScale";
 import { fetchJson } from "../lib/apiClient";
 import { FieldBias } from "../lib/fieldBias";
@@ -700,13 +700,16 @@ const styles = StyleSheet.create({
   // Dev-only (__DEV__) -- deliberately utilitarian/dashed rather than
   // matching the app's polished chrome, so it reads as a debug tool, not a
   // real feature. Never present in a production/TestFlight build.
-  // `bottom` is offset past FieldBiasControl's real, exported height (not a
-  // second guessed magic number) -- FieldBiasControl now consumes real flex
-  // height along the bottom of the screen, so this absolutely-positioned
-  // button needs to clear it rather than sit inside/behind it.
+  // Sprint 3.6.5 device-feedback pass: moved from bottom-right (where it
+  // sat just above FieldBiasControl, visually competing with it during
+  // physical-device review of the production-facing FIELD BIAS chrome) to
+  // top-right, clear of both the Attention Field and the header's own
+  // live-dot/notification-badge area. Purely a position change -- the
+  // button's function (forcing a real, currently-displayed item to read as
+  // unread) is untouched.
   devNotifButton: {
     position: "absolute",
-    bottom: 28 + FIELD_BIAS_CONTROL_HEIGHT,
+    top: 52,
     right: 20,
     borderWidth: 1,
     borderStyle: "dashed",
