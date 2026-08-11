@@ -31,6 +31,14 @@ import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const MIN_TOUCH_TARGET = 44;
+// Bubble-polish pass: small contextual icon on the resting label's name
+// line (icon + gap + name), kept visually subordinate to the name itself
+// (smaller, reduced opacity -- see restLabelIconWrap/EntitySymbol usage
+// below). Sizes must stay in sync with attentionLayout.ts's
+// NAME_ICON_ALLOWANCE, which reserves room for the larger of these two
+// plus the row gap.
+const FULL_NAME_ICON_SIZE = 13;
+const COMPACT_NAME_ICON_SIZE = 10;
 // Shared with AttentionField.tsx's viewport-clamp math (round 2, real-device
 // screenshot review: the card could render partially off-screen for vessels
 // near the field's edges since it grew symmetrically from the vessel's own
@@ -575,13 +583,18 @@ export function Vessel({
       {layout.labelTier !== "none" && (
         <Animated.View pointerEvents="none" style={[styles.restLabel, restLabelStyle]}>
           {/* Owner reference (Field Bias mockup, Sprint 3.6): name + real
-              confidence percentage + a short real-data reason tag, no icon
-              badge -- a ticker/name badge repeating the name text right
-              next to it (the previous EntitySymbol-in-a-circle treatment)
-              was redundant, and the reference's own cleanest vessels show
-              plain text with no icon at all. EntitySymbol itself is
-              untouched and still used in the opened card's header below.
-              `maxWidth` is derived from this vessel's own bubble diameter
+              confidence percentage + a short real-data reason tag. Sprint
+              3.6 deliberately dropped a per-vessel icon badge here -- a
+              ticker/name badge repeating the name text right next to it
+              (the previous EntitySymbol-in-a-circle treatment) read as
+              redundant. Bubble-polish pass (V3.1.4.3): reintroduced, but
+              not that treatment -- a small (12-14px), reduced-opacity
+              EntitySymbol sits inline before the name (restLabelNameRow/
+              restLabelIconWrap below), quiet enough to read as context, not
+              a second copy of the identity. `symbol` is computed once for
+              the whole vessel (used by the glow/rim colors above and the
+              opened card's header below too) and reused here, not
+              re-resolved. `maxWidth` is derived from this vessel's own bubble diameter
               via LABEL_WIDTH_FRACTION -- the same fraction
               attentionLayout.ts's minDiameterForLabel used to grow this
               vessel's `size` in the first place, so ordinarily the text
@@ -595,15 +608,26 @@ export function Vessel({
               alignItems: "center",
             }}
           >
-            <Text
-              style={[
-                styles.restLabelName,
-                layout.labelTier === "compact" && styles.restLabelNameCompact,
-              ]}
-              numberOfLines={1}
-            >
-              {item.ticker ?? item.display_name}
-            </Text>
+            <View style={styles.restLabelNameRow}>
+              <View style={styles.restLabelIconWrap}>
+                <EntitySymbol
+                  symbol={symbol}
+                  size={
+                    layout.labelTier === "compact" ? COMPACT_NAME_ICON_SIZE : FULL_NAME_ICON_SIZE
+                  }
+                />
+              </View>
+              <Text
+                style={[
+                  styles.restLabelName,
+                  layout.labelTier === "compact" && styles.restLabelNameCompact,
+                  styles.restLabelNameText,
+                ]}
+                numberOfLines={1}
+              >
+                {item.ticker ?? item.display_name}
+              </Text>
+            </View>
             <Text
               style={[
                 styles.restLabelPct,
@@ -863,12 +887,46 @@ const styles = StyleSheet.create({
   // identity, bold and legible, not the quiet instrument-label treatment
   // used for metadata elsewhere -- this is the one piece of vessel text
   // that's meant to be read at a glance, not just recognized peripherally.
+  // Bubble-polish pass: fontSize 12 -> 14 and added tight `tracking.vessel`
+  // letter-spacing (owner request: moderately larger resting-state name,
+  // without competing with restLabelPct below it -- see that style's own
+  // comment). Kept in sync with attentionLayout.ts's FULL_NAME_SIZE/
+  // letter-spacing argument, which duplicates this on purpose (that file
+  // can't measure real text, only estimate against these constants).
   restLabelName: {
     color: theme.text,
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: font.heading,
+    letterSpacing: tracking.vessel,
   },
-  restLabelNameCompact: { fontSize: 10, opacity: 0.9 },
+  // fontSize 10 -> 11, not 12 -- see attentionLayout.ts's COMPACT_NAME_SIZE
+  // comment for why 12 (the original bubble-polish spec value) was walked
+  // back a point: it landed only 1pt under restLabelPctCompact's 13,
+  // reading as ambiguous with the percentage that's meant to stay the
+  // clear headline number. No letter-spacing at this size -- tight tracking
+  // reads fine at 14px but starts to fight legibility this small.
+  restLabelNameCompact: { fontSize: 11, opacity: 0.9 },
+  // Bubble-polish pass: the name now renders as icon + gap + name, not bare
+  // text -- see the resting-label JSX above. flexShrink on the name Text
+  // (not a style change to restLabelName's own type spec) is what lets
+  // numberOfLines={1} truncation still work correctly once the Text is a
+  // row sibling next to a fixed-width icon rather than a lone column child.
+  restLabelNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  restLabelNameText: {
+    flexShrink: 1,
+  },
+  // Reduced opacity is what keeps the icon visually subordinate to the
+  // name text next to it -- small size alone (FULL_NAME_ICON_SIZE/
+  // COMPACT_NAME_ICON_SIZE above) wasn't enough on its own in earlier
+  // per-vessel badge treatments (see the JSX comment above for why that
+  // was removed once already); this is deliberately quieter than that.
+  restLabelIconWrap: {
+    opacity: 0.75,
+  },
   // The confidence percentage is real data (confidence_score), shown
   // up-front on the field itself rather than only after opening the card --
   // large and in the vessel's category color so it reads as the headline
