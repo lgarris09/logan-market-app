@@ -197,8 +197,18 @@ function labelTierFor(index: number, n: number): LabelTier {
 const NAME_CHAR_WIDTH = 0.58; // InterTight_600SemiBold, mixed case
 const PCT_CHAR_WIDTH = 0.62; // tabular-nums digits + "%"
 const DESCRIPTOR_CHAR_WIDTH = 0.64; // Inter_500Medium, all-caps reads wider
-const FULL_NAME_SIZE = 12;
-const COMPACT_NAME_SIZE = 10;
+// Bubble-polish pass: bumped 12 -> 14 (full) for a moderately larger
+// resting-state identity name, per owner request -- kept exactly in sync
+// with Vessel.tsx's restLabelName fontSize. Compact went 10 -> 11, not 12,
+// which the original plan called for: at 12 it landed only 1pt below
+// COMPACT_PCT_SIZE (13), reading as ambiguous with the confidence
+// percentage that's supposed to stay the clear headline number. 11 keeps a
+// visible 2pt gap while still growing from the old 10. Percentage/
+// descriptor sizes are untouched -- the hierarchy (percentage largest,
+// name legible-but-secondary, descriptor quietest) is the thing this pass
+// must not disturb.
+const FULL_NAME_SIZE = 14;
+const COMPACT_NAME_SIZE = 11;
 const FULL_PCT_SIZE = 17;
 const COMPACT_PCT_SIZE = 13;
 const FULL_DESCRIPTOR_SIZE = 7.5;
@@ -208,6 +218,17 @@ const COMPACT_DESCRIPTOR_SIZE = 6.5;
 // exported so both files size against the same fraction instead of two
 // independently-guessed numbers drifting apart.
 export const LABEL_WIDTH_FRACTION = 0.82;
+// Bubble-polish pass: the resting label's name line now renders as a small
+// icon (EntitySymbol) + gap + name, not bare text -- see Vessel.tsx's
+// restLabelNameRow. That row is wider than the name text alone, so the
+// name line's width estimate below needs a fixed allowance for the icon +
+// row gap on top of the text itself, or a bubble could size itself just
+// wide enough for the name alone while the real rendered row overflows it
+// (most visible on long names like "Federal Reserve"). Sized generously
+// for the larger of Vessel.tsx's two icon sizes (13px, full tier) plus its
+// row gap (4px), not tuned to the exact pixel -- erring wide only costs a
+// slightly bigger bubble, same philosophy as the rest of this heuristic.
+export const NAME_ICON_ALLOWANCE = 18;
 
 function estimatedLineWidth(
   text: string,
@@ -229,7 +250,12 @@ function minDiameterForLabel(item: FeedItem, tier: LabelTier): number {
   const descriptor = humanizeSignalType(item.signal_type);
 
   const widest = Math.max(
-    estimatedLineWidth(name, compact ? COMPACT_NAME_SIZE : FULL_NAME_SIZE, NAME_CHAR_WIDTH),
+    estimatedLineWidth(
+      name,
+      compact ? COMPACT_NAME_SIZE : FULL_NAME_SIZE,
+      NAME_CHAR_WIDTH,
+      compact ? 0 : tracking.vessel
+    ) + NAME_ICON_ALLOWANCE,
     estimatedLineWidth(pct, compact ? COMPACT_PCT_SIZE : FULL_PCT_SIZE, PCT_CHAR_WIDTH),
     estimatedLineWidth(
       descriptor,

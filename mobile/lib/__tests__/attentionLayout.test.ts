@@ -1,4 +1,8 @@
-import { ANCHOR_MAX_RADIUS_FRACTION, computeAtmosphereLayout } from "../attentionLayout";
+import {
+  ANCHOR_MAX_RADIUS_FRACTION,
+  computeAtmosphereLayout,
+  NAME_ICON_ALLOWANCE,
+} from "../attentionLayout";
 import { FeedItem } from "../../types/loganFeed";
 
 // Attention Gravity model: the field organizes around a center of
@@ -585,6 +589,45 @@ describe("computeAtmosphereLayout", () => {
           expect(dist).toBeLessThanOrEqual(minDim * ANCHOR_MAX_RADIUS_FRACTION + 1); // 1px float slack
         }
       }
+    });
+  });
+
+  describe("resting label sizing reserves room for the name-row icon (bubble-polish pass)", () => {
+    it("grows a full-tier vessel's minimum size comfortably past the icon allowance alone, for a long real name", () => {
+      // Vessel.tsx's resting label now renders icon + gap + name on one
+      // row instead of bare name text -- attentionLayout.ts's
+      // minDiameterForLabel (not exported directly, exercised here through
+      // its effect on the returned `size`) adds NAME_ICON_ALLOWANCE on top
+      // of the estimated text width so a bubble sized only for the text
+      // wouldn't end up too narrow for the real rendered row. This isn't a
+      // pinned-pixel snapshot (that would break on every unrelated font/
+      // char-width tweak) -- it's a sanity floor: for a representative
+      // long name ("Federal Reserve", the same case called out in the
+      // Attention Gravity comments elsewhere in this file), the resulting
+      // minimum size must clear the allowance by a comfortable multiple,
+      // proving the label-sizing helper is actually adding real text-width
+      // on top of the allowance, not returning something close to the
+      // allowance alone (which would mean the text measurement silently
+      // broke).
+      //
+      // Three items with large, closely-clustered rank values (rather than
+      // 1/2/3) keeps every item's rank-derived `t` near zero -- see the
+      // rank-to-t formula above -- so sizeMin (not the rank curve) is what
+      // the label-driven minimum has to visibly beat, isolating
+      // minDiameterForLabel's contribution instead of it being masked by
+      // an already-large rank-based size.
+      const items = [
+        makeItem(1000, { event_id: "fed", connected_event_ids: [] }),
+        makeItem(1001, { event_id: "evt-b" }),
+        makeItem(1002, { event_id: "evt-c" }),
+      ];
+      items[0] = { ...items[0], display_name: "Federal Reserve", ticker: null };
+
+      const layout = computeAtmosphereLayout(items, IPHONE_WIDTH, IPHONE_HEIGHT);
+      const fed = layout.get("fed")!;
+
+      expect(fed.labelTier).toBe("full");
+      expect(fed.size).toBeGreaterThan(NAME_ICON_ALLOWANCE * 3);
     });
   });
 });
