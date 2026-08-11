@@ -115,6 +115,7 @@ export function Vessel({
   echoSignal,
   fieldWidth,
   fieldHeight,
+  biasState = "neutral",
   isExiting,
   onPress,
 }: {
@@ -133,6 +134,19 @@ export function Vessel({
    * (Attention Gravity motion architecture; see the class comment). */
   fieldWidth: number;
   fieldHeight: number;
+  /** FIELD BIAS presentation state (see lib/fieldBias.ts and
+   * AttentionField.tsx's per-item computation): "neutral" when no lens is
+   * active or this vessel wasn't judged either way, "emphasized" when it
+   * matches the active lens (a small, subtle scale bump -- paint order,
+   * never brightness, per the product guardrail against overstating a
+   * low-priority item), "receded" when it doesn't match (dimmer, via the
+   * same opacity-multiplier pattern `dimAnim` already uses for the
+   * focused-card spotlight effect -- never fully invisible; ranking stays
+   * authoritative, this is presentation only). Defaults to "neutral" so
+   * every existing call site keeps behaving exactly as before this prop
+   * existed.
+   */
+  biasState?: "neutral" | "emphasized" | "receded";
   /** True once this event_id has left the live feed but AttentionField is
    * still holding it on-screen to let it fade out rather than vanish
    * instantly -- see AttentionField.tsx's departure tracking. */
@@ -178,6 +192,14 @@ export function Vessel({
   const disclosureAnim = useSharedValue(0);
   const focusAnim = useSharedValue(isFocused ? 1 : 0);
   const dimAnim = useSharedValue(0);
+  // FIELD BIAS (see the biasState prop doc above): two independent shared
+  // values, not one -- recede is an opacity effect and emphasis is a scale
+  // effect, and a vessel is never both at once (biasState is one of three
+  // mutually exclusive states), but keeping them separate mirrors how the
+  // rest of this file already treats "dim" (opacity) and "focus scale"
+  // (transform) as distinct concerns even though they're driven together.
+  const biasRecedeAnim = useSharedValue(0);
+  const biasEmphasisAnim = useSharedValue(0);
 
   // Springs toward whatever target this render's `layout` provides --
   // covers both the mount case (spring from the peripheral entry point
@@ -296,6 +318,16 @@ export function Vessel({
     dimAnim.value = withTiming(isDimmed ? 1 : 0, { duration: 260 });
   }, [isDimmed, dimAnim]);
 
+  // FIELD BIAS: same "animate toward the latest prop" pattern as every
+  // other shared value in this file. Reduced motion still moves, just
+  // faster/no-overshoot, matching this file's existing reduced-motion
+  // convention (e.g. the position spring above).
+  useEffect(() => {
+    const duration = reducedMotion ? 120 : 320;
+    biasRecedeAnim.value = withTiming(biasState === "receded" ? 1 : 0, { duration });
+    biasEmphasisAnim.value = withTiming(biasState === "emphasized" ? 1 : 0, { duration });
+  }, [biasState, reducedMotion, biasRecedeAnim, biasEmphasisAnim]);
+
   // V3.1.4.2 (brand-alignment pass): this used to be Math.max(layout.size,
   // MIN_TOUCH_TARGET / 0.72), which silently inflated every low-priority
   // vessel's *visual* glow up to the accessibility touch-target minimum --
@@ -395,7 +427,13 @@ export function Vessel({
     const driftX = interpolate(drift.value, [-1, 1], [-5, 5]);
     const driftY = interpolate(drift.value, [-1, 1], [-7, 7]);
     return {
-      opacity: entrance.value * (1 - dimAnim.value * 0.85),
+      // FIELD BIAS: a third multiplicative factor, same "recede but stay
+      // visible" pattern as dimAnim just above -- 0.5 (not 0.85 like the
+      // focused-card spotlight dim) is deliberately gentler, since a
+      // bias-receded vessel is still meant to "provide context," not
+      // disappear into the background the way the rest of the field does
+      // once a card is open.
+      opacity: entrance.value * (1 - dimAnim.value * 0.85) * (1 - biasRecedeAnim.value * 0.5),
       transform: [
         { translateX: posX.value - glowBoxSize / 2 + driftX },
         { translateY: posY.value - glowBoxSize / 2 + driftY },
@@ -416,9 +454,20 @@ export function Vessel({
     const pulseScale = interpolate(pulse.value, [0, 1], [1, 1 + 0.05 + prominence * 0.14]);
     const focusScale = interpolate(focusAnim.value, [0, 1], [1, 1.14]);
     const entranceScale = interpolate(entrance.value, [0, 0.6, 1], [0.3, 1.12, 1]);
+    // FIELD BIAS: a small additional scale term, meaningfully smaller than
+    // focusScale's 1.14 tap-to-open bump (1.06, not something that could
+    // read as "this vessel was opened"). Scale/paint-order only, never
+    // brightness -- see the biasState prop doc: overstating a low-priority
+    // matching item's visual importance is explicitly out of bounds.
+    const biasEmphasisScale = interpolate(biasEmphasisAnim.value, [0, 1], [1, 1.06]);
     return {
       opacity: breatheOpacity,
-      transform: [{ scale: entranceScale }, { scale: pulseScale }, { scale: focusScale }],
+      transform: [
+        { scale: entranceScale },
+        { scale: pulseScale },
+        { scale: focusScale },
+        { scale: biasEmphasisScale },
+      ],
     };
   });
 

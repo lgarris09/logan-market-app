@@ -23,8 +23,10 @@ import Animated, {
 
 import { font, radius, spacing, theme, tracking, type } from "../constants/theme";
 import { AttentionField, OpenRequest } from "../components/AttentionField";
+import { FIELD_BIAS_CONTROL_HEIGHT, FieldBiasControl } from "../components/FieldBiasControl";
 import { PressableScale } from "../components/PressableScale";
 import { fetchJson } from "../lib/apiClient";
+import { FieldBias } from "../lib/fieldBias";
 import { OpportunitiesResponse } from "../types/loganFeed";
 
 // Sprint 3.6 device retest: the Attention Field header and the menu drawer
@@ -153,6 +155,11 @@ function MenuRow({ item, onNavigate }: { item: ConsumerItem; onNavigate: () => v
 export default function AttentionFieldScreen() {
   const [state, setState] = useState<FeedState>({ kind: "loading" });
   const [menuOpen, setMenuOpen] = useState(false);
+  // FIELD BIAS: a temporary presentation lens over the Attention Field, not
+  // a filter/screen/permanent preference -- see lib/fieldBias.ts and
+  // FieldBiasControl.tsx. Local UI state only, never persisted; resets to
+  // "all" on a fresh screen mount by design.
+  const [fieldBias, setFieldBias] = useState<FieldBias>("all");
 
   // Header "live" dot: a slow, constant size pulse -- purely decorative
   // (see liveDot's own accessibility props below), same breathing sine-ease
@@ -454,7 +461,20 @@ export default function AttentionFieldScreen() {
       )}
 
       {state.kind === "loaded" && (
-        <AttentionField items={state.response.items} openRequest={openRequest} />
+        // FieldBiasControl is a fixed-height flex sibling *after* the field,
+        // not an absolute overlay on top of it -- this way AttentionField's
+        // own viewport-measurement/edge-padding logic (already height-
+        // driven, see attentionLayout.ts's EDGE_PADDING) naturally keeps
+        // vessels clear of the control with zero changes to that (locked)
+        // layout solver.
+        <View style={styles.fieldColumn}>
+          <AttentionField
+            items={state.response.items}
+            openRequest={openRequest}
+            fieldBias={fieldBias}
+          />
+          <FieldBiasControl value={fieldBias} onChange={setFieldBias} />
+        </View>
       )}
 
       {__DEV__ && (
@@ -596,6 +616,11 @@ export default function AttentionFieldScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.background },
+  // Column wrapping the Attention Field + FieldBiasControl -- see the JSX
+  // comment at the call site for why this (not a position:absolute overlay)
+  // is what lets the field's own edge-padding logic naturally clear the
+  // control.
+  fieldColumn: { flex: 1 },
   topbar: {
     flexDirection: "row",
     alignItems: "center",
@@ -675,9 +700,13 @@ const styles = StyleSheet.create({
   // Dev-only (__DEV__) -- deliberately utilitarian/dashed rather than
   // matching the app's polished chrome, so it reads as a debug tool, not a
   // real feature. Never present in a production/TestFlight build.
+  // `bottom` is offset past FieldBiasControl's real, exported height (not a
+  // second guessed magic number) -- FieldBiasControl now consumes real flex
+  // height along the bottom of the screen, so this absolutely-positioned
+  // button needs to clear it rather than sit inside/behind it.
   devNotifButton: {
     position: "absolute",
-    bottom: 28,
+    bottom: 28 + FIELD_BIAS_CONTROL_HEIGHT,
     right: 20,
     borderWidth: 1,
     borderStyle: "dashed",
