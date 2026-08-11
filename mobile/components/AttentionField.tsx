@@ -15,6 +15,7 @@ import {
   shiftFocus,
   VesselLayout,
 } from "../lib/attentionLayout";
+import { biasStateFor, FieldBias } from "../lib/fieldBias";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
@@ -52,6 +53,7 @@ export type OpenRequest = { eventId: string; token: number };
 export function AttentionField({
   items,
   openRequest,
+  fieldBias = "all",
 }: {
   items: FeedItem[];
   /** Opens a specific vessel's card on request, reusing the exact same
@@ -59,6 +61,12 @@ export function AttentionField({
    * Silently ignored if the requested eventId isn't in the current items
    * (e.g. a dev-only test notification with no real backing item). */
   openRequest?: OpenRequest | null;
+  /** FIELD BIAS: a presentation-only lens (see lib/fieldBias.ts and
+   * FieldBiasControl.tsx), never a filter -- every item in `items` is
+   * still rendered as a Vessel regardless of this value. "all" (the
+   * default) is fully neutral, matching every item, so omitting this prop
+   * entirely reproduces the pre-FIELD-BIAS field exactly. */
+  fieldBias?: FieldBias;
 }) {
   const [{ width, height }, setDimensions] = useState({ width: 0, height: 0 });
   const [focusedId, setFocusedId] = useState<string | null>(
@@ -267,6 +275,23 @@ export function AttentionField({
   const maxCardHeight = Math.max(220, height - CARD_SAFE_MARGIN * 2);
   const anyExpanded = disclosure > 0;
 
+  // FIELD BIAS paint order: when a lens is active, emphasized items render
+  // after (on top of) neutral/receded ones for this pass, so an emphasized
+  // vessel's slight scale-up is never clipped under a neighbor. Safe to
+  // reorder purely for iteration -- each <Vessel> below keys off the stable
+  // event_id (not array position), so this never causes a remount, and
+  // `items` itself (used for departure-tracking, focus, echo signals
+  // elsewhere in this component) is untouched. "all" keeps the original
+  // order exactly, matching the pre-FIELD-BIAS render.
+  const renderItems =
+    fieldBias === "all"
+      ? items
+      : [...items].sort(
+          (a, b) =>
+            Number(biasStateFor(a, fieldBias) === "emphasized") -
+            Number(biasStateFor(b, fieldBias) === "emphasized")
+        );
+
   return (
     <View
       style={styles.fill}
@@ -283,11 +308,15 @@ export function AttentionField({
       )}
 
       {width > 0 &&
-        items.map((item) => {
+        renderItems.map((item) => {
           const layout = layouts.get(item.event_id);
           if (!layout) return null;
           const isFocused = item.event_id === focusedId;
           const isDimmed = focusedId !== null && disclosure > 0 && !isFocused;
+          // FIELD BIAS: presentation-only emphasis, never a filter -- every
+          // item still renders. See lib/fieldBias.ts and Vessel.tsx's own
+          // biasState handling for the "recede but stay visible" guarantee.
+          const biasState = biasStateFor(item, fieldBias);
 
           // Clamp the card's eventual on-screen center (not the vessel's own
           // resting position) into a safe reading region, with margins. If
@@ -326,6 +355,7 @@ export function AttentionField({
               echoSignal={echoSignalFor(item.event_id)}
               fieldWidth={width}
               fieldHeight={height}
+              biasState={biasState}
               onPress={() => handlePress(item)}
             />
           );
@@ -352,6 +382,7 @@ export function AttentionField({
             echoSignal={echoSignalFor(item.event_id)}
             fieldWidth={width}
             fieldHeight={height}
+            biasState="neutral"
             isExiting
             onPress={() => {}}
           />
