@@ -21,7 +21,11 @@ import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
-const READING_WIDTH_RATIO = 0.82;
+// Opportunity Card redesign (owner device feedback): 0.82 -> 0.87 still read
+// as "could be wider" -- one more step to 0.91. Still leaves CARD_SAFE_MARGIN
+// on each side (verified against a real phone's minimum width, not just the
+// common case) rather than going edge-to-edge.
+const READING_WIDTH_RATIO = 0.91;
 // Must comfortably exceed Vessel.tsx's own exit-fade duration (420ms, or
 // 160ms under reduced motion) -- this is how long a departed vessel keeps
 // rendering (frozen at its last known position) after leaving `items`, so
@@ -318,27 +322,35 @@ export function AttentionField({
           // biasState handling for the "recede but stay visible" guarantee.
           const biasState = biasStateFor(item, fieldBias);
 
-          // Clamp the card's eventual on-screen center (not the vessel's own
-          // resting position) into a safe reading region, with margins. If
-          // the field is too narrow/short for any valid clamp range (a
-          // degenerate size), fall back to the field's own center rather
-          // than an inverted range.
+          // Every opened card lands at the same fixed point -- the field's
+          // own center -- regardless of which vessel was tapped or where it
+          // happens to sit (owner request: opening a card from the edge of
+          // the field used to detach only as far as the nearest safe
+          // reading region, so different opportunities could land in
+          // visibly different spots; that inconsistency is what this
+          // replaces). The vessel's own natural position (`anchorX/anchorY`)
+          // no longer factors into where the card lands at all -- only
+          // cardOffsetX/Y (safeX/Y minus anchorX/Y) does, and Vessel.tsx
+          // only applies that offset once disclosureAnim actually starts
+          // moving toward 1, so the glow/label still stay exactly where
+          // Attention Gravity placed them at rest.
           const anchorX = layout.x * width;
           const anchorY = layout.y * height;
-          const cardHalfW = readingWidth / 2;
+          const safeX = width / 2;
+          // Owner device feedback: the card's bottom-edge position was
+          // already right (vertically centering left CARD_SAFE_MARGIN of
+          // clearance below it, same as above) -- growing CARD_HEIGHT
+          // should extend the card *upward*, toward the header, not
+          // symmetrically in both directions. Anchoring the target center
+          // to a fixed bottom edge (rather than the field's vertical
+          // center) does that: as cardHalfH grows toward maxCardHeight/2,
+          // the center moves up to compensate, keeping the bottom edge
+          // fixed at height - CARD_SAFE_MARGIN regardless of how tall the
+          // card ends up. Mirrors Vessel.tsx's own
+          // Math.min(CARD_HEIGHT, maxCardHeight) exactly so this position
+          // math never assumes a height the card doesn't actually render at.
           const cardHalfH = Math.min(CARD_HEIGHT, maxCardHeight) / 2;
-          const minCenterX = CARD_SAFE_MARGIN + cardHalfW;
-          const maxCenterX = width - CARD_SAFE_MARGIN - cardHalfW;
-          const minCenterY = CARD_SAFE_MARGIN + cardHalfH;
-          const maxCenterY = height - CARD_SAFE_MARGIN - cardHalfH;
-          const safeX =
-            minCenterX <= maxCenterX
-              ? Math.min(Math.max(anchorX, minCenterX), maxCenterX)
-              : width / 2;
-          const safeY =
-            minCenterY <= maxCenterY
-              ? Math.min(Math.max(anchorY, minCenterY), maxCenterY)
-              : height / 2;
+          const safeY = height - CARD_SAFE_MARGIN - cardHalfH;
 
           return (
             <Vessel

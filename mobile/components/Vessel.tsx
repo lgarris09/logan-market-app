@@ -72,17 +72,21 @@ const ICON_NAME_GAP = 5;
 // near the field's edges since it grew symmetrically from the vessel's own
 // anchor). Exported so both files stay in sync instead of duplicating magic
 // numbers.
-// Opportunity Card redesign (owner rendering reference): materially taller
-// -- 372 forced the redesigned content (larger headline, bordered STRATUS
-// TAKE panel, distinctly-spaced sections, bordered RECOMMENDATION panel) to
-// compress or crowd to fit. This is a ceiling, not a fixed height: real
-// screens still clamp it via AttentionField.tsx's maxCardHeight (viewport
-// height minus CARD_SAFE_MARGIN*2), so on a typical phone this mostly means
-// "the card can now use nearly the full available field height" rather than
-// literally rendering 640px tall -- the ScrollView below (detailBodyWrap)
-// still handles anything that doesn't fit, by design (vertical scrolling
-// is an intentional part of the experience, not an overflow bug).
-export const CARD_HEIGHT = 640;
+// Opportunity Card redesign (owner rendering/device feedback): materially
+// taller -- 372 forced the redesigned content (larger headline, bordered
+// STRATUS TAKE panel, distinctly-spaced sections, bordered RECOMMENDATION
+// panel) to compress or crowd to fit. This is a ceiling, not a fixed
+// height: real screens still clamp it via AttentionField.tsx's
+// maxCardHeight (field viewport height minus CARD_SAFE_MARGIN*2) -- the
+// ScrollView below (detailBodyWrap) still handles anything that doesn't
+// fit, by design (vertical scrolling is an intentional part of the
+// experience, not an overflow bug). 640 -> 900: on-device, 640 was itself
+// the binding constraint on a typical field viewport (the card had visible
+// empty space above it toward the header), so maxCardHeight -- the real,
+// per-device ceiling -- should be what decides the height, not this
+// number. 900 comfortably exceeds any plausible field viewport so
+// maxCardHeight is always the actual limit now.
+export const CARD_HEIGHT = 900;
 export const CARD_SAFE_MARGIN = 16;
 
 // Attention Gravity motion (see the class comment below). A new vessel's
@@ -339,9 +343,19 @@ export function Vessel({
   }, [pulse, layout.pulseFreq, layout.pulsePhase, reducedMotion]);
 
   useEffect(() => {
-    disclosureAnim.value = reducedMotion
-      ? withTiming(disclosure, { duration: 120 })
-      : withSpring(disclosure, { damping: 15, stiffness: 110 });
+    // Opportunity Card redesign (owner device feedback, round 2): the
+    // original spring (damping 15/stiffness 110, ratio ~0.72) had a visible
+    // overshoot/wobble; a stiffer spring (24/220, ratio ~0.85) was still
+    // "too much movement" -- any underdamped spring settles with at least
+    // some visible overshoot by definition, so this drops springs entirely
+    // for a fixed-duration ease-out timing curve instead: no bounce at all,
+    // fast and predictable regardless of how far the card has to travel
+    // (now always toward AttentionField.tsx's fixed center target, not a
+    // per-vessel distance).
+    disclosureAnim.value = withTiming(disclosure, {
+      duration: reducedMotion ? 120 : 220,
+      easing: Easing.out(Easing.cubic),
+    });
   }, [disclosure, disclosureAnim, reducedMotion]);
 
   useEffect(() => {
@@ -863,7 +877,7 @@ export function Vessel({
                         </Text>
                       )}
                       <View style={styles.headerNameRow}>
-                        <EntitySymbol symbol={symbol} size={22} />
+                        <EntitySymbol symbol={symbol} size={32} />
                         <Text style={styles.headerName} numberOfLines={1}>
                           {item.display_name}
                         </Text>
@@ -1149,10 +1163,11 @@ const styles = StyleSheet.create({
     letterSpacing: tracking.metadata,
   },
   headerNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  // Opportunity Card redesign: 17 -> 19, a modest step (the headline below
-  // carries the real size increase) -- this is still an identity label next
-  // to the confidence ring, not the card's primary typographic moment.
-  headerName: { color: theme.text, fontFamily: font.heading, fontSize: 19, flexShrink: 1 },
+  // Opportunity Card redesign: 17 -> 19, then 19 -> 23 (owner device
+  // feedback: still too small next to the larger EntitySymbol icon beside
+  // it) -- still under the headline's own 26, which stays the card's
+  // largest single typographic element.
+  headerName: { color: theme.text, fontFamily: font.heading, fontSize: 23, flexShrink: 1 },
   // Opportunity Card redesign: replaces the old tierPill (a CONFIDENCE badge
   // that duplicated the ring's own percentage). Real `category` data,
   // formatted via humanizeCategory -- quiet instrument-label treatment, one
