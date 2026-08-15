@@ -31,23 +31,27 @@ import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const MIN_TOUCH_TARGET = 44;
-// Sprint 3.6.5 device-feedback pass: moved from inline-before-the-name to
-// its own centered row above the name (icon / name / confidence% /
-// descriptor stack) and sized up -- on a physical iPhone the original
-// 13/10px inline icon read as incidental rather than intentional. Sizes
-// must stay in sync with attentionLayout.ts's NAME_ICON_ALLOWANCE, which
-// now reserves the icon's own footprint as an independent width floor
-// (icon-above-name no longer shares a line with the name text, so it no
-// longer needs to widen the *name line's* estimate the way the old
-// inline layout did).
-const FULL_NAME_ICON_SIZE = 18;
-const COMPACT_NAME_ICON_SIZE = 14;
+// Round 2 (owner rendering reference): 13/10px (V3.1.4.3) then 18/14px
+// (Sprint 3.6.5) both still read as "too small" on a physical iPhone -- this
+// is a materially larger jump, not another incremental nudge, matching the
+// reference's icon-dominant vessel treatment. The icon still stays
+// subordinate to the name via restLabelIconWrap's reduced opacity below, not
+// via being physically smaller than the text -- that's the same mechanism
+// this file already used at the smaller sizes. Sizes must stay in sync with
+// attentionLayout.ts's NAME_ICON_ALLOWANCE, which reserves the icon's own
+// footprint as an independent width floor -- growing this only ever grows
+// the bubble that floor demands (minDiameterForLabel), never causes clipping
+// (icon-above-name doesn't share a line with the name text, so it doesn't
+// widen the *name line's* own estimate).
+const FULL_NAME_ICON_SIZE = 32;
+const COMPACT_NAME_ICON_SIZE = 24;
 // Vertical gap between the icon and the name below it -- deliberately
 // tighter than the icon-to-percentage/percentage-to-descriptor gaps
 // (restLabelPct's marginTop, restLabelDescriptor's marginTop) so the icon
 // reads as attached to the name it identifies, not as a floating fourth
-// line with equal weight.
-const ICON_NAME_GAP = 3;
+// line with equal weight. Widened slightly alongside the larger icon sizes
+// above so the gap still reads proportional, not swallowed by the icon.
+const ICON_NAME_GAP = 5;
 // Shared with AttentionField.tsx's viewport-clamp math (round 2, real-device
 // screenshot review: the card could render partially off-screen for vessels
 // near the field's edges since it grew symmetrically from the vessel's own

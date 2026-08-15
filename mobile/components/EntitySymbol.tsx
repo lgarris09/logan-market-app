@@ -8,7 +8,7 @@ import { ResolvedSymbol } from "../lib/symbolResolver";
 export function EntitySymbol({ symbol, size }: { symbol: ResolvedSymbol; size: number }) {
   const iconSize = Math.round(size * 0.5);
 
-  if (symbol.kind === "logo" || symbol.kind === "category") {
+  if (symbol.kind === "logo" || symbol.kind === "institution" || symbol.kind === "category") {
     return (
       <View style={[styles.container, { width: size, height: size, borderRadius: size / 2 }]}>
         <FontAwesome5 name={symbol.iconName} size={iconSize} color={symbol.color} solid />
@@ -16,7 +16,7 @@ export function EntitySymbol({ symbol, size }: { symbol: ResolvedSymbol; size: n
     );
   }
 
-  const text = symbol.kind === "ticker" ? symbol.text : symbol.text;
+  const text = symbol.text;
   return (
     <View style={[styles.container, { width: size, height: size, borderRadius: size / 2 }]}>
       <Text

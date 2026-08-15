@@ -98,3 +98,52 @@ describe("resolveSymbol color", () => {
     }
   });
 });
+
+describe("resolveSymbol fallback tier", () => {
+  it("gives a known institution its own icon distinct from the generic macro category icon", () => {
+    const fed = resolveSymbol({
+      entity_id: "FED",
+      display_name: "Federal Reserve",
+      category: "macro",
+      ticker: null,
+    });
+    const otherMacro = resolveSymbol({
+      entity_id: "SOME_OTHER_MACRO_ENTITY",
+      display_name: "Some Other Macro Entity",
+      category: "macro",
+      ticker: null,
+    });
+    expect(fed.kind).toBe("institution");
+    expect(otherMacro.kind).toBe("category");
+    if (fed.kind === "institution" && otherMacro.kind === "category") {
+      expect(fed.iconName).not.toBe(otherMacro.iconName);
+    }
+  });
+
+  it("does not fabricate a logo for entities with no bundled brand glyph, even when well-known -- ticker carries identity instead", () => {
+    const tsla = resolveSymbol({
+      entity_id: "TSLA",
+      display_name: "Tesla",
+      category: "stocks",
+      ticker: "TSLA",
+    });
+    const nvda = resolveSymbol({
+      entity_id: "NVDA",
+      display_name: "NVIDIA",
+      category: "stocks",
+      ticker: "NVDA",
+    });
+    expect(tsla).toEqual({ kind: "ticker", text: "TSLA", color: tsla.color });
+    expect(nvda).toEqual({ kind: "ticker", text: "NVDA", color: nvda.color });
+  });
+
+  it("still uses a real bundled brand glyph for entities that have one", () => {
+    const aapl = resolveSymbol({
+      entity_id: "AAPL",
+      display_name: "Apple",
+      category: "stocks",
+      ticker: "AAPL",
+    });
+    expect(aapl).toEqual({ kind: "logo", iconName: "apple", color: aapl.color });
+  });
+});
