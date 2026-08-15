@@ -448,16 +448,19 @@ export function Vessel({
     const driftY = interpolate(drift.value, [-1, 1], [-7, 7]);
     return {
       // FIELD BIAS: a third multiplicative factor, same "recede but stay
-      // visible" pattern as dimAnim just above -- 0.58 (not 0.85 like the
+      // visible" pattern as dimAnim just above -- 0.76 (not 0.85 like the
       // focused-card spotlight dim) is deliberately gentler, since a
       // bias-receded vessel is still meant to "provide context," not
       // disappear into the background the way the rest of the field does
-      // once a card is open. Strengthened from 0.5 (Sprint 3.6.5
-      // device-feedback pass: on a physical device the original effect read
-      // as a slight highlight rather than a meaningful rebalance) -- still
-      // well short of dimAnim's own 0.85, so a bias-receded vessel never
-      // reads as strongly suppressed as one sitting behind an open card.
-      opacity: entrance.value * (1 - dimAnim.value * 0.85) * (1 - biasRecedeAnim.value * 0.58),
+      // once a card is open. Round 3 (owner device review: "keep the
+      // current improvements, but increase separation one more controlled
+      // step... a modest refinement, not another large jump"): one more
+      // step up from round 2's 0.58 -> 0.70 (which the owner confirmed was
+      // "better"), sized to match that same modest-step feel rather than
+      // repeating as large a jump. Still short of dimAnim's own 0.85, so a
+      // bias-receded vessel never reads as strongly suppressed as one
+      // sitting behind an open card.
+      opacity: entrance.value * (1 - dimAnim.value * 0.85) * (1 - biasRecedeAnim.value * 0.76),
       transform: [
         { translateX: posX.value - glowBoxSize / 2 + driftX },
         { translateY: posY.value - glowBoxSize / 2 + driftY },
@@ -481,21 +484,25 @@ export function Vessel({
     const pulseScale = interpolate(pulse.value, [0, 1], [1, 1 + 0.03 + prominence * 0.19]);
     const focusScale = interpolate(focusAnim.value, [0, 1], [1, 1.14]);
     const entranceScale = interpolate(entrance.value, [0, 0.6, 1], [0.3, 1.12, 1]);
-    // FIELD BIAS: a small additional scale term, meaningfully smaller than
-    // focusScale's 1.14 tap-to-open bump (1.10, not something that could
-    // read as "this vessel was opened"). Strengthened from 1.06 (Sprint
-    // 3.6.5 device-feedback pass: the original effect read as a slight
-    // highlight rather than a meaningful rebalance) -- still bounded well
-    // under a rank promotion's own effect, so a low-priority matching item
-    // still can't out-scale a genuinely higher-ranked one.
-    const biasEmphasisScale = interpolate(biasEmphasisAnim.value, [0, 1], [1, 1.1]);
-    // New (Sprint 3.6.5): emphasis also lifts the breathing-opacity floor a
-    // touch -- "clearer visibility"/"stronger visual definition" without a
-    // second, separate brightness concept. Reuses this file's existing
-    // breathing-opacity mechanism (values >1 clamp to fully opaque, same as
-    // every other opacity style here) rather than adding new animated SVG
-    // stop/stroke opacity plumbing for a modest, bounded effect.
-    const biasDefinitionBoost = 1 + biasEmphasisAnim.value * 0.08;
+    // FIELD BIAS: a small additional scale term, kept meaningfully smaller
+    // than focusScale's 1.14 tap-to-open bump (1.13 -- deliberately held
+    // here, not raised again in round 3, since 1.13 is already close enough
+    // to 1.14 that pushing further risks a bias-emphasized vessel being
+    // mistaken for an opened card, which is a real guardrail, not just a
+    // tuning preference). Round 3's "selected items should feel more
+    // forward" therefore comes entirely from biasDefinitionBoost below
+    // (brightness/definition) rather than from more scale.
+    const biasEmphasisScale = interpolate(biasEmphasisAnim.value, [0, 1], [1, 1.13]);
+    // Round 3 (owner device review, "increase separation one more
+    // controlled step"): strengthened again, 0.14 -> 0.20 -- carries this
+    // round's entire "selected items feel more forward" ask since
+    // biasEmphasisScale above is intentionally held flat at its
+    // near-focusScale ceiling. "Clearer visibility"/"stronger visual
+    // definition" without a second, separate brightness concept -- reuses
+    // this file's existing breathing-opacity mechanism (values >1 clamp to
+    // fully opaque, same as every other opacity style here) rather than
+    // adding new animated SVG stop/stroke opacity plumbing.
+    const biasDefinitionBoost = 1 + biasEmphasisAnim.value * 0.2;
     return {
       opacity: breatheOpacity * biasDefinitionBoost,
       transform: [
