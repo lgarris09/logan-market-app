@@ -112,6 +112,55 @@ def test_picks_most_recent_entry_by_date_not_list_position():
     assert report.actual_eps == 1.05
 
 
+def test_skips_upcoming_scheduled_report_in_favor_of_latest_reported_one():
+    """Live-verification finding (Sprint 3.6.6B): FMP's response can include
+    a future, not-yet-reported earnings date (epsEstimated populated,
+    epsActual still null) alongside real historical ones. The most recent
+    *reported* quarter must win, not the most recent *scheduled* date."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "NVDA",
+                    "date": "2026-05-28",  # already reported
+                    "epsActual": 1.05,
+                    "epsEstimated": 0.98,
+                },
+                {
+                    "symbol": "NVDA",
+                    "date": "2026-08-26",  # upcoming, not yet reported -- later date
+                    "epsActual": None,
+                    "epsEstimated": 2.08,
+                },
+            ],
+        )
+
+    report = _provider(handler).fetch_latest_earnings("NVDA")
+    assert report is not None
+    assert report.report_timestamp.month == 5
+    assert report.actual_eps == 1.05
+    assert report.consensus_eps == 0.98
+
+
+def test_falls_back_to_latest_scheduled_when_nothing_reported_yet():
+    """If FMP genuinely has no reported quarter yet (a brand-new listing,
+    for example), the honest result is the latest scheduled entry with
+    actual_eps=None -- not an error, not a crash."""
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=[{"symbol": "NEWCO", "date": "2026-09-15", "epsEstimated": 0.10}],
+        )
+
+    report = _provider(handler).fetch_latest_earnings("NEWCO")
+    assert report is not None
+    assert report.actual_eps is None
+    assert report.consensus_eps == 0.10
+
+
 def test_empty_list_is_legitimate_no_data_not_an_error():
     def handler(request):
         return httpx.Response(200, json=[])

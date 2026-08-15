@@ -126,12 +126,20 @@ class FmpEarningsProvider:
                 f"(malformed items, or all missing a 'date' field)"
             )
 
-        # Most recent report by date, not by list position -- FMP's stable
-        # docs describe this endpoint as already ordered most-recent-first,
-        # but selecting by the actual date field is a stronger guarantee at
-        # negligible cost, and doesn't depend on that ordering assumption
-        # holding.
-        latest = max(entries, key=lambda e: e["date"])
+        # Sprint 3.6.6B live verification finding: this endpoint returns both
+        # already-reported AND upcoming/scheduled earnings dates for a
+        # symbol in the same list (confirmed live against NVDA -- the
+        # max-by-date entry was a future scheduled report with
+        # epsEstimated populated but epsActual still null, since it hadn't
+        # happened yet). "Latest earnings" for STOCK_EARNINGS_BEAT purposes
+        # means the latest *reported* quarter, not the latest *scheduled*
+        # one -- prefer the most recent entry that actually has epsActual;
+        # only fall back to the overall most-recent-by-date entry if no
+        # entry has been reported yet (an honest "nothing reported" result,
+        # not a crash).
+        reported = [e for e in entries if e.get("epsActual") is not None]
+        candidates = reported if reported else entries
+        latest = max(candidates, key=lambda e: e["date"])
         return self._parse_entry(entity_id, latest)
 
     def _parse_entry(self, entity_id: str, entry: dict) -> EarningsReport:
