@@ -31,20 +31,19 @@ import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
 const MIN_TOUCH_TARGET = 44;
-// Round 2 (owner rendering reference): 13/10px (V3.1.4.3) then 18/14px
-// (Sprint 3.6.5) both still read as "too small" on a physical iPhone -- this
-// is a materially larger jump, not another incremental nudge, matching the
-// reference's icon-dominant vessel treatment. The icon still stays
+// Round 3 (owner physical-iPhone review): 13/10px (V3.1.4.3), 18/14px
+// (Sprint 3.6.5), then 32/24px (round 2) all still read as "too small" --
+// one more meaningful step, targeting roughly 40/30px. The icon still stays
 // subordinate to the name via restLabelIconWrap's reduced opacity below, not
 // via being physically smaller than the text -- that's the same mechanism
-// this file already used at the smaller sizes. Sizes must stay in sync with
-// attentionLayout.ts's NAME_ICON_ALLOWANCE, which reserves the icon's own
-// footprint as an independent width floor -- growing this only ever grows
-// the bubble that floor demands (minDiameterForLabel), never causes clipping
-// (icon-above-name doesn't share a line with the name text, so it doesn't
-// widen the *name line's* own estimate).
-const FULL_NAME_ICON_SIZE = 32;
-const COMPACT_NAME_ICON_SIZE = 24;
+// this file already used at every smaller size. Sizes must stay in sync
+// with attentionLayout.ts's NAME_ICON_ALLOWANCE, which reserves the icon's
+// own footprint as an independent width floor -- growing this only ever
+// grows the bubble that floor demands (minDiameterForLabel), never causes
+// clipping (icon-above-name doesn't share a line with the name text, so it
+// doesn't widen the *name line's* own estimate).
+const FULL_NAME_ICON_SIZE = 40;
+const COMPACT_NAME_ICON_SIZE = 30;
 // Vertical gap between the icon and the name below it -- deliberately
 // tighter than the icon-to-percentage/percentage-to-descriptor gaps
 // (restLabelPct's marginTop, restLabelDescriptor's marginTop) so the icon
