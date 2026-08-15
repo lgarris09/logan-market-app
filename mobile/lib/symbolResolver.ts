@@ -4,24 +4,57 @@
 // new UI code) is the only thing that would ever need an entry, and even without
 // one it degrades gracefully through the fallback chain below.
 //
-// Fallback order: known logo -> ticker -> known category icon -> initials.
-// (Category icon is placed ahead of initials for entities like "NFL" or "FED" --
-// their entity_id already reads like an acronym, so initials would just repeat the
-// label under the node. A category icon carries more information in that case.)
+// Fallback order: known logo -> ticker -> known institution/entity icon -> known
+// category icon -> initials. (Category icon is placed ahead of initials for
+// entities like "NFL" or "FED" -- their entity_id already reads like an acronym,
+// so initials would just repeat the label under the node. A category icon carries
+// more information in that case.)
+//
+// "Known logo" is deliberately narrow: only entities with a real, bundled brand
+// glyph available (this app ships FontAwesome5 Free, whose "brands" family covers
+// a fixed, finite set of real trademarks) qualify. TSLA and NVDA are genuinely
+// recognizable entities but have no Tesla/NVIDIA mark in that bundled set --
+// resolving them through a generic icon (a car, a GPU) would misrepresent an
+// unrelated glyph as their brand identity, which is exactly the "invented fake
+// proprietary logo" this pipeline must never produce. They resolve through the
+// ticker tier instead (a real, specific, entity-owned identifier -- the ticker
+// text itself), same as any other entity without a bundled brand glyph. Adding
+// their real marks later is an asset problem (licensed SVG/PNG art dropped in),
+// not a resolver-logic one -- this file's fallback chain doesn't need to change
+// to support it, just a new KNOWN_LOGOS-style entry pointing at that asset.
 
 export type ResolvedSymbol =
   | { kind: "logo"; iconName: string; color: string }
+  | { kind: "institution"; iconName: string; color: string }
   | { kind: "ticker"; text: string; color: string }
   | { kind: "category"; iconName: string; color: string }
   | { kind: "initials"; text: string; color: string };
 
-// FontAwesome5 brand icon names, for entities with a recognizable public logo.
+// FontAwesome5 brand icon names, for entities with a real, recognizable public
+// logo available in the bundled FontAwesome5 Free "brands" family. Keep this
+// list to entities that actually have a glyph in that family -- see the file
+// header for why a near-miss (a generic icon standing in for a real, absent
+// brand mark) belongs nowhere in this resolver.
 const KNOWN_LOGOS: Record<string, string> = {
   AAPL: "apple",
   BTC: "bitcoin",
 };
 
-// FontAwesome5 solid icon names, one per category.
+// Entity-specific icons for known institutions/macro entities that have no
+// ticker of their own (so the ticker tier above never reaches them) and whose
+// generic category icon (CATEGORY_ICONS.macro, below) would otherwise be the
+// only signal -- a named institution deserves to read as that institution, not
+// as "some unspecified macro item." "landmark" (a building/government-seal
+// glyph) is a real bundled FontAwesome5 icon, not a fabricated central-bank
+// seal -- deliberately distinct from CATEGORY_ICONS.macro's "university" so a
+// specifically-known institution still visually differs from an unrecognized
+// one that only fell through to the category fallback.
+const KNOWN_ENTITY_ICONS: Record<string, string> = {
+  FED: "landmark",
+};
+
+// FontAwesome5 solid icon names, one per category -- the last resort before
+// initials for any entity this file has no specific mapping for yet.
 const CATEGORY_ICONS: Record<string, string> = {
   stocks: "chart-line",
   markets: "chart-line",
@@ -85,6 +118,9 @@ export function resolveSymbol(entity: {
   if (logo) return { kind: "logo", iconName: logo, color };
 
   if (entity.ticker) return { kind: "ticker", text: entity.ticker, color };
+
+  const institutionIcon = KNOWN_ENTITY_ICONS[entity.entity_id];
+  if (institutionIcon) return { kind: "institution", iconName: institutionIcon, color };
 
   const categoryIcon = CATEGORY_ICONS[entity.category];
   if (categoryIcon) return { kind: "category", iconName: categoryIcon, color };

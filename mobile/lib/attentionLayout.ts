@@ -227,10 +227,10 @@ export const LABEL_WIDTH_FRACTION = 0.82;
 // wide as the icon itself, regardless of how short the name/pct/descriptor
 // text is (mainly matters for very short names like "AI" or "BTC" paired
 // with the larger full-tier icon). Sized generously for the larger of
-// Vessel.tsx's two icon sizes (18px, full tier) plus a little breathing
-// room, not tuned to the exact pixel -- erring wide only costs a slightly
-// bigger bubble, same philosophy as the rest of this heuristic.
-export const NAME_ICON_ALLOWANCE = 24;
+// Vessel.tsx's two icon sizes (round 3: 40px, full tier) plus a little
+// breathing room, not tuned to the exact pixel -- erring wide only costs a
+// slightly bigger bubble, same philosophy as the rest of this heuristic.
+export const NAME_ICON_ALLOWANCE = 48;
 
 function estimatedLineWidth(
   text: string,
