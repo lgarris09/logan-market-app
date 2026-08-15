@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
-import Svg, { Path } from "react-native-svg";
+import Svg, { Line, Path } from "react-native-svg";
 import Animated, {
-  useAnimatedStyle,
+  useAnimatedProps,
   useReducedMotion,
   useSharedValue,
   withTiming,
@@ -10,6 +10,8 @@ import Animated, {
 
 import { font, spacing, theme, tracking } from "../constants/theme";
 import { FieldBias } from "../lib/fieldBias";
+
+const AnimatedLine = Animated.createAnimatedComponent(Line);
 
 const LABELS: { value: FieldBias; label: string }[] = [
   { value: "all", label: "ALL" },
@@ -31,44 +33,50 @@ const ARC_MIN_HEIGHT = 10;
 const ARC_ZONE_HEIGHT = 22;
 const ARC_STROKE_WIDTH = 1.2;
 const ARC_SIDE_INSET = 10;
-// Sprint 3.6.5 device-feedback pass: the arc used to be a single uniform
-// path stroked entirely in theme.border (nearly indistinguishable from the
-// background), with the only active-state signal being the small tick below
-// the labels -- on a physical device this read as too subtle to tell which
-// state was active without reading the label color. Two coats now: a full,
-// low-opacity platinum/gray base (still just texture, never a competing
-// graphic) plus a short, brighter orange trace over just the selected
-// quarter -- explicitly NOT the whole arc turning orange (that would read
-// as a tachometer/gauge-fill, which the owner's feedback calls out to
-// avoid). `theme.muted` (not `theme.border`, which is nearly the same value
-// as the background) is what makes the base arc actually read as "subtle
-// platinum/gray," not "invisible."
+// Round 1 (Sprint 3.6.5 device-feedback pass) added a short, brighter
+// orange trace over just the selected quarter, on top of a full low-opacity
+// platinum/gray base -- explicitly not the whole arc turning orange, to
+// avoid a tachometer/gauge-fill read. On a physical device that quarter-
+// width trace *still* read as a bar/slider segment, not a mark -- length,
+// not brightness, was the problem. Round 2 dropped the arc-trace element
+// entirely and fell back to a small rectangular tick below the label row --
+// which then read as *effectively invisible* on a physical device (2px
+// tall was too thin to register at a glance). Round 3 (owner rendering
+// reference): the base arc stays pure platinum texture at every state
+// (never orange, at any span -- see ellipseArcPath below), and the active
+// state is now a small burnt-orange tick/notch drawn directly on the arc at
+// the selected quarter's position (see the animated tick further down),
+// plus the selected label's own color/weight step-up. A point marker
+// crossing the arc reads as "a position on an instrument," never as "a
+// filled segment" the way any along-the-arc trace does, regardless of how
+// short that trace is made. `theme.muted` (not `theme.border`, which is
+// nearly the same value as the background) is what makes the base arc
+// actually read as "subtle platinum/gray," not "invisible."
 const ARC_BASE_OPACITY = 0.4;
-const ARC_ACTIVE_OPACITY = 0.95;
-const ARC_ACTIVE_STROKE_WIDTH = ARC_STROKE_WIDTH + 0.7;
-const ARC_ACTIVE_SAMPLES = 16;
 const ARC_BASE_SAMPLES = 40;
+// The tick: a short vertical mark crossing the arc at the selected
+// position, not a span along it -- see the round-3 comment above for why
+// that shape distinction is what keeps this from reading as a bar. Drawn as
+// two coincident lines (see the JSX below): a soft, wider, low-opacity halo
+// for on-device visibility against the dark field, plus a crisp, narrower
+// full-opacity core for definition -- "small but clearly visible... without
+// becoming heavy" without needing an actual blur filter.
+const TICK_HALF_LENGTH = 5;
+const TICK_CORE_STROKE_WIDTH = 2.25;
+const TICK_HALO_STROKE_WIDTH = 6.5;
+const TICK_HALO_OPACITY = 0.3;
 
 const LABEL_ROW_HEIGHT = 32;
-// Widened 14 -> 18 (Sprint 3.6.5): "preserve the small active indicator"
-// while making the selected state read more clearly active -- a touch more
-// footprint, still a short tick, never a filled segment/pill.
-const INDICATOR_WIDTH = 18;
-const INDICATOR_HEIGHT = 2;
-const INDICATOR_GAP = 6;
 const TOP_PADDING = spacing.sm;
 const BOTTOM_PADDING = spacing.md;
 
 // Real, exported height -- other code (app/index.tsx's flex layout) needs
 // this actual number, not a guessed magic constant, so it reserves exactly
-// the space this control occupies.
+// the space this control occupies. Round 3: the active-state tick moved
+// onto the arc itself (see above), so this no longer reserves extra height
+// below the label row for a separate indicator element.
 export const FIELD_BIAS_CONTROL_HEIGHT =
-  TOP_PADDING +
-  ARC_ZONE_HEIGHT +
-  LABEL_ROW_HEIGHT +
-  INDICATOR_GAP +
-  INDICATOR_HEIGHT +
-  BOTTOM_PADDING;
+  TOP_PADDING + ARC_ZONE_HEIGHT + LABEL_ROW_HEIGHT + BOTTOM_PADDING;
 
 // Traces a point-sampled polyline approximating the same semi-ellipse the
 // control's arc always used (rx=halfW, ry=ry, centered at (cx,cy), spanning
@@ -96,12 +104,18 @@ function ellipseArcPath(
 }
 
 // FIELD BIAS: the bottom-of-Attention-Field lens control. Deliberately not a
-// segmented-pill/tab-bar/button treatment -- four equal-width text labels
-// over a barely-there horizon arc, with a short accent tick and a matching
-// short orange arc trace (never a filled pill or segment background)
-// marking the active state. The user is adjusting the lens STRATUS presents
-// the opportunity field through, not filtering a list -- the visual
-// language here stays as restrained as that framing requires. All actual
+// segmented-pill/tab-bar/button/gauge treatment -- four equal-width text
+// labels over a barely-there horizon arc that stays neutral platinum at
+// every state, with a small burnt-orange tick/notch marking the selected
+// position directly on the arc, plus the selected label's own color/weight
+// step-up (never a filled pill, segment background, or orange arc trace --
+// two earlier rounds tried an along-the-arc orange trace and a below-label
+// rectangle, and both either read as a bar/slider or were too faint to
+// register on a physical device; a short mark crossing the arc at a single
+// point is what finally reads as "a position on an instrument" rather than
+// either extreme). The user is adjusting the lens STRATUS presents the
+// opportunity field through, not filtering a list -- the visual language
+// here stays as restrained as that framing requires. All actual
 // field-rebalancing behavior lives in AttentionField.tsx/Vessel.tsx (this
 // component is pure chrome + a value/onChange contract); the category ->
 // bias grouping lives in lib/fieldBias.ts.
@@ -126,13 +140,6 @@ export function FieldBiasControl({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex, reducedMotion]);
 
-  const indicatorStyle = useAnimatedStyle(() => {
-    const segmentWidth = width / LABELS.length;
-    const translateX =
-      indicatorPosition.value * segmentWidth + (segmentWidth - INDICATOR_WIDTH) / 2;
-    return { transform: [{ translateX }] };
-  });
-
   const handleLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width);
 
   const arcHeight = Math.max(ARC_MIN_HEIGHT, width * ARC_HEIGHT_RATIO);
@@ -140,8 +147,23 @@ export function FieldBiasControl({
   const cy = arcHeight * 0.86;
   const halfW = Math.max(0, width / 2 - ARC_SIDE_INSET);
   const cx = width / 2;
-  const activeFrom = selectedIndex / LABELS.length;
-  const activeTo = (selectedIndex + 1) / LABELS.length;
+
+  // The tick's position on the arc: the same parametric ellipse
+  // ellipseArcPath traces (t=0..1 left-to-right through the top), evaluated
+  // at the midpoint of the selected quarter and animated by tracking
+  // indicatorPosition (0..3, same withTiming transition the label/tick
+  // switch has always used) rather than jumping instantly.
+  const tickAnimatedProps = useAnimatedProps(() => {
+    const t = (indicatorPosition.value + 0.5) / LABELS.length;
+    const x = cx - halfW * Math.cos(t * Math.PI);
+    const y = cy - archRy * Math.sin(t * Math.PI);
+    return {
+      x1: x,
+      x2: x,
+      y1: y - TICK_HALF_LENGTH,
+      y2: y + TICK_HALF_LENGTH,
+    };
+  });
 
   return (
     <View style={styles.outer}>
@@ -156,13 +178,21 @@ export function FieldBiasControl({
               strokeLinecap="round"
               fill="none"
             />
-            <Path
-              d={ellipseArcPath(cx, cy, halfW, archRy, activeFrom, activeTo, ARC_ACTIVE_SAMPLES)}
+            {/* Halo first (wider, dimmer), core on top (narrower, full
+                opacity) -- both share the same animated x/y so they move as
+                one mark. */}
+            <AnimatedLine
+              animatedProps={tickAnimatedProps}
               stroke={theme.accent}
-              strokeOpacity={ARC_ACTIVE_OPACITY}
-              strokeWidth={ARC_ACTIVE_STROKE_WIDTH}
+              strokeOpacity={TICK_HALO_OPACITY}
+              strokeWidth={TICK_HALO_STROKE_WIDTH}
               strokeLinecap="round"
-              fill="none"
+            />
+            <AnimatedLine
+              animatedProps={tickAnimatedProps}
+              stroke={theme.accent}
+              strokeWidth={TICK_CORE_STROKE_WIDTH}
+              strokeLinecap="round"
             />
           </Svg>
         )}
@@ -190,17 +220,6 @@ export function FieldBiasControl({
             );
           })}
         </View>
-
-        {width > 0 && (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.indicator,
-              { top: ARC_ZONE_HEIGHT + LABEL_ROW_HEIGHT + INDICATOR_GAP },
-              indicatorStyle,
-            ]}
-          />
-        )}
       </View>
     </View>
   );
@@ -230,13 +249,5 @@ const styles = StyleSheet.create({
     color: theme.accent,
     fontFamily: font.heading,
     fontSize: 12,
-  },
-  indicator: {
-    position: "absolute",
-    left: 0,
-    width: INDICATOR_WIDTH,
-    height: INDICATOR_HEIGHT,
-    borderRadius: INDICATOR_HEIGHT / 2,
-    backgroundColor: theme.accent,
   },
 });
