@@ -30,6 +30,22 @@ import { humanizeSignalType } from "../lib/signalType";
 import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { FeedItem } from "../types/loganFeed";
 
+// Opportunity Card redesign (owner rendering reference): the header
+// identity block wants a category subtitle under the entity name ("Technology
+// • Semiconductors" in the reference). The real FeedItem contract only has
+// one flat classification field (`category`, e.g. "technology") -- there is
+// no second, more granular sector/industry field anywhere in the pipeline to
+// back the " • Semiconductors" half, so this formats the one real field
+// STRATUS actually has rather than inventing the second half. Same
+// "formatting transform on real data, never a fabricated label" rule
+// lib/signalType.ts's humanizeSignalType follows.
+function humanizeCategory(category: string): string {
+  return category
+    .split("-")
+    .map((word) => (word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)))
+    .join(" ");
+}
+
 const MIN_TOUCH_TARGET = 44;
 // Round 3 (owner physical-iPhone review): 13/10px (V3.1.4.3), 18/14px
 // (Sprint 3.6.5), then 32/24px (round 2) all still read as "too small" --
@@ -56,7 +72,17 @@ const ICON_NAME_GAP = 5;
 // near the field's edges since it grew symmetrically from the vessel's own
 // anchor). Exported so both files stay in sync instead of duplicating magic
 // numbers.
-export const CARD_HEIGHT = 372;
+// Opportunity Card redesign (owner rendering reference): materially taller
+// -- 372 forced the redesigned content (larger headline, bordered STRATUS
+// TAKE panel, distinctly-spaced sections, bordered RECOMMENDATION panel) to
+// compress or crowd to fit. This is a ceiling, not a fixed height: real
+// screens still clamp it via AttentionField.tsx's maxCardHeight (viewport
+// height minus CARD_SAFE_MARGIN*2), so on a typical phone this mostly means
+// "the card can now use nearly the full available field height" rather than
+// literally rendering 640px tall -- the ScrollView below (detailBodyWrap)
+// still handles anything that doesn't fit, by design (vertical scrolling
+// is an intentional part of the experience, not an overflow bug).
+export const CARD_HEIGHT = 640;
 export const CARD_SAFE_MARGIN = 16;
 
 // Attention Gravity motion (see the class comment below). A new vessel's
@@ -542,10 +568,26 @@ export function Vessel({
       width: interpolate(disclosureAnim.value, [0, 1], [dormant, readingWidth]),
       height: interpolate(disclosureAnim.value, [0, 1], [dormant, cardHeight]),
       borderRadius: interpolate(disclosureAnim.value, [0, 1], [dormant / 2, 28]),
-      borderColor: symbol.color,
+      // Opportunity Card redesign (owner rendering reference): a fixed
+      // neutral border, not symbol.color -- "the card should not remain
+      // predominantly green simply because the current implementation uses
+      // a green domain border." The entity's identity color still carries
+      // through the ticker, ring, and confidence-adjacent accents; the card
+      // shell itself reads as graphite/platinum instrument chrome.
+      borderColor: theme.border,
       borderWidth: interpolate(disclosureAnim.value, [0, 1], [0, 1.5]),
     };
   });
+
+  // Opportunity Card redesign: the ambient bloom/echo-ring glow (below,
+  // glowLayerHost) is tuned for the *dormant* Attention Field and stays
+  // fully untouched there -- this only fades it out as a card opens, so an
+  // expanded card reads as a graphite/platinum panel rather than sitting on
+  // top of its own full-strength colored halo ("significantly reduced neon
+  // perimeter glow"). Fully restored the moment the card closes again.
+  const ambientGlowStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(disclosureAnim.value, [0, 0.3], [1, 0], Extrapolation.CLAMP),
+  }));
 
   const frostStyle = useAnimatedStyle(() => ({
     opacity: interpolate(disclosureAnim.value, [0, 0.4], [0, 1], Extrapolation.CLAMP),
@@ -591,7 +633,7 @@ export function Vessel({
           (its own 5-stop curve carries transparent-center ->
           subtle-inner -> stronger-outer on its own), then the rim stroke
           on top. */}
-      <View pointerEvents="none" style={styles.glowLayerHost}>
+      <Animated.View pointerEvents="none" style={[styles.glowLayerHost, ambientGlowStyle]}>
         <View
           style={[
             styles.glowRing,
@@ -656,7 +698,7 @@ export function Vessel({
             />
           </Svg>
         </Animated.View>
-      </View>
+      </Animated.View>
 
       {/* Persistent resting-state identity -- so the field never reads as a
           collection of anonymous glowing dots. V3.1.4.2 brand correction
@@ -815,28 +857,38 @@ export function Vessel({
                 >
                   <Animated.View style={[styles.headerRow, headerStyle]}>
                     <View style={styles.headerIdentity}>
-                      {!!item.ticker && <Text style={styles.tickerLine}>{item.ticker}</Text>}
+                      {!!item.ticker && (
+                        <Text style={[styles.tickerLine, { color: symbol.color }]}>
+                          {item.ticker}
+                        </Text>
+                      )}
                       <View style={styles.headerNameRow}>
                         <EntitySymbol symbol={symbol} size={22} />
                         <Text style={styles.headerName} numberOfLines={1}>
                           {item.display_name}
                         </Text>
                       </View>
-                      <View style={[styles.tierPill, { borderColor: symbol.color }]}>
-                        <Text style={[styles.tierPillText, { color: symbol.color }]}>
-                          CONFIDENCE · {Math.round(item.confidence_score * 100)}%
-                        </Text>
-                      </View>
+                      {/* Opportunity Card redesign: replaces the old
+                          CONFIDENCE pill, which duplicated the number the
+                          ring to the right already shows. `category` is the
+                          one real classification field on FeedItem -- see
+                          humanizeCategory's own comment for why this is a
+                          single value, not the reference rendering's
+                          two-part "Technology • Semiconductors" (no second
+                          field exists to back that). */}
+                      <Text style={styles.categoryLine} numberOfLines={1}>
+                        {humanizeCategory(item.category)}
+                      </Text>
                     </View>
                     <ConfidenceRing
                       score={item.confidence_score}
                       label={item.confidence_label}
                       color={symbol.color}
-                      size={46}
+                      size={76}
                     />
                   </Animated.View>
 
-                  <Animated.Text style={[styles.headline, headlineStyle]} numberOfLines={3}>
+                  <Animated.Text style={[styles.headline, headlineStyle]} numberOfLines={4}>
                     {item.delivered_item.headline}
                   </Animated.Text>
                 </Pressable>
@@ -871,51 +923,94 @@ export function Vessel({
                           See the completion report for the closest existing hook
                           (ConclusionConfidence.limiting_factors) that isn't wired
                           into this response yet. */}
+                      {/* Opportunity Card redesign (owner rendering
+                          reference): section colors are now fixed per
+                          meaning (green=confidence/positive, orange=timing,
+                          blue=analytical), not the entity's domain color --
+                          "the card should not remain predominantly green
+                          simply because the current implementation uses a
+                          green domain border." STRATUS TAKE additionally
+                          gets a bordered hero-panel treatment (the other two
+                          stay plain/inline) to read as the primary
+                          intelligence panel. */}
                       {!!stratusTake && (
-                        <View style={styles.section}>
-                          <Text style={[styles.sectionLabel, { color: symbol.color }]}>
-                            STRATUS TAKE
-                          </Text>
+                        <View style={styles.takePanel}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
+                            >
+                              <Ionicons name="star-outline" size={13} color={theme.success} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.success }]}>
+                              STRATUS TAKE
+                            </Text>
+                          </View>
                           <Text style={styles.sectionText}>{stratusTake}</Text>
                         </View>
                       )}
 
                       {!!item.delivered_item.why_now && (
                         <View style={styles.section}>
-                          <Text style={[styles.sectionLabel, { color: symbol.color }]}>
-                            WHY IT MATTERS NOW
-                          </Text>
+                          <View style={styles.sectionHeaderRow}>
+                            <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
+                              <Ionicons name="time-outline" size={13} color={theme.accent} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.accent }]}>
+                              WHY IT MATTERS NOW
+                            </Text>
+                          </View>
                           <Text style={styles.sectionText}>{item.delivered_item.why_now}</Text>
                         </View>
                       )}
 
                       {!!item.delivered_item.what_happened && (
                         <View style={styles.section}>
-                          <Text style={[styles.sectionLabel, { color: symbol.color }]}>
-                            WHAT CHANGED
-                          </Text>
+                          <View style={styles.sectionHeaderRow}>
+                            <View style={[styles.sectionIconWrap, { borderColor: theme.info }]}>
+                              <Ionicons name="analytics-outline" size={13} color={theme.info} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.info }]}>
+                              WHAT CHANGED
+                            </Text>
+                          </View>
                           <Text style={styles.sectionText}>
                             {item.delivered_item.what_happened}
                           </Text>
                         </View>
                       )}
 
-                      <RecommendationPanel
-                        recommendation={item.delivered_item.recommendation}
-                        color={symbol.color}
-                      />
+                      <RecommendationPanel recommendation={item.delivered_item.recommendation} />
 
-                      <View style={styles.metaRow}>
-                        {relatedCount > 0 && (
+                      {/* Opportunity Card redesign: footer metadata stays
+                          visually quiet -- LAST UPDATED (+ RELATED SIGNALS
+                          when real, non-fabricated connection data exists)
+                          beside a standing "analysis, not advice" line. That
+                          line is authored product copy (same category as
+                          "STRATUS TAKE"/"WHY IT MATTERS NOW" as fixed section
+                          labels elsewhere in this file), not per-item data --
+                          it reinforces the app's analysis-vs-advice
+                          boundary (PRODUCT.md) rather than crossing it, and
+                          is always shown regardless of what (if anything)
+                          the real, item-specific required_disclaimers below
+                          it contain. */}
+                      <View style={styles.footerRow}>
+                        <View style={styles.footerLeft}>
+                          {relatedCount > 0 && (
+                            <View style={styles.metaCell}>
+                              <Text style={styles.metaLabel}>RELATED SIGNALS</Text>
+                              <Text style={styles.metaValue}>{relatedCount}</Text>
+                            </View>
+                          )}
                           <View style={styles.metaCell}>
-                            <Text style={styles.metaLabel}>RELATED SIGNALS</Text>
-                            <Text style={styles.metaValue}>{relatedCount}</Text>
+                            <Text style={styles.metaLabel}>LAST UPDATED</Text>
+                            <Text style={styles.metaValue}>{lastUpdated}</Text>
                           </View>
-                        )}
-                        <View style={styles.metaCell}>
-                          <Text style={styles.metaLabel}>LAST UPDATED</Text>
-                          <Text style={styles.metaValue}>{lastUpdated}</Text>
                         </View>
+                        <View style={styles.footerDivider} />
+                        <Text style={styles.footerDisclaimer}>
+                          This is analysis and context, not financial or betting advice. You
+                          decide what to do next.
+                        </Text>
                       </View>
 
                       {item.delivered_item.required_disclaimers.map((d) => (
@@ -1049,49 +1144,95 @@ const styles = StyleSheet.create({
   },
   headerIdentity: { flexShrink: 1, gap: 6 },
   tickerLine: {
-    color: theme.textSecondary,
     fontSize: 10,
     fontFamily: font.metadata,
     letterSpacing: tracking.metadata,
   },
   headerNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  headerName: { color: theme.text, fontFamily: font.heading, fontSize: 17, flexShrink: 1 },
-  tierPill: {
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  // Opportunity Card redesign: 17 -> 19, a modest step (the headline below
+  // carries the real size increase) -- this is still an identity label next
+  // to the confidence ring, not the card's primary typographic moment.
+  headerName: { color: theme.text, fontFamily: font.heading, fontSize: 19, flexShrink: 1 },
+  // Opportunity Card redesign: replaces the old tierPill (a CONFIDENCE badge
+  // that duplicated the ring's own percentage). Real `category` data,
+  // formatted via humanizeCategory -- quiet instrument-label treatment, one
+  // step down from the ticker line, matching the reference's subdued
+  // "Technology" subtitle under the entity name.
+  categoryLine: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    fontFamily: font.body,
   },
-  tierPillText: { fontSize: 9, fontFamily: font.metadata, letterSpacing: tracking.metadata },
+  // Opportunity Card redesign (owner rendering reference): 20 -> 26, with
+  // roomier line-height and more top margin -- "the headline has proper
+  // breathing room," the largest single typographic element on the card by
+  // a clear margin over headerName/sectionText.
   headline: {
     color: theme.text,
     fontFamily: font.heading,
-    fontSize: 20,
-    lineHeight: 26,
-    marginTop: 16,
+    fontSize: 26,
+    lineHeight: 33,
+    marginTop: 20,
   },
   // Sprint 3.6 (section 7 bug fix): flex:1 instead of a fixed maxHeight
   // computed from a header-height estimate -- see the call site's comment
   // for why the estimate could clip content on real devices.
-  detailBodyWrap: { flex: 1, marginTop: 18 },
+  detailBodyWrap: { flex: 1, marginTop: 22 },
   detailBody: { flex: 1 },
   detailFade: { position: "absolute", left: 0, right: 0, bottom: 0, height: 28 },
-  section: { marginBottom: 12 },
+  // Opportunity Card redesign: 12 -> 20 -- "WHY IT MATTERS NOW and WHAT
+  // CHANGED are clearly separated," not just visually adjacent paragraphs.
+  section: { marginBottom: 20 },
+  // STRATUS TAKE's bordered hero-panel treatment -- the only section with a
+  // visible border/background, so it reads as the primary intelligence
+  // panel the other (plain) sections lead into, not just the first item in
+  // a list. Same green as its own label/icon, at low opacity, for "subtle
+  // graphite panel differentiation" without competing with the graphite
+  // card shell itself.
+  takePanel: {
+    borderWidth: 1,
+    borderColor: theme.success + "40",
+    backgroundColor: theme.success + "0D",
+    borderRadius: radius.md,
+    padding: 14,
+    marginBottom: 20,
+  },
+  sectionHeaderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  sectionIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   sectionLabel: {
     fontSize: type.micro,
     fontFamily: font.metadata,
     letterSpacing: tracking.label,
-    marginBottom: 4,
   },
   sectionText: { color: theme.textSecondary, fontSize: 13, fontFamily: font.body, lineHeight: 19 },
-  metaRow: {
+  // Opportunity Card redesign: replaces the old metaRow -- same real
+  // RELATED SIGNALS/LAST UPDATED data on the left, now beside a vertical
+  // divider and the standing analysis-not-advice line (see the call site's
+  // own comment), matching the reference's quiet two-column footer.
+  footerRow: {
     flexDirection: "row",
+    alignItems: "flex-start",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.border,
     marginTop: 4,
-    paddingTop: 12,
-    gap: 22,
+    paddingTop: 14,
+    gap: 16,
+  },
+  footerLeft: { gap: 10 },
+  footerDivider: { width: StyleSheet.hairlineWidth, alignSelf: "stretch", backgroundColor: theme.border },
+  footerDisclaimer: {
+    flex: 1,
+    color: theme.muted,
+    fontSize: 11,
+    fontFamily: font.body,
+    lineHeight: 16,
   },
   metaCell: { gap: 3 },
   metaLabel: {

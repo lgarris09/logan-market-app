@@ -37,19 +37,25 @@ const RISK_LABEL: Record<RecommendationRisk, string> = {
 // non-functional mic icon or a fake "SOON" link -- this becomes tappable
 // (opening a real subscription/feature explanation) only once that surface
 // actually exists.
-export function RecommendationPanel({
-  recommendation,
-  color,
-}: {
-  recommendation?: Recommendation;
-  color: string;
-}) {
+//
+// Opportunity Card redesign (owner rendering reference): always
+// theme.accent (burnt orange), not the entity's domain color -- this panel
+// means "timing/action, premium gate," a fixed meaning independent of which
+// entity it's attached to, same reasoning as STRATUS TAKE/WHY IT MATTERS
+// NOW/WHAT CHANGED's own fixed section colors in Vessel.tsx. The bordered
+// panel treatment (vs. the plain inline sections above it) marks this as
+// the one section that leads somewhere -- a distinct call-to-action, not
+// just more analysis text.
+export function RecommendationPanel({ recommendation }: { recommendation?: Recommendation }) {
   if (!recommendation) {
     return (
-      <View style={styles.section}>
+      <View style={styles.panel}>
         <View style={styles.lockedHeaderRow}>
-          <Text style={[styles.label, { color }]}>STRATUS RECOMMENDATION</Text>
-          <Ionicons name="lock-closed" size={10} color={theme.muted} />
+          <View style={styles.lockedHeaderLeft}>
+            <Ionicons name="lock-closed" size={13} color={theme.accent} />
+            <Text style={styles.label}>STRATUS RECOMMENDATION</Text>
+          </View>
+          <Ionicons name="arrow-forward" size={16} color={theme.accent} />
         </View>
         <Text style={styles.teaser}>
           See the recommended action, risk level, and what could change the recommendation with
@@ -60,12 +66,15 @@ export function RecommendationPanel({
   }
 
   return (
-    <View style={styles.section}>
-      <Text style={[styles.label, { color }]}>STRATUS RECOMMENDATION</Text>
+    <View style={styles.panel}>
+      <View style={[styles.lockedHeaderLeft, styles.unlockedHeaderLeft]}>
+        <Ionicons name="star" size={13} color={theme.accent} />
+        <Text style={styles.label}>STRATUS RECOMMENDATION</Text>
+      </View>
       <Text style={styles.action}>{recommendation.action}</Text>
 
-      <View style={[styles.riskPill, { borderColor: color }]}>
-        <Text style={[styles.riskPillText, { color }]}>
+      <View style={[styles.riskPill, { borderColor: theme.accent }]}>
+        <Text style={[styles.riskPillText, { color: theme.accent }]}>
           RECOMMENDATION RISK · {RISK_LABEL[recommendation.risk]}
         </Text>
       </View>
@@ -81,13 +90,26 @@ export function RecommendationPanel({
 }
 
 const styles = StyleSheet.create({
-  section: { marginBottom: 12 },
-  lockedHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  panel: {
+    borderWidth: 1,
+    borderColor: theme.accent,
+    borderRadius: radius.md,
+    padding: 14,
+    marginBottom: 16,
+  },
+  lockedHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  lockedHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 7 },
+  unlockedHeaderLeft: { marginBottom: 8 },
   label: {
+    color: theme.accent,
     fontSize: type.micro,
     fontFamily: font.metadata,
     letterSpacing: tracking.label,
-    marginBottom: 4,
   },
   teaser: { color: theme.textSecondary, fontSize: 13, fontFamily: font.body, lineHeight: 19 },
   action: {
