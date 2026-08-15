@@ -37,11 +37,11 @@ class EarningsProvider(Protocol):
     Implementations:
     - FixtureEarningsProvider (fixture.py): deterministic, in-repo, used by
       tests. Never presented as live -- see its own docstring.
-    - A real provider (e.g. Alpha Vantage/Finnhub) is NOT implemented this
-      sprint: no credentials were available (Phase 4 instruction: build the
-      abstraction, don't guess at an untested real integration). Adding one
-      later means implementing this Protocol and mapping that provider's
-      response into EarningsReport -- no other file needs to change.
+    - FmpEarningsProvider (fmp.py, Sprint 3.6.6B): the first live provider,
+      backed by Financial Modeling Prep. Not wired into backend/app/
+      logan_feed.py or /v1/opportunities yet -- see the Sprint 3.6.6B
+      report for exactly what "live" means at this stage (provider-level
+      verification only).
     """
 
     def fetch_latest_earnings(self, entity_id: str) -> Optional[EarningsReport]:

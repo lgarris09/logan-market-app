@@ -1,5 +1,10 @@
 pydantic>=2.10
 pytest>=8.0
+# Sprint 3.6.6B: FmpEarningsProvider's real HTTP client (receptors/providers/fmp.py).
+# Already a dependency elsewhere in this monorepo (backend/requirements.txt, dev-only
+# there for FastAPI's TestClient) -- this is the first place it's a logan_core runtime
+# dependency, not just a test tool.
+httpx>=0.27
 
 # Development-only (lint/format/type-check) -- V3.1.4 BATCH-2, ADR-007
 black>=24.0

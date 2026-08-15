@@ -764,3 +764,48 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   NVDA included, exactly as before. Proving this same path against real NVIDIA earnings data is the
   explicit next step once a stocks-earnings provider and API credentials are chosen (a decision this ADR
   does not make).
+
+## ADR-043: Sprint 3.6.6B — Financial Modeling Prep selected as the first live earnings provider
+- Date: 2026-08-15
+- Status: Accepted
+- Context: ADR-042 built the `EarningsProvider` Protocol and left choosing a real provider as an explicit
+  open decision, deliberately not made by that ADR (no credentials were available, and picking a paid/
+  external provider is a decision this project's collaboration model reserves for the owner). The owner
+  selected Financial Modeling Prep (FMP) for Sprint 3.6.6B. FMP's official API docs
+  (`site.financialmodelingprep.com`) return HTTP 403 to automated fetches, so the endpoint shape was
+  confirmed via multiple independent secondary sources (FMP's own third-party "how-to" articles, tutorial
+  writeups quoting real example responses) rather than the canonical docs page directly — see the
+  field-name uncertainty noted below.
+- Decision:
+  1. `FmpEarningsProvider` (`logan_core/receptors/providers/fmp.py`) implements the existing
+     `EarningsProvider` Protocol exactly as specified in ADR-042 — no changes to the Protocol, to
+     `EarningsReport`, or to any pipeline layer. FMP's per-symbol historical endpoint
+     (`GET https://financialmodelingprep.com/stable/earnings?symbol={SYMBOL}`) was chosen over the
+     broader earnings *calendar* endpoint because it returns already-reported actual-vs-estimated EPS for
+     a specific company, not a forward-looking, mostly-null schedule.
+  2. Researched field mapping: `symbol` → `entity_id`, `epsActual` → `actual_eps`, `epsEstimated` →
+     `consensus_eps`, `fiscalDateEnding` → `fiscal_quarter`, `date` → `report_timestamp`. **Genuine
+     uncertainty:** a related (older/legacy) FMP calendar endpoint uses a plain `eps` key instead of
+     `epsActual` for the same concept, per one confirmed real example response; which name the *stable
+     per-symbol* endpoint actually uses could not be independently verified against FMP's own docs due to
+     the 403. This is accepted as a known risk, not silently papered over: `FmpEarningsProvider._parse_entry`
+     uses `.get()` exclusively (never direct indexing), so a wrong field name degrades to
+     `actual_eps=None`/`consensus_eps=None` (a real, honest "missing data" result the rest of the
+     pipeline already handles safely) rather than a crash or a fabricated value. The live verification
+     script (`logan_core/live_verification/nvda_earnings.py`) surfaces this immediately and explicitly the
+     first time it's run against real credentials.
+  3. `httpx` becomes a `logan_core` **runtime** dependency for the first time (`logan_core/requirements.txt`)
+     — previously only a `backend`-side dev/test dependency (FastAPI's `TestClient`). Not a new library to
+     this monorepo, just a new role for an already-vetted one; flagged here per the project's standing
+     "any dependency addition requires visibility" rule rather than added silently.
+  4. No automatic fallback from `FmpEarningsProvider` to `FixtureEarningsProvider` exists anywhere — a
+     failed FMP call raises `FmpProviderError`; only a caller can decide what to do with that, and none of
+     the existing pipeline call sites do so automatically.
+  5. `backend/app/logan_feed.py` and `/v1/opportunities` remain unwired to FMP, per this sprint's explicit
+     scope boundary — provider-level live verification only, not a live production data source yet.
+- Consequences: `logan_core` test count rises from 126 to 141 (15 new `FmpEarningsProvider` contract tests,
+  all `httpx.MockTransport`-mocked — the normal suite makes zero real network calls and never depends on
+  `FMP_API_KEY` existing). A real `FMP_API_KEY` (owner-provided, environment-only, never committed) is
+  required to run `logan_core/live_verification/nvda_earnings.py`; that script was not run this session
+  pending that credential, and its result (fired vs. did-not-fire, and whether the field-name assumption
+  in point 2 held) should be recorded in a follow-up session note or ADR once it is.
