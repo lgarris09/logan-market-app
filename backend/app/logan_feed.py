@@ -19,14 +19,25 @@ from logan_core.contracts import (  # noqa: E402
     DeliveredItem,
     Holding,
     Interest,
+    RawSignal,
 )
-from logan_core.orchestrator import Orchestrator  # noqa: E402
+from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
+    earnings_report_to_raw_signal,
     simulated_fixtures,
     tesla_ai_partnership_corroboration,
 )
+from logan_core.receptors.providers import (  # noqa: E402
+    FmpEarningsProvider,
+    FmpProviderError,
+)
+from logan_core.trigger_detection import (  # noqa: E402
+    StocksTriggerEvaluator,
+    evaluate_earnings_beat_condition,
+)
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
+from .config import live_nvda_earnings_enabled  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
@@ -68,8 +79,84 @@ def _get_orchestrator() -> Orchestrator:
     global _orchestrator
     with _state_lock:
         if _orchestrator is None:
-            _orchestrator = Orchestrator()
+            # Sprint 3.6.6C: trigger_detector is gated behind
+            # live_nvda_earnings_enabled(), not wired unconditionally.
+            # Orchestrator.run() adds a "trigger_detection" ExecutionTrace
+            # layer entry for *every* raw_signal whenever any detector is
+            # configured at all (see orchestrator/pipeline.py's run()) --
+            # unconditional wiring would therefore change the trace shape for
+            # every simulated entity even with the live path disabled,
+            # breaking the "disabled mode is byte-for-byte unchanged"
+            # requirement. Gating construction on the flag keeps disabled
+            # mode identical to pre-3.6.6C (no trigger_detector at all, same
+            # as every other existing Orchestrator() caller) while still
+            # giving the live NVDA path real trigger detection when enabled.
+            # Read once at construction time, matching config.py's own
+            # documented assumption that flipping this flag requires a clean
+            # backend restart, not a mid-process toggle.
+            deps = (
+                PipelineDependencies(trigger_detector=StocksTriggerEvaluator())
+                if live_nvda_earnings_enabled()
+                else PipelineDependencies()
+            )
+            _orchestrator = Orchestrator(deps=deps)
         return _orchestrator
+
+
+def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
+    """Sprint 3.6.6C: attempts to replace the simulated NVDA fixture with a
+    real FMP-driven earnings signal. Returns None on any failure -- FMP
+    unreachable, auth failure, malformed response, or genuinely no reported
+    earnings on file -- so the caller can fall back to the simulated
+    fixture. Never raises: every FmpProviderError is caught here so a live-
+    data hiccup can never take down /v1/opportunities (Phase "Honest
+    failure behavior" instruction). Never silently presents simulated data
+    as live either -- the caller only substitutes this return value in
+    place of the simulated fixture when it is not None; when it is None,
+    the simulated NVDA fixture already in `fixtures` is left untouched.
+
+    Also returns None when a real report was fetched but does not satisfy
+    STOCK_EARNINGS_BEAT. A valid provider response is not itself an
+    opportunity -- this 3.6.6C slice's intended semantics are that the real
+    NVDA opportunity surfaces only when the implemented TriggerEvent
+    actually fires, not merely because FMP returned some usable data.
+    Reuses evaluate_earnings_beat_condition (the same pure function
+    StocksTriggerEvaluator.evaluate() calls) rather than re-deriving the
+    fire condition, so this pre-check and the orchestrator's own later
+    trigger_detection layer can never disagree.
+    """
+    try:
+        provider = FmpEarningsProvider()
+    except FmpProviderError as exc:
+        print(f"[live-nvda] provider unavailable, using simulated NVDA: {exc}")
+        return None
+
+    try:
+        report = provider.fetch_latest_earnings("NVDA")
+    except FmpProviderError as exc:
+        print(f"[live-nvda] FMP fetch failed, using simulated NVDA: {exc}")
+        return None
+
+    if report is None:
+        print("[live-nvda] FMP has no reported NVDA earnings, using simulated NVDA")
+        return None
+
+    fired, beat_pct, reason = evaluate_earnings_beat_condition(
+        report.actual_eps, report.consensus_eps
+    )
+    if not fired:
+        print(
+            f"[live-nvda] real report fetched but STOCK_EARNINGS_BEAT did not "
+            f"fire ({reason}), using simulated NVDA"
+        )
+        return None
+
+    print(
+        f"[live-nvda] using real FMP earnings report dated "
+        f"{report.report_timestamp.date()} for NVDA (source={report.source_id}, "
+        f"beat_pct={beat_pct:.2f})"
+    )
+    return earnings_report_to_raw_signal(report)
 
 
 def reset_pipeline_state() -> None:
@@ -215,6 +302,19 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
 
     orchestrator = _get_orchestrator()
     fixtures = simulated_fixtures(now)
+
+    # Sprint 3.6.6C: replaces (never adds alongside) the simulated NVDA
+    # fixture with a real FMP-driven one when explicitly enabled and FMP
+    # actually returns usable data -- `fixtures` is keyed by entity_id, so
+    # this dict assignment is what guarantees exactly one NVDA entry either
+    # way, never a duplicate. Every other simulated entity is untouched.
+    # Falls back to the simulated NVDA fixture already in `fixtures` (no
+    # code path removes it) on any failure -- see _live_nvda_raw_signal's
+    # own docstring for the exact failure modes this covers.
+    if live_nvda_earnings_enabled():
+        live_nvda_signal = _live_nvda_raw_signal(now)
+        if live_nvda_signal is not None:
+            fixtures["NVDA"] = live_nvda_signal
 
     # One lock for the whole request's pipeline run, not just per-call: two
     # concurrent requests interleaving their individual entity.run() calls

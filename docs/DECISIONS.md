@@ -809,3 +809,70 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   required to run `logan_core/live_verification/nvda_earnings.py`; that script was not run this session
   pending that credential, and its result (fired vs. did-not-fire, and whether the field-name assumption
   in point 2 held) should be recorded in a follow-up session note or ADR once it is.
+
+## ADR-044: Sprint 3.6.6C — proven live NVDA path wired into `GET /v1/opportunities`, config-gated and default-off
+- Date: 2026-08-15
+- Status: Accepted
+- Context: ADR-042/ADR-043 built and live-verified `FmpEarningsProvider` and `STOCK_EARNINGS_BEAT` at the
+  provider/pipeline level, but deliberately stopped short of wiring either into the production
+  `/v1/opportunities` endpoint mobile actually consumes. This sprint's scope was the smallest safe wiring
+  change to close that gap for NVDA only, without redesigning the pipeline, adding new triggers, or
+  replacing the rest of the simulated feed.
+- Decision:
+  1. `backend/app/config.py` (new): `live_nvda_earnings_enabled()` reads `STRATUS_LIVE_NVDA_EARNINGS`
+     (unset/false by default — existing simulated-only behavior is the safe default) and, as a side effect
+     of import, `load_dotenv()`s `backend/.env` (gitignored, local-dev-only) so `FMP_API_KEY` reaches the
+     real process environment the same way `logan_core/live_verification/nvda_earnings.py` already expected
+     it to. No general settings framework was introduced — this is the minimal addition needed, and the
+     first place `backend/app/` reads `.env` at all.
+  2. `backend/app/logan_feed.py`: when the flag is on, `_live_nvda_raw_signal()` fetches NVDA's latest
+     report via `FmpEarningsProvider` and, on success, substitutes it for the simulated NVDA fixture
+     (dict-keyed by entity_id, so the two can never coexist — exactly one NVDA item either way). Every
+     other simulated entity is untouched regardless of the flag.
+  3. **Two architectural issues were found and fixed during implementation review, before this sprint's
+     tests or live verification were considered complete** (both raised directly by the project owner
+     reviewing the first draft, not self-discovered):
+     - *Disabled-mode trace parity*: the first draft wired `PipelineDependencies.trigger_detector`
+       unconditionally into the shared Orchestrator singleton. Because `Orchestrator.run()` appends a
+       `"trigger_detection"` `ExecutionTrace` layer entry for *every* raw_signal whenever *any* detector is
+       configured — regardless of whether it ultimately fires (see `orchestrator/pipeline.py`) — this would
+       have silently changed the execution trace for every simulated entity (TSLA, AAPL, BTC, etc.), not
+       just NVDA, even with the live path fully disabled. Fixed: `_get_orchestrator()` now only constructs
+       `PipelineDependencies(trigger_detector=StocksTriggerEvaluator())` when
+       `live_nvda_earnings_enabled()` is true at construction time; with the flag off, it builds the exact
+       same bare `PipelineDependencies()` every pre-3.6.6C caller already gets, so disabled mode is
+       byte-for-byte unchanged, not just "the NVDA row looks the same."
+     - *Non-fire substitution*: the first draft substituted the live FMP report for the simulated fixture
+       whenever FMP returned *any* usable report, whether or not it beat consensus by the required 5%. That
+       meant a real-but-non-beating earnings report would still surface as an "opportunity" (with lower,
+       unboosted confidence) rather than the intended semantics: a valid provider response is not itself an
+       opportunity, and the live NVDA slice should surface a real opportunity only when the implemented
+       `STOCK_EARNINGS_BEAT` trigger actually fires. Fixed: `_live_nvda_raw_signal()` now pre-checks the
+       fetched report against `evaluate_earnings_beat_condition()` — the same pure function
+       `StocksTriggerEvaluator.evaluate()` calls internally, reused rather than re-derived, so the pre-check
+       and the orchestrator's own later trigger-detection layer can never disagree — and falls back to the
+       simulated fixture (same as any other failure mode) when it doesn't fire.
+  4. While validating the fix for point 3 together with the backend suite, a **pre-existing cross-suite
+     test-isolation gap** was exposed (not introduced by this sprint, but only surfaced because
+     `backend/app/config.py` now `load_dotenv()`s a real `FMP_API_KEY` at import time): running `backend`
+     and `logan_core` tests in the same process leaked that real key into `logan_core/tests/
+     test_fmp_provider.py::test_missing_api_key_raises_without_making_any_request`, which assumed an empty
+     environment rather than explicitly isolating itself. Fixed in the test (added
+     `monkeypatch.delenv("FMP_API_KEY", raising=False)`, matching the sibling test directly below it in the
+     same file) rather than in `config.py` — two independent test suites' correctness should never depend on
+     which one happens to import a dotenv-loading module first.
+  5. No new trigger codes were added; this sprint stops here per its own scope boundary, so the owner can
+     review the production wiring before intelligence breadth expands further.
+  6. Public API contract unchanged: `internal_rank_score`, the FMP API key, and raw provider payloads are
+     never serialized in the `FeedItem`/`/v1/opportunities` response; the field set is identical whether the
+     NVDA item is live or simulated.
+- Consequences: `backend` test count rises from 18 to 31 (13 new tests: disabled-mode trace parity,
+  enabled+fired, enabled+not-fired-falls-back, provider/auth/no-data failure fallback, the exact
+  scheduled-vs-reported selection-logic scenario from ADR-043 reproduced end-to-end through the backend
+  wiring, and API-contract/no-secret-leak checks). `logan_core` test count unchanged at 143 (one existing
+  test hardened for isolation, none weakened). Live-verified locally through the real `GET /v1/opportunities`
+  route with `STRATUS_LIVE_NVDA_EARNINGS=true` and the real `FMP_API_KEY`: real EPS 1.87 vs. consensus 1.76
+  (beat_pct 6.25%), `STOCK_EARNINGS_BEAT` fired, `confidence_score` 0.595 ("Moderate"), exactly one NVDA item
+  in an 11-item response, all 10 other simulated entities untouched, HTTP 200, no `internal_rank_score` or
+  key in the response body. The mobile app requires no changes to consume this — it already calls
+  `/v1/opportunities` and renders whatever `FeedItem`s it receives.

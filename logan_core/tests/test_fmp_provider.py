@@ -22,7 +22,17 @@ def _provider(handler) -> FmpEarningsProvider:
     return FmpEarningsProvider(api_key="test-key-not-real", client=client)
 
 
-def test_missing_api_key_raises_without_making_any_request():
+def test_missing_api_key_raises_without_making_any_request(monkeypatch):
+    # Explicit isolation, not an assumption about the ambient environment:
+    # backend/app/config.py (Sprint 3.6.6C) load_dotenv()s backend/.env at
+    # import time, which -- when the backend and logan_core suites run in
+    # the same process, as in a combined `pytest backend logan_core` run --
+    # populates a real FMP_API_KEY into os.environ for the rest of the
+    # session if a developer has one configured locally. Matches
+    # test_api_key_only_from_param_or_env_never_hardcoded's own pattern
+    # directly below.
+    monkeypatch.delenv("FMP_API_KEY", raising=False)
+
     def handler(request):
         raise AssertionError("must not make a request when the key is missing")
 
