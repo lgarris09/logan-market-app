@@ -21,11 +21,11 @@ import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_BOTTOM_MARGIN, CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
-// Opportunity Card redesign (owner device feedback): 0.82 -> 0.87 still read
-// as "could be wider" -- one more step to 0.91. Still leaves CARD_SAFE_MARGIN
-// on each side (verified against a real phone's minimum width, not just the
-// common case) rather than going edge-to-edge.
-const READING_WIDTH_RATIO = 0.91;
+// Opportunity Card redesign (owner device feedback): 0.82 -> 0.87 -> 0.91,
+// each step still reading as "could be wider" -- 0.95 is close to
+// edge-to-edge (roughly 9-10pt clear on each side on a typical phone
+// width) but is what the owner explicitly asked for.
+const READING_WIDTH_RATIO = 0.95;
 // Must comfortably exceed Vessel.tsx's own exit-fade duration (420ms, or
 // 160ms under reduced motion) -- this is how long a departed vessel keeps
 // rendering (frozen at its last known position) after leaving `items`, so
