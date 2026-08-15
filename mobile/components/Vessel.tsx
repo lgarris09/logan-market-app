@@ -100,7 +100,9 @@ export const CARD_SAFE_MARGIN = 16;
 // the header, keep a clear gap at the bottom" ask specifically requires
 // them to differ). See AttentionField.tsx's maxCardHeight/safeY for the
 // asymmetric math this enables.
-export const CARD_BOTTOM_MARGIN = 32;
+// 32 -> 48 (owner device feedback: still needed more visible gap above
+// FieldBiasControl).
+export const CARD_BOTTOM_MARGIN = 48;
 
 // Attention Gravity motion (see the class comment below). A new vessel's
 // position starts this many times farther from the field center than its
