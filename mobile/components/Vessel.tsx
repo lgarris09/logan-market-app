@@ -60,13 +60,6 @@ const MIN_TOUCH_TARGET = 44;
 // doesn't widen the *name line's* own estimate).
 const FULL_NAME_ICON_SIZE = 40;
 const COMPACT_NAME_ICON_SIZE = 30;
-// Vertical gap between the icon and the name below it -- deliberately
-// tighter than the icon-to-percentage/percentage-to-descriptor gaps
-// (restLabelPct's marginTop, restLabelDescriptor's marginTop) so the icon
-// reads as attached to the name it identifies, not as a floating fourth
-// line with equal weight. Widened slightly alongside the larger icon sizes
-// above so the gap still reads proportional, not swallowed by the icon.
-const ICON_NAME_GAP = 5;
 // Shared with AttentionField.tsx's viewport-clamp math (round 2, real-device
 // screenshot review: the card could render partially off-screen for vessels
 // near the field's edges since it grew symmetrically from the vessel's own
@@ -492,6 +485,50 @@ export function Vessel({
     item.delivered_item.why_it_matters_to_me?.trim() || item.delivered_item.why_it_matters?.trim();
   const lastUpdated = relativeTimeFrom(item.delivered_item.delivered_at);
 
+  // Owner device feedback: a flat dormantSize*0.25 shift put the icon in
+  // the top quadrant on typical-size bubbles, but on smaller ones --
+  // long-name items like "Polymarket" that only grew wide enough via
+  // minDiameterForLabel's width floor, not tall -- that fraction wasn't
+  // enough clearance and the icon overlapped the name. Forcing the offset
+  // up to guarantee clearance (a first attempt at this fix) traded that
+  // for a *worse* problem: on those same small bubbles the icon ended up
+  // pushed entirely outside the circle. Both symptoms have the same root
+  // cause -- a fixed-size icon (COMPACT/FULL_NAME_ICON_SIZE) plus a
+  // fixed-height text block (real font metrics, same "estimate from known
+  // sizes" approach attentionLayout.ts's own minDiameterForLabel already
+  // uses for width) simply don't both fit inside a small bubble's radius
+  // at any offset. The fix has to shrink the icon itself when there isn't
+  // room, not just relocate it -- restIconSize below is the target size
+  // capped to whatever actually fits above the text and inside the circle
+  // (with a small legibility floor), so restIconOffset is *always*
+  // geometrically satisfiable: no overlap, and the icon's own edge never
+  // exits the bubble. Font sizes/margins here must stay in sync with the
+  // restLabelName/Pct/Descriptor(*Compact) styles below.
+  const isCompactLabel = layout.labelTier === "compact";
+  const restTargetIconSize = isCompactLabel ? COMPACT_NAME_ICON_SIZE : FULL_NAME_ICON_SIZE;
+  const restTextBlockHalf =
+    (isCompactLabel
+      ? 11 * 1.2 + 1 + 13 * 1.2 + 2 + 6.5 * 1.2
+      : 14 * 1.2 + 1 + 17 * 1.2 + 2 + 7.5 * 1.2) / 2;
+  const restIconTextGap = 4;
+  const restIconEdgePad = 2;
+  const restBubbleRadius = Math.max(0, dormantSize / 2 - restIconEdgePad);
+  // How much room is actually left for the icon's own diameter between the
+  // text block's top edge and the bubble's own edge.
+  const restIconFitBudget = restBubbleRadius - restTextBlockHalf - restIconTextGap;
+  const restIconSize = Math.min(restTargetIconSize, Math.max(14, restIconFitBudget));
+  // Prefers the proportional "top quadrant" look (0.25 * dormantSize) when
+  // there's room for it, but is bounded on both sides by real geometry --
+  // never less than what clears the text (guaranteed satisfiable now that
+  // restIconSize itself was capped to fit), never more than what keeps the
+  // icon inside the bubble.
+  const restIconMinOffset = restTextBlockHalf + restIconTextGap + restIconSize / 2;
+  const restIconMaxOffset = Math.max(restIconMinOffset, restBubbleRadius - restIconSize / 2);
+  const restIconOffset = Math.min(
+    Math.max(dormantSize * 0.25, restIconMinOffset),
+    restIconMaxOffset
+  );
+
   // Attention Gravity: position itself (posX/posY) is now the animated
   // part of this style, not a static left/top percentage -- see the class
   // comment. Combined with the existing drift wobble in one transform
@@ -744,72 +781,74 @@ export function Vessel({
           offset) puts it at the host's true center, which is also the
           bubble's center, regardless of glowBoxSize's own padding. */}
       {layout.labelTier !== "none" && (
-        <Animated.View pointerEvents="none" style={[styles.restLabel, restLabelStyle]}>
-          {/* Owner reference (Field Bias mockup, Sprint 3.6): name + real
-              confidence percentage + a short real-data reason tag. Sprint
-              3.6 deliberately dropped a per-vessel icon badge here -- a
-              ticker/name badge repeating the name text right next to it
-              (the previous EntitySymbol-in-a-circle treatment) read as
-              redundant. Bubble-polish pass (V3.1.4.3) reintroduced it
-              inline before the name; Sprint 3.6.5 device-feedback pass
-              moved it to its own centered row above the name instead (icon
-              / name / confidence% / descriptor stack) and sized it up --
-              on a physical device the inline treatment read as incidental
-              rather than intentional. Still restrained: moderately larger
-              and centered, but reduced-opacity (restLabelIconWrap) so it
-              stays subordinate to the name below it, not a badge. `symbol`
-              is computed once for the whole vessel (used by the glow/rim
-              colors above and the opened card's header below too) and
-              reused here, not re-resolved. `maxWidth` is derived from this
-              vessel's own bubble diameter via LABEL_WIDTH_FRACTION -- the
-              same fraction attentionLayout.ts's minDiameterForLabel used to
-              grow this vessel's `size` in the first place, so ordinarily
-              the text already fits with room to spare. numberOfLines/
-              ellipsis below is only a last-resort safety net (e.g.
-              unusually long real content beyond what the sizing heuristic
-              estimated for), not the primary mechanism -- growing the
-              bubble is. */}
-          <View
-            style={{
-              maxWidth: Math.max(44, bubbleSize * LABEL_WIDTH_FRACTION),
-              alignItems: "center",
-            }}
+        <>
+          {/* Owner device feedback: the icon now sits in its own layer,
+              shifted up into the circle's top quadrant (translateY, a
+              fraction of this vessel's own dormantSize so it scales with
+              bubble size rather than a fixed pixel offset) -- decoupled
+              from the name/pct/descriptor stack below, which now centers
+              on its own within the bubble's true geometric center instead
+              of the icon pushing that whole group's centroid down. Both
+              layers share the exact same restLabel positioning/sizing and
+              restLabelStyle fade, so they overlay in register and fade
+              together identically -- this is a visual split, not two
+              independent components with their own logic. */}
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.restLabel, restLabelStyle, { transform: [{ translateY: -restIconOffset }] }]}
           >
             <View style={styles.restLabelIconWrap}>
-              <EntitySymbol
-                symbol={symbol}
-                size={layout.labelTier === "compact" ? COMPACT_NAME_ICON_SIZE : FULL_NAME_ICON_SIZE}
-              />
+              <EntitySymbol symbol={symbol} size={restIconSize} />
             </View>
-            <Text
-              style={[
-                styles.restLabelName,
-                layout.labelTier === "compact" && styles.restLabelNameCompact,
-              ]}
-              numberOfLines={1}
+          </Animated.View>
+
+          {/* Owner reference (Field Bias mockup, Sprint 3.6): name + real
+              confidence percentage + a short real-data reason tag.
+              `maxWidth` is derived from this vessel's own bubble diameter
+              via LABEL_WIDTH_FRACTION -- the same fraction
+              attentionLayout.ts's minDiameterForLabel used to grow this
+              vessel's `size` in the first place, so ordinarily the text
+              already fits with room to spare. numberOfLines/ellipsis below
+              is only a last-resort safety net (e.g. unusually long real
+              content beyond what the sizing heuristic estimated for), not
+              the primary mechanism -- growing the bubble is. */}
+          <Animated.View pointerEvents="none" style={[styles.restLabel, restLabelStyle]}>
+            <View
+              style={{
+                maxWidth: Math.max(44, bubbleSize * LABEL_WIDTH_FRACTION),
+                alignItems: "center",
+              }}
             >
-              {item.ticker ?? item.display_name}
-            </Text>
-            <Text
-              style={[
-                styles.restLabelPct,
-                { color: symbol.color },
-                layout.labelTier === "compact" && styles.restLabelPctCompact,
-              ]}
-            >
-              {Math.round(item.confidence_score * 100)}%
-            </Text>
-            <Text
-              style={[
-                styles.restLabelDescriptor,
-                layout.labelTier === "compact" && styles.restLabelDescriptorCompact,
-              ]}
-              numberOfLines={1}
-            >
-              {humanizeSignalType(item.signal_type)}
-            </Text>
-          </View>
-        </Animated.View>
+              <Text
+                style={[
+                  styles.restLabelName,
+                  layout.labelTier === "compact" && styles.restLabelNameCompact,
+                ]}
+                numberOfLines={1}
+              >
+                {item.ticker ?? item.display_name}
+              </Text>
+              <Text
+                style={[
+                  styles.restLabelPct,
+                  { color: symbol.color },
+                  layout.labelTier === "compact" && styles.restLabelPctCompact,
+                ]}
+              >
+                {Math.round(item.confidence_score * 100)}%
+              </Text>
+              <Text
+                style={[
+                  styles.restLabelDescriptor,
+                  layout.labelTier === "compact" && styles.restLabelDescriptorCompact,
+                ]}
+                numberOfLines={1}
+              >
+                {humanizeSignalType(item.signal_type)}
+              </Text>
+            </View>
+          </Animated.View>
+        </>
       )}
 
       <Animated.View style={cardPositionStyle}>
@@ -1147,8 +1186,11 @@ const styles = StyleSheet.create({
   // treatment was removed once already); slightly higher than the previous
   // inline treatment's 0.75 since the larger Sprint 3.6.5 icon size reads as
   // washed-out at that opacity, but still clearly quieter than the name.
+  // Owner device feedback: the icon no longer stacks directly above the
+  // name (it's a separate, independently-positioned layer now -- see the
+  // JSX comment at the call site), so this no longer needs its own bottom
+  // margin; opacity still keeps it visually subordinate.
   restLabelIconWrap: {
-    marginBottom: ICON_NAME_GAP,
     opacity: 0.82,
   },
   // The confidence percentage is real data (confidence_score), shown
