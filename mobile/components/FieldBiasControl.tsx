@@ -148,15 +148,25 @@ export function FieldBiasControl({
   const halfW = Math.max(0, width / 2 - ARC_SIDE_INSET);
   const cx = width / 2;
 
-  // The tick's position on the arc: the same parametric ellipse
-  // ellipseArcPath traces (t=0..1 left-to-right through the top), evaluated
-  // at the midpoint of the selected quarter and animated by tracking
+  // The tick's position: x must match the label row's own linear flex
+  // layout exactly (segmentWidth * (index + 0.5)) -- NOT a point sampled
+  // from ellipseArcPath's cosine parametrization at that same fractional
+  // index. Four equal steps in t don't produce four equal steps in x on a
+  // cosine curve (it bunches near the poles, spreads near the equator), so
+  // deriving x from t put the tick measurably off-center from its label
+  // (e.g. ~19px left of MARKETS' true center on a typical width) -- a
+  // physical-device-confirmed misalignment, not a cosmetic nit. y is still
+  // solved to land exactly on the arc curve *at that corrected x* (the
+  // ellipse equation inverted for y given x, rather than for x given t), so
+  // vertical placement -- already confirmed correct -- doesn't change at
+  // all; only the horizontal source of truth does. Animated by tracking
   // indicatorPosition (0..3, same withTiming transition the label/tick
   // switch has always used) rather than jumping instantly.
   const tickAnimatedProps = useAnimatedProps(() => {
-    const t = (indicatorPosition.value + 0.5) / LABELS.length;
-    const x = cx - halfW * Math.cos(t * Math.PI);
-    const y = cy - archRy * Math.sin(t * Math.PI);
+    const segmentWidth = width / LABELS.length;
+    const x = (indicatorPosition.value + 0.5) * segmentWidth;
+    const normalized = halfW > 0 ? Math.min(1, Math.max(-1, (cx - x) / halfW)) : 0;
+    const y = cy - archRy * Math.sqrt(1 - normalized * normalized);
     return {
       x1: x,
       x2: x,
