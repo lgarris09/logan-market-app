@@ -41,6 +41,7 @@ from logan_core.policy import PolicyEngine
 from logan_core.presentation import PresentationEngine
 from logan_core.prioritization import PrioritizationEngine
 from logan_core.reasoning import ReasoningEngine
+from logan_core.trigger_detection import StocksTriggerEvaluator
 from logan_core.user_model import UserModelBuilder
 from logan_core.world_model import WorldModel
 
@@ -86,6 +87,16 @@ class PipelineDependencies:
     presentation_engine: PresentationEngine = field(default_factory=PresentationEngine)
     feedback_engine: FeedbackEngine = field(default_factory=FeedbackEngine)
     learning_engine: LearningEngine = field(init=False)
+    # Sprint 3.6.6 — None by default, so every existing caller (including
+    # every test using the default `orchestrator` fixture) gets the exact
+    # same pipeline behavior and ExecutionTrace layer sequence as before this
+    # sprint: run() below only calls this (and only then does a
+    # "trigger_detection" layer appear in the trace) when a caller
+    # explicitly wires one in. Typed as StocksTriggerEvaluator specifically
+    # (not a generic multi-domain dispatcher) -- this sprint implements one
+    # domain's one trigger code; building a registry/dispatch system for
+    # domains that don't have an evaluator yet would be speculative.
+    trigger_detector: Optional[StocksTriggerEvaluator] = None
 
     def __post_init__(self) -> None:
         self.learning_engine = LearningEngine(self.memory_store)
@@ -242,10 +253,31 @@ class Orchestrator:
                 ),
             )
 
+            # Sprint 3.6.6: deterministic trigger detection sits at the
+            # signal/normalization/event-resolution boundary, before World
+            # Model -- reads the same raw+normalized pair normalization just
+            # produced, decides nothing about ranking/confidence/
+            # presentation (StocksTriggerEvaluator's own docstring), and only
+            # runs at all when a caller explicitly wired trigger_detector in
+            # PipelineDependencies. No detector configured (every existing
+            # caller) means this step -- and its ExecutionTrace layer entry
+            # -- doesn't exist, not that it silently no-ops.
+            trigger_event = None
+            if self.deps.trigger_detector is not None:
+                trigger_event = self._execute(
+                    trace,
+                    "trigger_detection",
+                    lambda r=raw, n=normalized: self.deps.trigger_detector.evaluate(  # type: ignore[misc]
+                        r, n
+                    ),
+                )
+
             event = self._execute(
                 trace,
                 "world_model",
-                lambda n=normalized: self.deps.world_model.process(n),  # type: ignore[misc]
+                lambda n=normalized, t=trigger_event: self.deps.world_model.process(  # type: ignore[misc]
+                    n, trigger_event=t
+                ),
             )
 
         assert event is not None, "at least one raw_signal is required"

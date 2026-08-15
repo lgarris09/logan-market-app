@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from .common import Delta, Domain, Entity
+from .trigger import TriggerEvent
 
 
 class EnrichedEvent(BaseModel):
@@ -23,3 +24,9 @@ class EnrichedEvent(BaseModel):
     occurred_at: datetime
     enriched_at: datetime
     decision_trace: list = Field(default_factory=list)
+    # Sprint 3.6.6 — additive, default-empty: populated only when a
+    # deterministic trigger (see trigger_detection/) fired for one of this
+    # event's originating signals. Every existing caller/test that doesn't
+    # pass a trigger_event to WorldModel.process() sees this stay []
+    # exactly as before. See docs/DECISIONS.md's Sprint 3.6.6 ADR.
+    trigger_events: list[TriggerEvent] = Field(default_factory=list)

@@ -2,9 +2,12 @@ from datetime import timedelta
 
 from logan_core.normalization import Normalizer
 from logan_core.receptors import (
+    earnings_report_to_raw_signal,
     tesla_ai_partnership_corroboration,
     tesla_ai_partnership_signal,
 )
+from logan_core.receptors.providers import EarningsReport
+from logan_core.trigger_detection import StocksTriggerEvaluator
 from logan_core.world_model import WorldModel
 
 
@@ -77,3 +80,88 @@ def test_contradicting_is_reserved_not_populated(now):
     n1 = normalizer.normalize(tesla_ai_partnership_signal(now))
     event = world_model.process(n1)
     assert event.contradicting == []
+
+
+def _earnings_report(now, actual_eps=1.05, consensus_eps=0.98):
+    return EarningsReport(
+        entity_id="NVDA",
+        actual_eps=actual_eps,
+        consensus_eps=consensus_eps,
+        fiscal_quarter="Q2 2026",
+        report_timestamp=now,
+        source_id="fixture_earnings_provider",
+        source_name="STRATUS Test Fixture (not live data)",
+    )
+
+
+def test_trigger_event_attaches_on_new_event(now):
+    """Sprint 3.6.6: WorldModel.process()'s optional trigger_event param."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    evaluator = StocksTriggerEvaluator()
+
+    raw = earnings_report_to_raw_signal(_earnings_report(now))
+    normalized = normalizer.normalize(raw)
+    trigger = evaluator.evaluate(raw, normalized)
+    assert trigger is not None  # sanity: this fixture is a qualifying beat
+
+    event = world_model.process(normalized, trigger_event=trigger)
+    assert event.trigger_events == [trigger]
+
+
+def test_trigger_event_omitted_leaves_list_empty(now):
+    """Every existing caller (trigger_event not passed) is unaffected."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    n1 = normalizer.normalize(tesla_ai_partnership_signal(now))
+    event = world_model.process(n1)
+    assert event.trigger_events == []
+
+
+def test_duplicate_trigger_does_not_double_count(now):
+    """Phase 5's 'duplicate polling results' edge case: the same report
+    re-observed within the dedup window must not accumulate two entries for
+    the same trigger_code (EvidenceTrustEngine sums confidence_contribution
+    across event.trigger_events -- duplicates would inflate it)."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    evaluator = StocksTriggerEvaluator()
+
+    raw = earnings_report_to_raw_signal(_earnings_report(now))
+    normalized = normalizer.normalize(raw)
+    trigger = evaluator.evaluate(raw, normalized)
+
+    world_model.process(normalized, trigger_event=trigger)
+    # Re-poll of the identical report a moment later, still in-window.
+    raw2 = earnings_report_to_raw_signal(_earnings_report(now + timedelta(minutes=2)))
+    normalized2 = normalizer.normalize(raw2)
+    trigger2 = evaluator.evaluate(raw2, normalized2)
+    event = world_model.process(normalized2, trigger_event=trigger2)
+
+    assert len(event.trigger_events) == 1
+
+
+def test_corrected_earnings_replaces_prior_trigger_for_same_code(now):
+    """Phase 5's 'provider corrections/revisions' edge case: a revised report
+    with different numbers replaces the prior trigger for that trigger_code
+    rather than stacking (no revision history in this minimal contract --
+    see world_model/model.py's comment on why this isn't the full
+    TRIGGER_EVENT_FRAMEWORK.md revision model)."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    evaluator = StocksTriggerEvaluator()
+
+    raw = earnings_report_to_raw_signal(_earnings_report(now, actual_eps=1.05))
+    normalized = normalizer.normalize(raw)
+    trigger = evaluator.evaluate(raw, normalized)
+    world_model.process(normalized, trigger_event=trigger)
+
+    corrected_raw = earnings_report_to_raw_signal(
+        _earnings_report(now + timedelta(minutes=5), actual_eps=1.10)
+    )
+    corrected_normalized = normalizer.normalize(corrected_raw)
+    corrected_trigger = evaluator.evaluate(corrected_raw, corrected_normalized)
+    event = world_model.process(corrected_normalized, trigger_event=corrected_trigger)
+
+    assert len(event.trigger_events) == 1
+    assert event.trigger_events[0].context["actual_eps"] == 1.10

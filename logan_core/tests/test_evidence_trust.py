@@ -3,9 +3,12 @@ from datetime import timedelta
 from logan_core.evidence_trust import EvidenceTrustEngine
 from logan_core.normalization import Normalizer
 from logan_core.receptors import (
+    earnings_report_to_raw_signal,
     tesla_ai_partnership_corroboration,
     tesla_ai_partnership_signal,
 )
+from logan_core.receptors.providers import EarningsReport
+from logan_core.trigger_detection import StocksTriggerEvaluator
 from logan_core.world_model import WorldModel
 
 
@@ -76,3 +79,39 @@ def test_unknown_source_gets_default_score(now):
     engine = EvidenceTrustEngine()
     result = engine.evaluate(event, [normalized], now=now)
     assert result.source_score == 0.5
+
+
+def test_trigger_confidence_bonus_defaults_zero(now):
+    """Sprint 3.6.6: every event without an attached TriggerEvent (i.e. every
+    event before this sprint) must be completely unaffected."""
+    event, signals = _build_event_and_signals(now)
+    engine = EvidenceTrustEngine()
+    result = engine.evaluate(event, signals, now=now)
+    assert result.trigger_confidence_bonus == 0.0
+
+
+def test_trigger_confidence_bonus_reflects_attached_trigger(now):
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    evaluator = StocksTriggerEvaluator()
+
+    raw = earnings_report_to_raw_signal(
+        EarningsReport(
+            entity_id="NVDA",
+            actual_eps=1.05,
+            consensus_eps=0.98,
+            report_timestamp=now,
+            source_id="fixture_earnings_provider",
+            source_name="STRATUS Test Fixture (not live data)",
+        )
+    )
+    normalized = normalizer.normalize(raw)
+    trigger = evaluator.evaluate(raw, normalized)
+    event = world_model.process(normalized, trigger_event=trigger)
+
+    engine = EvidenceTrustEngine()
+    result = engine.evaluate(event, [normalized], now=now)
+    assert result.trigger_confidence_bonus == 0.22
+    assert any(
+        "trigger_confidence_bonus" in entry.rule for entry in result.decision_trace
+    )

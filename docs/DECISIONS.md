@@ -696,3 +696,71 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   true when they were written. `docs/specs/Logan_Documentation_v3.1.3.zip` and `_v3.1.2.zip` (prior
   point-in-time archive snapshots) are untouched; `Logan_Documentation_v3.1.4.zip` is rebuilt from the
   renamed folder.
+
+## ADR-042: Sprint 3.6.6 — minimal TriggerEvent implemented for one vertical slice (NVIDIA earnings -> STOCK_EARNINGS_BEAT); OD-009 partially superseded
+- Date: 2026-08-14
+- Status: Accepted
+- Context: OD-009 (V3.1.4 BATCH-3) marked the entire TriggerEvent framework and every domain's trigger
+  registry `SPECIFIED — NOT IMPLEMENTED`, explicitly out of scope for that release. Sprint 3.6.6's goal is
+  STRATUS's first real (non-simulated-shaped) vertical slice: NVIDIA earnings data, deterministically
+  evaluated against the already-registered `STOCK_EARNINGS_BEAT` fire condition
+  (`TRIGGER_REGISTRY_STOCKS.md`), flowing through the existing, unmodified downstream pipeline to a
+  delivered opportunity. Building the full ~60-field TriggerEvent contract, the revision/dedup model, or
+  any other domain's trigger codes was explicitly out of scope for this sprint (see the sprint brief's
+  "Explicitly out of scope for this slice"). Repository reconnaissance (Phase 1) confirmed OD-009's
+  "NOT IMPLEMENTED" claim was still accurate before this sprint: zero TriggerEvent code existed anywhere
+  in `logan_core/`, `Normalizer` only validates `signal_type` against a fixed registry (never computes
+  one from numeric evidence), and every domain receptor remained simulated-only.
+- Decision:
+  1. A minimal `TriggerEvent` contract (`logan_core/contracts/trigger.py`) implements only the fields this
+     one slice can truthfully populate — trigger identity/code/class/type/status, affected entity,
+     direction, raw_magnitude, a fixed registry-specified `confidence_contribution`, a `context` dict
+     containing only provider-supplied fields, originating signal ids, source/provenance, and
+     decision_trace. Revision/dedup/identity machinery, `domain_impacts`, `lifecycle_effect`,
+     `seasonal_context`, `causal_relationship`, `provider_disagreement_state`, `notification_eligibility`,
+     and every other field the full framework specifies remain unimplemented and out of scope.
+  2. Deterministic trigger detection (`logan_core/trigger_detection/stocks.py`) sits at the
+     signal/normalization/event-resolution boundary, called by the Orchestrator between normalization and
+     World Model, opt-in via `PipelineDependencies.trigger_detector` (defaults `None` — every existing
+     caller, including `backend/app/logan_feed.py`'s current simulated-fixtures path, is unaffected; see
+     `test_without_trigger_detector_wired_behaves_exactly_as_before`). Only `STOCK_EARNINGS_BEAT` is
+     implemented; every other registered stocks code, and every other domain, remains SPECIFIED — NOT
+     IMPLEMENTED.
+  3. `TriggerEvent`s attach to `EnrichedEvent.trigger_events` (new, additive, default-empty field) via
+     `WorldModel.process()`'s new optional `trigger_event` parameter. A duplicate poll of the same report
+     is deduped by replacing (not appending) the entry for that `trigger_code`, so re-polling never
+     double-counts; a corrected/revised report (different magnitude, same `trigger_code`) also replaces
+     the prior entry rather than stacking — a deliberately simpler rule than the full framework's
+     revision-history model.
+  4. The trigger's `confidence_contribution` reaches `ConclusionConfidence.confidence_score` through two
+     small, additive extensions: `EvidenceTrust` gains a `trigger_confidence_bonus` field (sum of attached
+     triggers' contributions, defaulting 0.0), and `ConclusionConfidenceEngine.evaluate()` changes
+     `confidence_score = trust.trust_score` to `confidence_score = trust.trust_score +
+     trust.trigger_confidence_bonus` before the existing contradiction-penalty/clamp logic. This is a
+     deterministic, rule-based addition — not a new ML capability, and not the ADR-032 ML-calibration
+     surface (`*_model_version` fields on `EvidenceTrust`/`ConclusionConfidence` remain
+     `"deterministic-baseline"`, untouched). It is also distinct from ADR-015's Mental Model exclusion:
+     Mental Model is explicitly narrative/interpretive and still contributes nothing to confidence
+     (enforced by the existing `test_mental_model_confidence_has_zero_scoring_effect`-style regressions,
+     which still pass); a confirmed trigger is verified quantitative evidence, a different kind of input.
+  5. Provider-specific structure terminates at a new receptor/provider boundary
+     (`logan_core/receptors/providers/`): an `EarningsProvider` Protocol, a `FixtureEarningsProvider`
+     (explicitly, unmistakably labeled non-live — `source_id="fixture_earnings_provider"`,
+     `source_name="STRATUS Test Fixture (not live data)"`) used by tests, and
+     `receptors/stocks_earnings.py`'s `earnings_report_to_raw_signal()` mapping into the existing,
+     unmodified `RawSignal` contract. No real provider (e.g. Alpha Vantage/Finnhub) is implemented this
+     sprint — no credentials were available; implementing one later means writing one class against the
+     existing Protocol, no other file changes.
+  6. `23_CURRENT_IMPLEMENTATION_STATE.md`'s TriggerEvent/receptor rows are updated to describe exactly
+     this subset as BUILT, with the remainder of OD-009's scope still explicitly marked NOT IMPLEMENTED —
+     OD-009 is partially superseded, not reversed.
+- Consequences: `logan_core` test count rises from 100 to 126 (Phase 8: trigger-condition unit tests
+  covering every edge case in the sprint brief — missing/zero/negative consensus, non-firing beats,
+  duplicate polls, corrections; receptor/provider mapping tests; a full pipeline integration test proving
+  the deterministic positive-fire case end-to-end through the unmodified downstream pipeline via
+  `FixtureEarningsProvider`; and a backward-compatibility test proving the default/no-detector path is
+  byte-for-byte unchanged). `backend/app/logan_feed.py` is **not** wired to the new trigger/provider code
+  this sprint — the live `/v1/opportunities` demo continues serving simulated fixtures for every entity,
+  NVDA included, exactly as before. Proving this same path against real NVIDIA earnings data is the
+  explicit next step once a stocks-earnings provider and API credentials are chosen (a decision this ADR
+  does not make).

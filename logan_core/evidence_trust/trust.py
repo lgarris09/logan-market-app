@@ -82,6 +82,38 @@ class EvidenceTrustEngine:
         ) * MANIPULATION_PENALTY[manipulation_risk]
         trust_score = max(0.0, min(1.0, trust_score))
 
+        # Sprint 3.6.6: sum of any attached TriggerEvent.confidence_contribution
+        # values -- a deterministic pass-through of the fixed registry constant
+        # (e.g. +0.22, STOCK_EARNINGS_BEAT), not a new scoring formula computed
+        # here. Empty event.trigger_events (every event before this sprint, and
+        # every event without a real trigger) yields exactly 0.0, so trust_score
+        # itself and every existing caller/test is unaffected.
+        trigger_confidence_bonus = max(
+            0.0, min(1.0, sum(t.confidence_contribution for t in event.trigger_events))
+        )
+
+        decision_trace = [
+            DecisionTraceEntry(
+                layer="evidence_trust",
+                rule=f"trust_score={trust_score:.2f} "
+                f"(source={source_score:.2f}, corroboration={corroboration}, "
+                f"recency={recency_score:.2f}, manipulation_risk={manipulation_risk})",
+                confidence=trust_score,
+                timestamp=now,
+            )
+        ]
+        if event.trigger_events:
+            decision_trace.append(
+                DecisionTraceEntry(
+                    layer="evidence_trust",
+                    rule=f"trigger_confidence_bonus={trigger_confidence_bonus:.2f} "
+                    f"from {len(event.trigger_events)} attached trigger(s): "
+                    f"{', '.join(t.trigger_code for t in event.trigger_events)}",
+                    confidence=trigger_confidence_bonus,
+                    timestamp=now,
+                )
+            )
+
         return EvidenceTrust(
             event_id=event.event_id,
             source_score=source_score,
@@ -91,15 +123,7 @@ class EvidenceTrustEngine:
             manipulation_risk=manipulation_risk,
             completeness=completeness,
             trust_score=trust_score,
+            trigger_confidence_bonus=trigger_confidence_bonus,
             evaluated_at=now,
-            decision_trace=[
-                DecisionTraceEntry(
-                    layer="evidence_trust",
-                    rule=f"trust_score={trust_score:.2f} "
-                    f"(source={source_score:.2f}, corroboration={corroboration}, "
-                    f"recency={recency_score:.2f}, manipulation_risk={manipulation_risk})",
-                    confidence=trust_score,
-                    timestamp=now,
-                )
-            ],
+            decision_trace=decision_trace,
         )

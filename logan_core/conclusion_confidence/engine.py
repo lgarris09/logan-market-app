@@ -31,7 +31,18 @@ class ConclusionConfidenceEngine:
         trust: EvidenceTrust,
         mental_model: Optional[MentalModel] = None,
     ) -> ConclusionConfidence:
-        confidence_score = trust.trust_score
+        # Sprint 3.6.6: trust.trigger_confidence_bonus is a deterministic
+        # pass-through of a fixed registry constant (see
+        # evidence_trust/trust.py) -- not a new confidence *source* in the
+        # sense ADR-015 forbids for Mental Model. Mental Model is explicitly
+        # narrative/interpretive and still contributes nothing here (the
+        # `mental_model` param above remains accepted-but-unread, per
+        # ADR-015 and test_conclusion_confidence.py's
+        # test_mental_model_confidence_has_zero_scoring_effect). A confirmed
+        # trigger is verified quantitative evidence, a different kind of
+        # input entirely -- defaults to 0.0 for every event without one, so
+        # this is additive/backward-compatible, not a formula replacement.
+        confidence_score = trust.trust_score + trust.trigger_confidence_bonus
         if trust.contradiction_flag:
             confidence_score *= 0.7
         confidence_score = max(0.0, min(1.0, confidence_score))

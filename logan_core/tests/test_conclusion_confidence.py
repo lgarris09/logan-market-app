@@ -84,6 +84,40 @@ def test_confidence_score_derives_from_trust_only():
     assert confidence.confidence_score == trust.trust_score
 
 
+def test_trigger_confidence_bonus_adds_to_confidence_score():
+    """Sprint 3.6.6: a deterministic trigger's confidence_contribution
+    (surfaced via EvidenceTrust.trigger_confidence_bonus) is additive to
+    confidence_score -- distinct from Mental Model's explicit zero-effect
+    exclusion (ADR-015) covered by the tests below. trust_score=0.6 chosen
+    so trust_score + bonus stays under 1.0 (no clamping) and the additive
+    effect is directly observable."""
+    engine = ConclusionConfidenceEngine()
+    reasoning = _reasoning()
+    baseline = _trust(reasoning.event_id, trust_score=0.6)
+    with_trigger = _trust(reasoning.event_id, trust_score=0.6).model_copy(
+        update={"trigger_confidence_bonus": 0.22}
+    )
+
+    confidence_baseline = engine.evaluate(reasoning, baseline, mental_model=None)
+    confidence_with_trigger = engine.evaluate(
+        reasoning, with_trigger, mental_model=None
+    )
+
+    assert confidence_with_trigger.confidence_score == round(
+        confidence_baseline.confidence_score + 0.22, 10
+    )
+
+
+def test_confidence_score_still_clamped_to_one_with_trigger_bonus():
+    engine = ConclusionConfidenceEngine()
+    reasoning = _reasoning()
+    trust = _trust(reasoning.event_id, trust_score=0.95).model_copy(
+        update={"trigger_confidence_bonus": 0.22}
+    )
+    confidence = engine.evaluate(reasoning, trust, mental_model=None)
+    assert confidence.confidence_score == 1.0
+
+
 def test_decision_trace_populated():
     engine = ConclusionConfidenceEngine()
     trust = _trust(uuid4())

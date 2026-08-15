@@ -29,6 +29,16 @@ class EvidenceTrust(BaseModel):
     # somewhere to declare its version; it must never be set to anything other
     # than the deterministic-baseline default without a real model behind it.
     source_reliability_model_version: Optional[str] = "deterministic-baseline"
+    # Sprint 3.6.6 — additive, defaults 0.0: the sum of any attached
+    # TriggerEvent.confidence_contribution values (e.g. +0.22 for a
+    # STOCK_EARNINGS_BEAT), computed deterministically from the fixed
+    # registry constant in trigger_detection/, never a trained model. Not
+    # part of the ADR-032 ML-calibration surface above (source_score/
+    # trust_score/source_reliability_model_version are untouched by this) --
+    # see docs/DECISIONS.md's Sprint 3.6.6 ADR for why a deterministic
+    # rule-based addition here doesn't conflict with ADR-032's ML scoping
+    # or ADR-015's (unrelated) Mental Model exclusion.
+    trigger_confidence_bonus: float = Field(default=0.0, ge=0.0, le=1.0)
     evaluated_at: datetime
     decision_trace: list = Field(default_factory=list)
 

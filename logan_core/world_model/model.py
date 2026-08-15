@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID, uuid4
 
 from logan_core.contracts import (
@@ -9,6 +10,7 @@ from logan_core.contracts import (
     Entity,
     EntityType,
     NormalizedSignal,
+    TriggerEvent,
 )
 
 DEDUP_WINDOW = timedelta(hours=1)
@@ -74,7 +76,9 @@ class WorldModel:
             self._entity_graph[entity_id] = entity
         return entity
 
-    def process(self, signal: NormalizedSignal) -> EnrichedEvent:
+    def process(
+        self, signal: NormalizedSignal, trigger_event: Optional[TriggerEvent] = None
+    ) -> EnrichedEvent:
         """V3.1.4 BATCH-2 note on `EnrichedEvent.contradicting`: reserved, not
         populated. A deterministic contradiction rule needs to compare two
         signals' `value` fields, but `NormalizedSignal.value` is untyped
@@ -138,6 +142,11 @@ class WorldModel:
                 summary=summary,
                 occurred_at=signal.captured_at,
                 enriched_at=datetime.now(timezone.utc),
+                # Sprint 3.6.6: attaches only when the orchestrator wired a
+                # trigger_detector and it fired for this signal -- every
+                # existing caller (trigger_event omitted) gets [] exactly as
+                # before.
+                trigger_events=[trigger_event] if trigger_event else [],
                 decision_trace=[
                     DecisionTraceEntry(
                         layer="world_model",
@@ -151,6 +160,28 @@ class WorldModel:
             # A corroborating signal for an event already seen in this window — merge
             # it in as supporting evidence rather than treating it as a new event.
             existing = self._events[prior_event_id]
+            # Sprint 3.6.6: replace-by-trigger_code, not append. A duplicate
+            # poll of the same underlying report (Phase 5's "duplicate
+            # polling results" edge case) would otherwise add a second,
+            # near-identical TriggerEvent for the same trigger_code, and
+            # EvidenceTrustEngine sums every attached trigger's
+            # confidence_contribution -- silently double-counting the same
+            # evidence. A genuinely corrected/revised report (different
+            # raw_magnitude, same trigger_code -- Phase 5's "provider
+            # corrections/revisions" case) replaces the prior entry rather
+            # than stacking alongside it, so confidence reflects the latest
+            # known numbers, not stale-plus-corrected added together. This
+            # is deliberately simpler than TRIGGER_EVENT_FRAMEWORK.md's full
+            # revision model (revision_number/supersedes_revision, out of
+            # scope this sprint per OD-009) -- "one live TriggerEvent per
+            # trigger_code per event," not a revision history.
+            merged_triggers = list(existing.trigger_events)
+            if trigger_event is not None:
+                merged_triggers = [
+                    t
+                    for t in merged_triggers
+                    if t.trigger_code != trigger_event.trigger_code
+                ] + [trigger_event]
             event = existing.model_copy(
                 update={
                     "is_new": False,
@@ -158,6 +189,7 @@ class WorldModel:
                     "signal_ids": existing.signal_ids + [signal.signal_id],
                     "supporting": existing.supporting + [signal.signal_id],
                     "enriched_at": datetime.now(timezone.utc),
+                    "trigger_events": merged_triggers,
                     "decision_trace": existing.decision_trace
                     + [
                         DecisionTraceEntry(
