@@ -18,7 +18,7 @@ import {
 import { biasStateFor, FieldBias } from "../lib/fieldBias";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
-import { CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
+import { CARD_BOTTOM_MARGIN, CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
 // Opportunity Card redesign (owner device feedback): 0.82 -> 0.87 still read
@@ -89,6 +89,23 @@ export function AttentionField({
     setDisclosure(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
+
+  // Owner request: switching FIELD BIAS while a card is open should close
+  // it, rather than leaving an open card whose contents may no longer match
+  // the newly-selected lens sitting on top of a field that just visually
+  // rebalanced underneath it. `useRef` (not a dependency-array trick) skips
+  // the very first render deliberately -- `fieldBias` genuinely changes
+  // value on mount (from its default) in some call patterns, and that
+  // should never auto-close a card that a caller just explicitly asked to
+  // open via `openRequest`.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    setDisclosure(0);
+  }, [fieldBias]);
 
   const layouts = useMemo(
     () => computeAtmosphereLayout(items, width, height),
@@ -274,9 +291,11 @@ export function AttentionField({
   // Round 2 (real-device screenshots): the card could previously grow to a
   // fixed height regardless of how much room the field actually had,
   // rendering partially off-screen near the top/bottom edge. Capping it to
-  // the real measured field height (minus safe margins) is what lets
-  // Vessel.tsx fall back to its internal ScrollView instead.
-  const maxCardHeight = Math.max(220, height - CARD_SAFE_MARGIN * 2);
+  // the real measured field height (minus top/bottom margins -- see
+  // CARD_SAFE_MARGIN/CARD_BOTTOM_MARGIN's own comments for why they're not
+  // equal) is what lets Vessel.tsx fall back to its internal ScrollView
+  // instead.
+  const maxCardHeight = Math.max(220, height - CARD_SAFE_MARGIN - CARD_BOTTOM_MARGIN);
   const anyExpanded = disclosure > 0;
 
   // FIELD BIAS paint order: when a lens is active, emphasized items render
@@ -337,20 +356,25 @@ export function AttentionField({
           const anchorX = layout.x * width;
           const anchorY = layout.y * height;
           const safeX = width / 2;
-          // Owner device feedback: the card's bottom-edge position was
-          // already right (vertically centering left CARD_SAFE_MARGIN of
-          // clearance below it, same as above) -- growing CARD_HEIGHT
-          // should extend the card *upward*, toward the header, not
-          // symmetrically in both directions. Anchoring the target center
-          // to a fixed bottom edge (rather than the field's vertical
-          // center) does that: as cardHalfH grows toward maxCardHeight/2,
-          // the center moves up to compensate, keeping the bottom edge
-          // fixed at height - CARD_SAFE_MARGIN regardless of how tall the
-          // card ends up. Mirrors Vessel.tsx's own
-          // Math.min(CARD_HEIGHT, maxCardHeight) exactly so this position
-          // math never assumes a height the card doesn't actually render at.
+          // Owner device feedback (round 2): with CARD_HEIGHT set to always
+          // exceed maxCardHeight, cardHeight always equals maxCardHeight
+          // exactly -- which made a *symmetric* margin (the original
+          // CARD_SAFE_MARGIN*2 split) produce identical top/bottom
+          // clearance no matter how this center target was computed, so the
+          // round-1 "anchor to a fixed bottom" fix had no actual effect
+          // (bottom kept landing at the same spot centering already gave
+          // it, and the card visibly touched/overlapped FieldBiasControl
+          // below). CARD_SAFE_MARGIN (top) and CARD_BOTTOM_MARGIN (bottom)
+          // are now genuinely different constants -- see their own
+          // comments in Vessel.tsx -- so top clearance and bottom clearance
+          // are independently real: the card sits CARD_SAFE_MARGIN from the
+          // header above it and CARD_BOTTOM_MARGIN (deliberately larger,
+          // a clearly visible gap) from FieldBiasControl below it. Mirrors
+          // Vessel.tsx's own Math.min(CARD_HEIGHT, maxCardHeight) exactly
+          // so this position math never assumes a height the card doesn't
+          // actually render at.
           const cardHalfH = Math.min(CARD_HEIGHT, maxCardHeight) / 2;
-          const safeY = height - CARD_SAFE_MARGIN - cardHalfH;
+          const safeY = height - CARD_BOTTOM_MARGIN - cardHalfH;
 
           return (
             <Vessel

@@ -77,17 +77,30 @@ const ICON_NAME_GAP = 5;
 // STRATUS TAKE panel, distinctly-spaced sections, bordered RECOMMENDATION
 // panel) to compress or crowd to fit. This is a ceiling, not a fixed
 // height: real screens still clamp it via AttentionField.tsx's
-// maxCardHeight (field viewport height minus CARD_SAFE_MARGIN*2) -- the
-// ScrollView below (detailBodyWrap) still handles anything that doesn't
-// fit, by design (vertical scrolling is an intentional part of the
-// experience, not an overflow bug). 640 -> 900: on-device, 640 was itself
-// the binding constraint on a typical field viewport (the card had visible
-// empty space above it toward the header), so maxCardHeight -- the real,
-// per-device ceiling -- should be what decides the height, not this
-// number. 900 comfortably exceeds any plausible field viewport so
-// maxCardHeight is always the actual limit now.
+// maxCardHeight (field viewport height minus CARD_SAFE_MARGIN and
+// CARD_BOTTOM_MARGIN combined) -- the ScrollView below (detailBodyWrap)
+// still handles anything that doesn't fit, by design (vertical scrolling
+// is an intentional part of the experience, not an overflow bug). 640 ->
+// 900: on-device, 640 was itself the binding constraint on a typical field
+// viewport (the card had visible empty space above it toward the header),
+// so maxCardHeight -- the real, per-device ceiling -- should be what
+// decides the height, not this number. 900 comfortably exceeds any
+// plausible field viewport so maxCardHeight is always the actual limit
+// now.
 export const CARD_HEIGHT = 900;
+// Top clearance -- kept small so the card can extend close to the header
+// ("closer to the logo" per owner feedback).
 export const CARD_SAFE_MARGIN = 16;
+// Bottom clearance -- deliberately larger than CARD_SAFE_MARGIN. With
+// CARD_HEIGHT set to always exceed maxCardHeight (see above), the card
+// always renders at exactly maxCardHeight = height - CARD_SAFE_MARGIN -
+// CARD_BOTTOM_MARGIN, so top clearance = CARD_SAFE_MARGIN and bottom
+// clearance = CARD_BOTTOM_MARGIN exactly -- a single shared margin would
+// make top and bottom clearance equal by construction (the "grow toward
+// the header, keep a clear gap at the bottom" ask specifically requires
+// them to differ). See AttentionField.tsx's maxCardHeight/safeY for the
+// asymmetric math this enables.
+export const CARD_BOTTOM_MARGIN = 32;
 
 // Attention Gravity motion (see the class comment below). A new vessel's
 // position starts this many times farther from the field center than its
@@ -871,28 +884,44 @@ export function Vessel({
                 >
                   <Animated.View style={[styles.headerRow, headerStyle]}>
                     <View style={styles.headerIdentity}>
-                      {!!item.ticker && (
-                        <Text style={[styles.tickerLine, { color: symbol.color }]}>
-                          {item.ticker}
-                        </Text>
-                      )}
-                      <View style={styles.headerNameRow}>
-                        <EntitySymbol symbol={symbol} size={32} />
-                        <Text style={styles.headerName} numberOfLines={1}>
-                          {item.display_name}
-                        </Text>
+                      {/* Owner rendering reference: the icon sits in its own
+                          bordered circle ("bubble"), to the left of a
+                          ticker/name/category text column -- not inline
+                          before just the name. Ticker/name/category all
+                          share the same left edge (this column's own left
+                          edge), independent of the icon bubble's width, so
+                          the ticker aligns with the name's first letter as
+                          requested rather than being offset by the icon. */}
+                      <View style={styles.headerIdentityRow}>
+                        <View style={[styles.headerIconWrap, { borderColor: symbol.color }]}>
+                          <EntitySymbol symbol={symbol} size={26} />
+                        </View>
+                        <View style={styles.headerTextColumn}>
+                          {!!item.ticker && (
+                            <Text
+                              style={[styles.tickerLine, { color: symbol.color }]}
+                              numberOfLines={1}
+                            >
+                              {item.ticker}
+                            </Text>
+                          )}
+                          <Text style={styles.headerName} numberOfLines={1}>
+                            {item.display_name}
+                          </Text>
+                          {/* Opportunity Card redesign: replaces the old
+                              CONFIDENCE pill, which duplicated the number
+                              the ring to the right already shows.
+                              `category` is the one real classification
+                              field on FeedItem -- see humanizeCategory's
+                              own comment for why this is a single value,
+                              not the reference rendering's two-part
+                              "Technology • Semiconductors" (no second field
+                              exists to back that). */}
+                          <Text style={styles.categoryLine} numberOfLines={1}>
+                            {humanizeCategory(item.category)}
+                          </Text>
+                        </View>
                       </View>
-                      {/* Opportunity Card redesign: replaces the old
-                          CONFIDENCE pill, which duplicated the number the
-                          ring to the right already shows. `category` is the
-                          one real classification field on FeedItem -- see
-                          humanizeCategory's own comment for why this is a
-                          single value, not the reference rendering's
-                          two-part "Technology • Semiconductors" (no second
-                          field exists to back that). */}
-                      <Text style={styles.categoryLine} numberOfLines={1}>
-                        {humanizeCategory(item.category)}
-                      </Text>
                     </View>
                     <ConfidenceRing
                       score={item.confidence_score}
@@ -1156,17 +1185,30 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingRight: 24,
   },
-  headerIdentity: { flexShrink: 1, gap: 6 },
+  headerIdentity: { flexShrink: 1 },
+  // Icon bubble to the left of the ticker/name/category column -- see the
+  // JSX comment at the call site for why this replaced the old inline
+  // icon-before-name treatment.
+  headerIdentityRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  headerTextColumn: { flexShrink: 1, gap: 4 },
   tickerLine: {
     fontSize: 10,
     fontFamily: font.metadata,
     letterSpacing: tracking.metadata,
   },
-  headerNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   // Opportunity Card redesign: 17 -> 19, then 19 -> 23 (owner device
-  // feedback: still too small next to the larger EntitySymbol icon beside
-  // it) -- still under the headline's own 26, which stays the card's
-  // largest single typographic element.
+  // feedback: still too small next to the icon bubble beside it) -- still
+  // under the headline's own 26, which stays the card's largest single
+  // typographic element.
   headerName: { color: theme.text, fontFamily: font.heading, fontSize: 23, flexShrink: 1 },
   // Opportunity Card redesign: replaces the old tierPill (a CONFIDENCE badge
   // that duplicated the ring's own percentage). Real `category` data,
