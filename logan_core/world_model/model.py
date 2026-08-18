@@ -60,6 +60,14 @@ class WorldModel:
         self._recent: dict[tuple[str, str], tuple[datetime, UUID]] = {}
         self._prior_values: dict[tuple[str, str], object] = {}
         self._events: dict[UUID, EnrichedEvent] = {}
+        # Sprint 3.6.6E: (source_id, value) of the most recently absorbed signal per
+        # (entity_id, signal_type) -- independent of _prior_values, which only
+        # updates when a genuinely new event starts. Lets process()'s corroboration
+        # branch tell "the same source re-reporting identical content" (a duplicate
+        # poll -- e.g. the live NVDA path re-fetching the same unchanged FMP report
+        # on every /v1/opportunities request) apart from "a different source, or the
+        # same source with genuinely changed content" (real corroboration).
+        self._last_observed: dict[tuple[str, str], tuple[str, object]] = {}
 
     def _get_or_create_entity(
         self, entity_id: str, entity_type: EntityType, domain: Domain
@@ -182,20 +190,54 @@ class WorldModel:
                     for t in merged_triggers
                     if t.trigger_code != trigger_event.trigger_code
                 ] + [trigger_event]
+
+            # Sprint 3.6.6E: a duplicate poll of the same underlying evidence
+            # (same source_id, same signal.value -- e.g. the live NVDA path
+            # re-fetching an unchanged FMP report on every /v1/opportunities
+            # request) is not new corroborating evidence and must not grow
+            # `supporting`, which EvidenceTrustEngine's corroboration score
+            # reads directly (len(event.supporting)) -- repeated reads of the
+            # same observation were inflating confidence purely from being
+            # polled repeatedly, never from anything genuinely new. `signal_ids`
+            # still grows either way, preserving the honest provenance record
+            # that this poll happened. A different source, or the same source
+            # reporting genuinely different content (e.g. a corrected report --
+            # see test_corrected_earnings_replaces_prior_trigger_for_same_code),
+            # is real corroboration and still grows `supporting` as before.
+            last_source_id, last_value = self._last_observed.get(
+                dedup_key, (None, None)
+            )
+            is_duplicate_observation = (
+                signal.source_id == last_source_id and signal.value == last_value
+            )
+            new_signal_ids = existing.signal_ids + [signal.signal_id]
+            if is_duplicate_observation:
+                new_supporting = existing.supporting
+                trace_rule = (
+                    f"duplicate observation: same source ({signal.source_id}) and "
+                    f"content re-polled within {DEDUP_WINDOW} -- not counted as new "
+                    f"corroborating evidence"
+                )
+            else:
+                new_supporting = existing.supporting + [signal.signal_id]
+                trace_rule = (
+                    f"corroboration: merged into existing event "
+                    f"(within {DEDUP_WINDOW} dedup window)"
+                )
+
             event = existing.model_copy(
                 update={
                     "is_new": False,
                     "prior_event_id": prior_event_id,
-                    "signal_ids": existing.signal_ids + [signal.signal_id],
-                    "supporting": existing.supporting + [signal.signal_id],
+                    "signal_ids": new_signal_ids,
+                    "supporting": new_supporting,
                     "enriched_at": datetime.now(timezone.utc),
                     "trigger_events": merged_triggers,
                     "decision_trace": existing.decision_trace
                     + [
                         DecisionTraceEntry(
                             layer="world_model",
-                            rule=f"corroboration: merged into existing event "
-                            f"(within {DEDUP_WINDOW} dedup window)",
+                            rule=trace_rule,
                             timestamp=datetime.now(timezone.utc),
                         )
                     ],
@@ -203,5 +245,6 @@ class WorldModel:
             )
 
         self._recent[dedup_key] = (signal.captured_at, event.event_id)
+        self._last_observed[dedup_key] = (signal.source_id, signal.value)
         self._events[event.event_id] = event
         return event

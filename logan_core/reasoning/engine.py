@@ -38,13 +38,36 @@ class ReasoningEngine:
             significance += f" - changed from {delta.prior_value} to {delta.new_value}"
 
         if holds_directly:
+            # Sprint 3.6.6E: wording deliberately says "tracking a holding",
+            # not "you hold a position" -- all this layer actually knows is
+            # that entity_id is present in user_model.holdings, which today
+            # (LOCAL_FOUNDER_USER_ID="demo_user") is hardcoded seed data in
+            # backend/app/logan_feed.py, not a real per-user holdings store
+            # (ADR-006 remains open) or anything the user explicitly entered
+            # through a real flow. "You hold a position" asserts an
+            # externally-verified financial fact this system has no way to
+            # confirm; "tracking a holding" accurately describes what's
+            # actually in the user model, whether that record eventually
+            # comes from a real connected/entered holding or today's seed.
             personal_relevance_narrative = (
-                f"You hold a position connected to {', '.join(sorted(event_entity_ids & holding_ids))}, "
-                f"so this is directly relevant to what you're already tracking."
+                f"You're tracking a holding connected to "
+                f"{', '.join(sorted(event_entity_ids & holding_ids))}, "
+                f"so this is directly relevant to what you already follow."
             )
         elif connected_entities:
+            # Sprint 3.6.6E: same truthfulness fix as the holds_directly
+            # branch above -- "which you follow" asserts an externally-
+            # verified fact (the user actively follows this entity) that
+            # this layer cannot confirm. connected_entities is drawn from
+            # user_model.interests (also hardcoded seed data today, e.g.
+            # AI_SECTOR's source="explicit" in backend/app/logan_feed.py --
+            # "explicit" describes how the *demo seed* was authored, not a
+            # real user action) and, via downstream ripple, sometimes
+            # user_model.holdings. "which you're tracking" accurately
+            # describes what's in the user model either way, without
+            # overclaiming a verified user behavior.
             personal_relevance_narrative = (
-                f"This connects to {', '.join(connected_entities)}, which you follow — "
+                f"This connects to {', '.join(connected_entities)}, which you're tracking — "
                 f"worth understanding even though it's not a direct holding."
             )
         else:

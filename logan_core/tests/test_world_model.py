@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from logan_core.evidence_trust import EvidenceTrustEngine
 from logan_core.normalization import Normalizer
 from logan_core.receptors import (
     earnings_report_to_raw_signal,
@@ -167,3 +168,117 @@ def test_corrected_earnings_replaces_prior_trigger_for_same_code(now):
 
     assert len(event.trigger_events) == 1
     assert event.trigger_events[0].context["actual_eps"] == 1.10
+
+
+# --- Sprint 3.6.6E: repeated polling must not inflate corroboration/confidence ---
+
+
+def _nvda_raw(now, actual_eps=1.87, consensus_eps=1.76, source_id="fmp"):
+    return earnings_report_to_raw_signal(
+        EarningsReport(
+            entity_id="NVDA",
+            actual_eps=actual_eps,
+            consensus_eps=consensus_eps,
+            fiscal_quarter="Q1 2027",
+            report_timestamp=now,
+            source_id=source_id,
+            source_name="Financial Modeling Prep",
+        )
+    )
+
+
+def test_duplicate_poll_same_source_same_content_does_not_grow_supporting(now):
+    """Reproduces the reported bug: the live NVDA path re-fetches the same
+    unchanged FMP report on every /v1/opportunities request. A repeated poll
+    of identical evidence must not be counted as new corroborating evidence."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    n1 = normalizer.normalize(_nvda_raw(now))
+    first_event = world_model.process(n1)
+    assert first_event.supporting == []
+
+    n2 = normalizer.normalize(_nvda_raw(now + timedelta(minutes=1)))
+    second_event = world_model.process(n2)
+
+    assert second_event.supporting == []
+    # Provenance is still preserved -- signal_ids records that the poll happened.
+    assert set(second_event.signal_ids) == {n1.signal_id, n2.signal_id}
+    assert "duplicate observation" in second_event.decision_trace[-1].rule
+
+
+def test_repeated_duplicate_polls_stay_flat(now):
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    world_model.process(normalizer.normalize(_nvda_raw(now)))
+    event = None
+    for minute in range(1, 6):
+        event = world_model.process(
+            normalizer.normalize(_nvda_raw(now + timedelta(minutes=minute)))
+        )
+    assert event is not None
+    assert event.supporting == []
+
+
+def test_different_source_after_duplicate_polls_still_counts_as_corroboration(now):
+    """Independent corroborating evidence must still be able to increase
+    confidence later -- only same-source/same-content repeats are excluded."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    world_model.process(normalizer.normalize(_nvda_raw(now)))
+    world_model.process(
+        normalizer.normalize(_nvda_raw(now + timedelta(minutes=1)))
+    )  # duplicate, no growth expected
+
+    different_source = normalizer.normalize(
+        _nvda_raw(now + timedelta(minutes=2), source_id="bloomberg_terminal")
+    )
+    event = world_model.process(different_source)
+
+    assert different_source.signal_id in event.supporting
+    assert "corroboration" in event.decision_trace[-1].rule
+    assert "duplicate observation" not in event.decision_trace[-1].rule
+
+
+def test_changed_content_from_same_source_still_counts_as_corroboration(now):
+    """A corrected/revised report from the same source (different EPS
+    numbers -- different signal.value text) is genuinely new information,
+    not a duplicate poll, and should still be able to increase confidence."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    world_model.process(
+        normalizer.normalize(_nvda_raw(now, actual_eps=1.87, consensus_eps=1.76))
+    )
+    revised = normalizer.normalize(
+        _nvda_raw(now + timedelta(minutes=1), actual_eps=1.90, consensus_eps=1.76)
+    )
+    event = world_model.process(revised)
+
+    assert revised.signal_id in event.supporting
+
+
+def test_repeated_identical_fmp_evidence_does_not_inflate_confidence(now):
+    """End-to-end regression test for the reported bug: World Model +
+    EvidenceTrustEngine together, proving repeated /v1/opportunities-style
+    polling of the same live NVDA report does not raise trust_score."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    engine = EvidenceTrustEngine()
+
+    n1 = normalizer.normalize(_nvda_raw(now))
+    event = world_model.process(n1)
+    # A fixed evaluation instant for every call below -- isolates the
+    # corroboration-driven inflation this test targets from ordinary (and
+    # correct) recency decay, which is unrelated to the reported bug.
+    first_trust = engine.evaluate(event, [n1], now=now)
+
+    for minute in range(1, 4):
+        n = normalizer.normalize(_nvda_raw(now + timedelta(minutes=minute)))
+        event = world_model.process(n)
+        repeated_trust = engine.evaluate(event, [n], now=now)
+        assert repeated_trust.trust_score == first_trust.trust_score
+        assert repeated_trust.corroboration == first_trust.corroboration
+        assert repeated_trust.corroboration == 0

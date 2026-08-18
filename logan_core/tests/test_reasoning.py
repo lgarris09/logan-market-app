@@ -9,6 +9,7 @@ from logan_core.contracts import (
     Entity,
     EvidenceTrust,
     Holding,
+    Interest,
     UserModel,
 )
 from logan_core.reasoning import ReasoningEngine
@@ -81,6 +82,46 @@ def test_direct_holding_is_actionable_and_directly_relevant():
     assert result.actionability == "actionable"
     assert "NVDA" in result.connected_entities
     assert "directly relevant" in result.personal_relevance_narrative
+    # Sprint 3.6.6E: this layer only knows entity_id is present in
+    # user_model.holdings -- today that's hardcoded seed data
+    # (LOCAL_FOUNDER_USER_ID="demo_user"), not a real per-user holdings
+    # store. Wording must describe what the system actually knows ("tracking
+    # a holding"), never assert an externally-verified financial fact
+    # ("you hold a position") it has no way to confirm.
+    assert "tracking a holding" in result.personal_relevance_narrative
+    assert "you hold a position" not in result.personal_relevance_narrative.lower()
+
+
+def test_interest_connection_is_honest_about_tracking_not_following():
+    """Sprint 3.6.6E: the interest-connected (not directly held) branch has
+    the same truthfulness issue as the holds_directly branch -- 'which you
+    follow' asserts a verified user behavior connected_entities (drawn from
+    user_model.interests, hardcoded seed data today) cannot confirm."""
+    event = _event(entity_id="AI_SECTOR")
+    trust = _trust(event.event_id, trust_score=0.8)
+    user_model = UserModel(
+        user_id="demo_user",
+        holdings=[],
+        interests=[
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.8,
+                source="explicit",
+                created_at=NOW,
+                last_updated=NOW,
+            )
+        ],
+        risk_tolerance="moderate",
+        model_confidence=0.5,
+        last_updated=NOW,
+        version=1,
+    )
+
+    result = ReasoningEngine().reason(event, trust, user_model, _active_context())
+    assert "AI_SECTOR" in result.connected_entities
+    assert "you're tracking" in result.personal_relevance_narrative
+    assert "which you follow" not in result.personal_relevance_narrative
 
 
 def test_no_connection_is_informational_and_unconnected():
