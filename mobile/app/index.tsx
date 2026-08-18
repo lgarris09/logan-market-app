@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
   Modal,
   Pressable,
@@ -232,6 +233,26 @@ export default function AttentionFieldScreen() {
     return () => controllerRef.current?.abort();
   }, [startLoad]);
 
+  // Sprint 3.6.6G root-cause fix: nothing previously refetched on app
+  // foreground/resume -- the screen relied solely on the one-time mount
+  // fetch above plus the 60s poll below, and RN JS timers are suspended
+  // while backgrounded, so a real push that arrived while backgrounded
+  // (push delivery is OS-level, independent of the JS thread) had no
+  // guarantee of being reflected the moment the user actually reopened the
+  // app -- the badge stayed stale until the next scheduled poll tick,
+  // which the user has no reason to wait for. This was the real on-device
+  // "3 pushed, badge still 0" cause, not the backend's is_new_for_user
+  // logic (already correct and tested). Reuses the existing startLoad --
+  // not a second fetch implementation.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        startLoad();
+      }
+    });
+    return () => subscription.remove();
+  }, [startLoad]);
+
   // Background poll so new opportunities can actually be noticed while the
   // screen is open -- without this, the feed only ever loads once (or on
   // manual retry). Deliberately quiet: a failed/timed-out poll is ignored
@@ -302,9 +323,22 @@ export default function AttentionFieldScreen() {
   // openRequest effect), so it's the identical open animation/position, not
   // a second card implementation.
   const [openRequest, setOpenRequest] = useState<OpenRequest | null>(null);
+  // Sprint 3.6.6G: the single choke point for both a real push-notification
+  // tap (useNotificationTapHandler below) and a per-row tap in the in-app
+  // dropdown -- opening one specific notification this way reviews only
+  // that event_id, not the whole batch openNotifications() above marks
+  // reviewed. Same fire-and-forget reasoning as openNotifications: the
+  // optimistic local clear already updated the UI.
   const openNotificationCard = useCallback((eventId: string) => {
     setPanelItems(null);
     setOpenRequest({ eventId, token: Date.now() });
+    setLocallyReviewedIds((prev) => new Set(prev).add(eventId));
+    fetchJson("/v1/notifications/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_ids: [eventId] }),
+      retries: 0,
+    });
   }, []);
 
   // Sprint 3.6.6F -- STRATUS Watch. Fire-and-forget: a denied permission or

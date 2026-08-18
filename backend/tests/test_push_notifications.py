@@ -14,10 +14,15 @@ from uuid import UUID
 
 import httpx
 
-from backend.app.logan_feed import get_alert_eligible_items
+from backend.app.logan_feed import (
+    _run_feed_pipeline,
+    get_alert_eligible_items,
+    mark_notifications_reviewed,
+)
 from backend.app.models import RegisterPushTokenRequest
 from backend.app.notifications import (
     dispatch_eligible_notifications,
+    get_pending_push_event_ids,
     register_token,
 )
 
@@ -169,3 +174,127 @@ def test_register_route_via_test_client():
     payload = response.json()
     assert payload["registered"] is True
     assert payload["token_count"] == 1
+
+
+# --- Sprint 3.6.6G: badge/push coherence -------------------------------
+#
+# Real on-device finding: 3 real pushes arrived, but the in-app badge
+# stayed at 0. Root cause -- two independent "is this new" signals:
+# is_new_for_user (forced False on the very first /v1/opportunities call
+# after a restart, by design -- see test_notifications.py's
+# test_first_load_is_notification_silent) and interruption=="alert" (push
+# eligibility, untouched by that first-load override). These tests cover
+# the fix: the badge (is_new_for_user) now also reflects
+# get_pending_push_event_ids() -- dispatched minus reviewed -- so a real
+# push always has something to show for it, while items that were never
+# pushed keep the original first-load-quiet behavior unchanged.
+#
+# The exact sequence below (one _run_feed_pipeline() call representing the
+# app's first load, then dispatch_eligible_notifications()'s own internal
+# call representing the poller's next cycle) deterministically yields 3
+# alert-eligible items against the fixed simulated fixtures/engagement
+# data -- reproducing the real reported "3 pushed, badge 0" scenario
+# exactly, not a stand-in count.
+
+
+def test_pending_push_notification_full_lifecycle():
+    """3 pushed -> badge reflects 3 -> open (review) one -> badge reflects
+    2 -> review the remaining two -> badge reflects 0."""
+    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+
+    # The app's first-ever /v1/opportunities call -- forces is_new_for_user
+    # False for everything under the pre-existing first-load rule.
+    first_load_items, _now, _alert = _run_feed_pipeline()
+    assert all(not item.is_new_for_user for item in first_load_items)
+
+    # The poller's own next cycle -- dispatches real pushes independent of
+    # the first-load badge override above.
+    dispatched_count = dispatch_eligible_notifications(client=_mock_client())
+    assert dispatched_count == 3  # deterministic against the fixed fixtures
+
+    pending = get_pending_push_event_ids()
+    assert len(pending) == 3
+
+    # Badge == items whose is_new_for_user is True.
+    items, _now, _alert = _run_feed_pipeline()
+    pushed_items = [item for item in items if item.event_id in pending]
+    assert len(pushed_items) == 3
+    assert all(item.is_new_for_user for item in pushed_items)
+    assert sum(1 for item in items if item.is_new_for_user) == 3
+
+    # "Open one" -- reviewing a single event_id (what openNotificationCard
+    # now does on the mobile side) clears only that one.
+    first_reviewed = pushed_items[0].event_id
+    mark_notifications_reviewed([first_reviewed])
+    assert get_pending_push_event_ids() == pending - {first_reviewed}
+
+    items, _now, _alert = _run_feed_pipeline()
+    reviewed_item = next(i for i in items if i.event_id == first_reviewed)
+    assert reviewed_item.is_new_for_user is False
+    assert sum(1 for item in items if item.is_new_for_user) == 2
+
+    # "Review remaining" -- clears the badge to zero.
+    remaining = list(pending - {first_reviewed})
+    assert len(remaining) == 2
+    mark_notifications_reviewed(remaining)
+    assert get_pending_push_event_ids() == set()
+
+    items, _now, _alert = _run_feed_pipeline()
+    assert sum(1 for item in items if item.is_new_for_user) == 0
+
+
+def test_repeated_polling_does_not_change_pending_state():
+    """Polling alone (no dispatch, no review) must never grow or shrink the
+    pending set -- only a real dispatch or a real review changes it."""
+    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    _run_feed_pipeline()  # first load
+    dispatch_eligible_notifications(client=_mock_client())
+    pending_after_dispatch = get_pending_push_event_ids()
+
+    for _ in range(3):
+        _run_feed_pipeline()
+        dispatch_eligible_notifications(
+            client=_mock_client()
+        )  # already-dispatched, no-op
+        assert get_pending_push_event_ids() == pending_after_dispatch
+
+
+def test_reviewing_never_pushed_event_id_is_a_harmless_no_op():
+    """Reviewing an event_id that was never pushed must not raise or
+    corrupt the pending set for real pushed items."""
+    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    _run_feed_pipeline()
+    dispatch_eligible_notifications(client=_mock_client())
+    pending_before = get_pending_push_event_ids()
+
+    from uuid import uuid4
+
+    mark_notifications_reviewed([uuid4()])  # never pushed
+    assert get_pending_push_event_ids() == pending_before
+
+
+def test_first_load_quiet_behavior_preserved_for_never_pushed_items():
+    """Items that were never pushed at all must keep the original
+    first-load-quiet behavior -- the fix only affects items that were
+    genuinely dispatched."""
+    # No token registered, so nothing is ever dispatched -- pending stays
+    # empty throughout, and every item's is_new_for_user should follow the
+    # pre-existing first-load rule exactly as before this sprint.
+    items, _now, _alert = _run_feed_pipeline()
+    assert get_pending_push_event_ids() == set()
+    assert all(not item.is_new_for_user for item in items)
+
+
+def test_mark_notifications_reviewed_clears_pending_through_the_one_endpoint():
+    """The same POST /v1/notifications/review the in-app badge already used
+    before this sprint must also clear pending-push state -- one review
+    action, coherent effect on both mechanisms, not two separate calls the
+    client would need to know about."""
+    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    _run_feed_pipeline()
+    dispatch_eligible_notifications(client=_mock_client())
+    pending = get_pending_push_event_ids()
+    assert pending
+
+    mark_notifications_reviewed(list(pending))
+    assert get_pending_push_event_ids() == set()

@@ -36,6 +36,13 @@ NOTIFICATION_POLL_INTERVAL_SECONDS = 60
 
 _registered_tokens: set[str] = set()
 _dispatched_event_ids: set[UUID] = set()
+# Sprint 3.6.6G: subset of _dispatched_event_ids the user has reviewed/opened
+# (see mark_pushed_notifications_reviewed below). Deliberately a separate set
+# rather than removing entries from _dispatched_event_ids itself --
+# _dispatched_event_ids must stay a permanent record for push dedup (a
+# reviewed item must never be re-pushed either), while pending/badge status
+# is a derived view on top of it (get_pending_push_event_ids).
+_reviewed_pushed_event_ids: set[UUID] = set()
 
 
 def register_token(request: RegisterPushTokenRequest) -> RegisterPushTokenResponse:
@@ -45,6 +52,36 @@ def register_token(request: RegisterPushTokenRequest) -> RegisterPushTokenRespon
     )
 
 
+def mark_pushed_notifications_reviewed(event_ids: list[UUID]) -> None:
+    """Sprint 3.6.6G: called by logan_feed.mark_notifications_reviewed() --
+    the same POST /v1/notifications/review the in-app badge already used
+    before this sprint -- so reviewing an opportunity clears it from the
+    pending-push count too. One review action, one endpoint, coherent effect
+    on both the pre-existing is_new_for_user badge path and this push-pending
+    path. Safe to call with event_ids that were never actually pushed
+    (get_pending_push_event_ids' set difference makes that a no-op for them).
+    """
+    _reviewed_pushed_event_ids.update(event_ids)
+    print(f"[notifications] reviewed: {event_ids}")
+
+
+def get_pending_push_event_ids() -> set[UUID]:
+    """Sprint 3.6.6G: event_ids that were successfully pushed
+    (_dispatched_event_ids -- the existing push dedup/source-of-truth) but
+    not yet reviewed. Read by logan_feed._run_feed_pipeline() to make
+    is_new_for_user coherent with real push delivery: a pushed-but-unopened
+    notification must show in the in-app badge even on the very first poll
+    cycle after a backend restart, when the pre-existing "first load is
+    notification-silent" rule would otherwise hide it (real on-device
+    finding: 3 real pushes arrived with the badge staying at 0). Deliberately
+    a pure derived read (dispatched minus reviewed), not its own independent
+    set, so it can never drift out of sync with the real dispatch/review
+    state, and reviewing an item already implies removing it from here
+    without any separate bookkeeping to keep in sync.
+    """
+    return _dispatched_event_ids - _reviewed_pushed_event_ids
+
+
 def reset_notification_state() -> None:
     """Test-only (and general-purpose "start over") hook, mirroring
     logan_feed.reset_pipeline_state() -- drops registered tokens and dispatch
@@ -52,6 +89,7 @@ def reset_notification_state() -> None:
     """
     _registered_tokens.clear()
     _dispatched_event_ids.clear()
+    _reviewed_pushed_event_ids.clear()
 
 
 def _build_push_message(token: str, item: FeedItem) -> dict:
@@ -107,6 +145,12 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
     finally:
         if owns_client:
             client.close()
+
+    dispatched_ids = [item.event_id for item in eligible]
+    print(
+        f"[notifications] dispatched to {len(_registered_tokens)} token(s): "
+        f"{dispatched_ids}"
+    )
 
     for item in eligible:
         _dispatched_event_ids.add(item.event_id)

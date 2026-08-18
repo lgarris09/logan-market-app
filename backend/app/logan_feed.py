@@ -183,6 +183,18 @@ def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
         orchestrator.deps.prioritization_engine.mark_reviewed(
             LOCAL_FOUNDER_USER_ID, event_ids
         )
+    # Sprint 3.6.6G: deferred import breaks the logan_feed<->notifications
+    # circular dependency (notifications.py imports FeedItem/
+    # get_alert_eligible_items from this module at load time; this module
+    # cannot also import from notifications.py at load time without a
+    # cycle) -- see notifications.py's own comment on
+    # get_pending_push_event_ids. Reviewing through this one existing
+    # endpoint now clears both the pre-existing is_new_for_user badge state
+    # above and the new pending-push state together, coherently -- not two
+    # separate review actions the client would have to know to call.
+    from .notifications import mark_pushed_notifications_reviewed
+
+    mark_pushed_notifications_reviewed(event_ids)
 
 
 # Per-entity simulated engagement, tuned for visual variety in the demo field --
@@ -372,6 +384,16 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
                 LOCAL_FOUNDER_USER_ID, [r.event.event_id for _, r in results]
             )
 
+        # Sprint 3.6.6G: deferred import, see mark_notifications_reviewed's
+        # own comment on the logan_feed<->notifications circular dependency.
+        # A pushed-but-unopened notification must show in the in-app badge
+        # even on this same first-load response -- the "first load is
+        # notification-silent" rule above is about items that were never
+        # pushed, not about hiding a real push the user already received.
+        from .notifications import get_pending_push_event_ids
+
+        pending_push_event_ids = get_pending_push_event_ids()
+
         items = []
         for position, (entity_id, r) in enumerate(results, start=1):
             entity = r.event.entities[0]
@@ -390,7 +412,8 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
                     confidence_label=r.delivered_item.confidence_label,
                     connected_event_ids=connections[r.event.event_id],
                     is_new_for_user=(
-                        False if is_first_load else r.prioritized_item.is_new_for_user
+                        (False if is_first_load else r.prioritized_item.is_new_for_user)
+                        or r.event.event_id in pending_push_event_ids
                     ),
                     # First signal drives the primary event for this entity
                     # (see world_model/model.py's process()) -- TSLA is the
