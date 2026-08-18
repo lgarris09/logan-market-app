@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
-from .logan_feed import DemoFeedResponse, mark_notifications_reviewed, run_demo_feed
+from .logan_feed import (
+    DemoFeedResponse,
+    mark_notifications_reviewed,
+    record_interaction,
+    run_demo_feed,
+)
 from .memory_engine import MemoryEngine
 from .memory_models import (
     CategoryContext,
@@ -23,6 +28,8 @@ from .models import (
     BriefingResponse,
     NotificationsReviewRequest,
     NotificationsReviewResponse,
+    RecordInteractionRequest,
+    RecordInteractionResponse,
     RegisterPushTokenRequest,
     RegisterPushTokenResponse,
 )
@@ -136,6 +143,27 @@ def register_push_token(request: RegisterPushTokenRequest) -> RegisterPushTokenR
     an explicitly separate, not-yet-made decision.
     """
     return register_token(request)
+
+
+@app.post("/v1/interactions", response_model=RecordInteractionResponse)
+def record_interaction_route(
+    request: RecordInteractionRequest,
+) -> RecordInteractionResponse:
+    """Behavioral-personalization foundation: the first live caller of the
+    existing FeedbackSignal -> FeedbackEngine -> LearningEngine -> MemoryStore
+    path (see logan_feed.record_interaction and ADR-047). Deliberately a thin
+    passthrough -- `content` is derived server-side from structured fields
+    only, never accepted as client text, and `user_id` is inferred as the
+    single local user, matching /v1/notifications/review's own pattern.
+    """
+    record_interaction(
+        event_id=request.event_id,
+        entity_id=request.entity_id,
+        domain=request.domain,
+        interaction_type=request.interaction_type,
+        duration_ms=request.duration_ms,
+    )
+    return RecordInteractionResponse(recorded=True)
 
 
 @app.post("/v1/memories", response_model=MemoryDecision)

@@ -16,6 +16,8 @@ import {
   VesselLayout,
 } from "../lib/attentionLayout";
 import { biasStateFor, FieldBias } from "../lib/fieldBias";
+import { InteractionDomain } from "../lib/interactions";
+import { useCardDwellTracking } from "../lib/useCardDwellTracking";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_BOTTOM_MARGIN, CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
@@ -106,6 +108,28 @@ export function AttentionField({
     }
     setDisclosure(0);
   }, [fieldBias]);
+
+  // Behavioral-personalization foundation: the one place a card's real
+  // open->close dwell is measured, derived from focus/disclosure state that
+  // already exists above rather than a new open/close callback threaded
+  // through Vessel.tsx. `disclosure === 1` is deliberately the only
+  // condition -- a vessel can be focused without its card ever opening, and
+  // rendering a vessel is never itself an interaction. See
+  // lib/useCardDwellTracking.ts for how open/close/replace/unmount/
+  // backgrounding are each handled without fabricating or losing time.
+  const openItem =
+    disclosure === 1 && focusedId
+      ? items.find((item) => item.event_id === focusedId) ?? null
+      : null;
+  useCardDwellTracking(
+    openItem
+      ? {
+          eventId: openItem.event_id,
+          entityId: openItem.entity_id,
+          domain: openItem.domain as InteractionDomain,
+        }
+      : null
+  );
 
   const layouts = useMemo(
     () => computeAtmosphereLayout(items, width, height),

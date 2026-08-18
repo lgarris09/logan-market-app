@@ -2,6 +2,7 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -17,7 +18,9 @@ from logan_core.community_intelligence import EngagementSample  # noqa: E402
 from logan_core.contracts import (  # noqa: E402
     LOCAL_FOUNDER_USER_ID,
     DeliveredItem,
+    Domain,
     Holding,
+    InteractionType,
     Interest,
     RawSignal,
 )
@@ -195,6 +198,39 @@ def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
     from .notifications import mark_pushed_notifications_reviewed
 
     mark_pushed_notifications_reviewed(event_ids)
+
+
+def record_interaction(
+    event_id: UUID,
+    entity_id: str,
+    domain: Domain,
+    interaction_type: InteractionType,
+    duration_ms: Optional[int] = None,
+) -> None:
+    """Behavioral-personalization foundation (Part A): the first live caller
+    of Orchestrator.run_feedback_loop(), which previously had zero real
+    callers in backend/ (only tests and live_verification/nvda_earnings.py
+    exercised it). Reuses the existing, unmodified
+    FeedbackSignal -> FeedbackEngine -> LearningEngine -> MemoryStore path in
+    full rather than building a parallel personalization system -- see
+    ADR-047.
+
+    `content` is built here, server-side, from already-known structured
+    fields only -- never accepted as free text from the client -- so this
+    route can't be used to inject arbitrary content into Memory.
+    """
+    orchestrator = _get_orchestrator()
+    content = f"{interaction_type} on {entity_id} ({domain})"
+    with _state_lock:
+        orchestrator.run_feedback_loop(
+            event_id=event_id,
+            user_id=LOCAL_FOUNDER_USER_ID,
+            domain=domain,
+            entities=[entity_id],
+            interaction_type=interaction_type,
+            content=content,
+            duration_ms=duration_ms,
+        )
 
 
 # Sprint 3.6.6I: the two points per entity below represent readings taken at

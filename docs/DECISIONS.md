@@ -1008,3 +1008,64 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   still correctly emerging). One existing test (`test_pending_push_notification_full_lifecycle`) updated to
   assert against the real dispatched count rather than a hardcoded value that depended on the artifact.
   `backend`/`logan_core` test count: 221 → 231. mypy/ruff/black clean.
+
+## ADR-047: Behavioral-personalization foundation — first live callers of the existing FeedbackSignal -> FeedbackEngine -> LearningEngine -> MemoryStore path
+- Date: 2026-08-19
+- Status: Accepted
+- Context: A prior design pass (owner request, no code) inventoried STRATUS's existing interaction-signal
+  capture and found the key architectural fact this ADR builds on: `Orchestrator.run_feedback_loop()`
+  (`logan_core/orchestrator/pipeline.py`) already chains `FeedbackEngine.interpret()` ->
+  `LearningEngine.process_feedback()` -> `MemoryStore.write()` end-to-end, fully implemented and tested, but
+  had zero live callers anywhere in `backend/` — only tests and `logan_core/live_verification/nvda_earnings.py`
+  ever exercised it. Every real interaction signal (opening a card, how long it stayed open, tapping a
+  notification) was either unobserved or observed and discarded. The owner asked for a bounded pass wiring
+  real interaction capture through this existing path — explicitly not a parallel personalization system.
+- Decision:
+  1. New `POST /v1/interactions` route (`backend/app/main.py`), backed by `RecordInteractionRequest`/
+     `RecordInteractionResponse` (`backend/app/models.py`) and `logan_feed.record_interaction()`. The route is
+     a thin passthrough into `orchestrator.run_feedback_loop()` — `FeedbackEngine`'s dwell/interaction-type
+     interpretation thresholds are completely unmodified. `content` for the resulting `MemoryRecord` is built
+     server-side from already-known structured fields only (`f"{interaction_type} on {entity_id} ({domain})"`)
+     — the client can never inject arbitrary text into Memory through this route. `user_id` is inferred as
+     `LOCAL_FOUNDER_USER_ID`, matching `/v1/notifications/review`'s existing pattern, not accepted from the
+     client, keeping the public contract minimal.
+  2. Card open + dwell time is a single "view" interaction, submitted once at close (not open), with the
+     measured `duration_ms` — the only point the real duration is knowable. Mobile-side,
+     `lib/useCardDwellTracking.ts` derives its target from `AttentionField.tsx`'s existing `focusedId`/
+     `disclosure` state (`disclosure === 1` is the only "card is open" condition — a focused-but-unopened
+     vessel never counts) rather than adding a new open/close callback through `Vessel.tsx`. The effect
+     depends only on the target's `event_id` (a stable primitive), never the target object itself, since a new
+     object is constructed every render including on every ~60s poll refresh — depending on the object would
+     fabricate a fresh "open" on every poll. A single `flush()` call, placed only in the effect's cleanup
+     function, correctly submits exactly once for every one of: card closed, card replaced by a different
+     card (no explicit close callback exists for this case — cleanup firing on a dependency change covers it),
+     and component unmount. `AppState` backgrounding submits whatever was measured so far, then stops the
+     clock; returning to foreground silently resumes the same still-open target's clock without ever emitting
+     a signal, so background time is never counted and resuming is never mistaken for a fresh open.
+  3. Notification-open is recorded separately from notification-review, reusing the existing `"click"`
+     `InteractionType` rather than adding a new one — no contract expansion. `index.tsx`'s
+     `openNotificationCard()` (the single choke point for both a real push tap and an in-app dropdown tap) now
+     fires both the pre-existing `/v1/notifications/review` POST (badge-clearing, unchanged) and a
+     `recordInteraction({..., interactionType: "click"})` call, looked up from the currently-loaded feed by
+     `event_id` and silently skipped if not found (e.g. a stale/dev-only notification with no truthful
+     entity_id/domain to attach). `openNotificationCard` reads feed state through a `stateRef` rather than a
+     direct `state` dependency, specifically so its identity stays stable across polls — `useNotificationTapHandler`
+     resubscribes its native listener whenever its callback's identity changes, and `state` updates roughly
+     every 60s, so a direct dependency would have torn down and recreated the real push-tap subscription that
+     often instead of once per mount.
+  4. Explicitly deferred, not implemented here (per owner instruction): behavioral relevance scoring, Attention
+     Profile weights/recency-decay, inferred-interest promotion thresholds, Personal/Exceptional Watch route
+     eligibility, impression/exposure persistence (ownership not yet settled — see the companion design report
+     delivered alongside this ADR), and any write into `UserModel`'s `established_behaviors`/`inferred_expertise`/
+     `domain_preferences`/inferred `Interest` fields. This ADR only proves interactions reach `MemoryStore`
+     through the existing single-writer gate; nothing yet reads them back into personalization.
+- Consequences: `backend`/`logan_core` test count 231 → 244 (`backend/tests/test_interactions.py`, 13 new
+  tests: view/click reaching `MemoryStore`, short-dwell interpretation unchanged end-to-end, route-level
+  contract validation for domain/interaction_type, optional `duration_ms`, all six `Domain` values accepted).
+  Mobile: 88 Jest tests passing (10 new, covering rendering-alone-is-not-an-interaction, single-submit on
+  close/replace/unmount, no fabricated interactions from repeated polling, and background/foreground dwell
+  behavior), `tsc --noEmit` and `eslint` clean, no regressions in the pre-existing `index.test.tsx` push/badge
+  coverage. A local smoke test (real backend, real NVDA pipeline event) confirmed push registration,
+  `/v1/interactions` (view+dwell and click), and `/v1/notifications/review` all coexist without error on the
+  same event_id. No `logan_core` layer-ownership boundary was crossed: `record_interaction()` only calls the
+  existing `Orchestrator.run_feedback_loop()`, never writes to `MemoryStore` or `UserModel` directly.
