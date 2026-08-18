@@ -1,5 +1,7 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
+from logan_core.contracts import TriggerEvent
 from logan_core.evidence_trust import EvidenceTrustEngine
 from logan_core.normalization import Normalizer
 from logan_core.receptors import (
@@ -115,3 +117,66 @@ def test_trigger_confidence_bonus_reflects_attached_trigger(now):
     assert any(
         "trigger_confidence_bonus" in entry.rule for entry in result.decision_trace
     )
+
+
+def _extra_trigger(trigger_code: str, confidence_contribution: float) -> TriggerEvent:
+    now = datetime.now(timezone.utc)
+    return TriggerEvent(
+        trigger_id=uuid4(),
+        trigger_code=trigger_code,
+        trigger_class="catalyst",
+        trigger_type="earnings_surprise",
+        trigger_status="confirmed",
+        domain="stocks",
+        affected_entity_id="NVDA",
+        direction="positive",
+        raw_magnitude=1.0,
+        confidence_contribution=confidence_contribution,
+        source_id="test",
+        source_name="test",
+        event_timestamp=now,
+        detected_timestamp=now,
+    )
+
+
+def test_multiple_triggers_use_strongest_not_sum(now):
+    """Sprint 3.6.6D (ConvergenceDetector): EvidenceTrustEngine no longer
+    sums every attached trigger's confidence_contribution -- proves the
+    integration, not just ConvergenceDetector in isolation
+    (test_convergence.py already covers the resolver's own logic)."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    evaluator = StocksTriggerEvaluator()
+
+    raw = earnings_report_to_raw_signal(
+        EarningsReport(
+            entity_id="NVDA",
+            actual_eps=1.05,
+            consensus_eps=0.98,
+            report_timestamp=now,
+            source_id="fixture_earnings_provider",
+            source_name="STRATUS Test Fixture (not live data)",
+        )
+    )
+    normalized = normalizer.normalize(raw)
+    beat_trigger = evaluator.evaluate(raw, normalized)
+    assert beat_trigger is not None and beat_trigger.confidence_contribution == 0.22
+
+    # A hand-attached second trigger on the same event, simulating a future
+    # scenario where two independent trigger codes both fire for one entity
+    # (not producible by today's earnings-only evaluator, since BEAT/MISS/
+    # IN_LINE are mutually exclusive -- this is exactly the "foundation for
+    # later" case ConvergenceDetector exists to handle correctly today).
+    weaker_trigger = _extra_trigger("STOCK_GUIDANCE_RAISED", 0.15)
+    event = world_model.process(normalized, trigger_event=beat_trigger)
+    event = event.model_copy(
+        update={"trigger_events": event.trigger_events + [weaker_trigger]}
+    )
+
+    engine = EvidenceTrustEngine()
+    result = engine.evaluate(event, [normalized], now=now)
+
+    # If summed: 0.22 + 0.15 = 0.37. Strongest-only: 0.22.
+    assert result.trigger_confidence_bonus == 0.22
+    assert result.trigger_confidence_bonus != 0.37
+    assert any("dominant=STOCK_EARNINGS_BEAT" in e.rule for e in result.decision_trace)

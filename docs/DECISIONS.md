@@ -876,3 +876,84 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   in an 11-item response, all 10 other simulated entities untouched, HTTP 200, no `internal_rank_score` or
   key in the response body. The mobile app requires no changes to consume this — it already calls
   `/v1/opportunities` and renders whatever `FeedItem`s it receives.
+
+## ADR-045: Sprint 3.6.6D — STOCK_EARNINGS_MISS, STOCK_EARNINGS_IN_LINE, and a ConvergenceDetector foundation
+- Date: 2026-08-18
+- Status: Accepted
+- Context: With the live NVDA `STOCK_EARNINGS_BEAT` path proven and wired (ADR-042/043/044), the owner made
+  two explicit decisions before further trigger expansion: (1) a confidence model — keep
+  `STOCK_EARNINGS_BEAT`'s fixed `+0.22` unchanged, use fixed contributions only where a registry/spec already
+  defines them, never invent new weights, and when multiple correlated triggers fire on one event, do not sum
+  their contributions — use the single strongest applicable one, while preserving every fired `TriggerEvent`
+  as evidence. No ML/calibration redesign yet, pending real outcome data (consistent with ADR-032). (2) an
+  implementation scope — implement `STOCK_EARNINGS_MISS`; build the smallest real Convergence Detector
+  foundation implementing decision (1); then, after inspecting current FMP/provider data support, add one
+  more independent stock trigger implementable cleanly with data already available, preferring reuse over
+  new provider complexity. No other domain to be touched.
+- Decision:
+  1. **`STOCK_EARNINGS_MISS`** (`logan_core/trigger_detection/stocks.py`): `evaluate_earnings_miss_condition`
+     mirrors `evaluate_earnings_beat_condition`'s structure exactly — `actual_eps < consensus_eps AND
+     miss_pct >= 5.0`, `+0.20` confidence contribution, both values taken verbatim from
+     `TRIGGER_REGISTRY_STOCKS.md`, not invented. Uses the identical `actual_eps`/`consensus_eps` fields
+     `FmpEarningsProvider` already fetches for `STOCK_EARNINGS_BEAT` — zero provider changes. `StocksTriggerEvaluator.evaluate()`
+     now checks BEAT, then MISS, then IN_LINE in sequence; their fire conditions are mutually exclusive by
+     construction (>=5% up, >=5% down, or <2% either way), so exactly zero or one fires per report.
+  2. **`STOCK_EARNINGS_IN_LINE`** — the "next independent trigger," chosen after inspecting what's actually
+     implementable without new provider work. Rejected alternatives and why: `STOCK_EARNINGS_QUALITY_WARNING`
+     needs a one-time-item flag FMP's earnings endpoint doesn't return; `STOCK_GUIDANCE_RAISED`/`LOWERED` need
+     prior-vs-new guidance midpoints — `EarningsReport.guidance_revised`/`guidance_delta_pct` exist on the
+     contract but `FmpEarningsProvider` has never populated them because FMP's `/stable/earnings` endpoint
+     doesn't return guidance data (would require a different, unvetted endpoint — real provider complexity);
+     `STOCK_OPTIONS_FLOW_SURGE`, `STOCK_PRICE_MOVE_SIGNIFICANT`, `STOCK_DIVERGENCE_PRICE_VS_SENTIMENT`,
+     `STOCK_INSIDER_ACTIVITY`, `STOCK_ANALYST_UPGRADE`/`DOWNGRADE`, `STOCK_ODSE_ACCUMULATION` all need entirely
+     different data sources (options flow, price/session data, sentiment, SEC filings, analyst ratings) not
+     fetched today. `STOCK_EARNINGS_IN_LINE` needs nothing beyond `actual_eps`/`consensus_eps` — true reuse.
+     Fires on `abs(beat_pct) < 2.0`, per the registry's own `0.0` confidence contribution ("no positive
+     contribution; used to close hypotheses") — it still attaches a real `TriggerEvent` (direction `"neutral"`,
+     trigger_class `"confirmation"`) so the evidence is visible, it just doesn't move confidence.
+  3. **`ConvergenceDetector`** (new `logan_core/convergence/` package): implements decision (1)'s
+     strongest-not-summed rule. `EvidenceTrustEngine` now calls `ConvergenceDetector.resolve(event.trigger_events)`
+     instead of summing every attached `TriggerEvent.confidence_contribution` directly — the result carries the
+     single dominant trigger's contribution (clamped to `[0.0, 1.0]`) plus every fired trigger's code, for
+     `decision_trace` auditability. With exactly one trigger attached (every real scenario today, since
+     BEAT/MISS/IN_LINE are mutually exclusive on one report), `max` and `sum` are numerically identical — so
+     this changes nothing observable yet, but is real, tested production code that resolves correctly the
+     moment a second trigger code is ever attached to one event.
+     **Explicitly not the canonical Convergence Detector** from
+     `docs/specs/Logan_Documentation_v3.1.4/source_material/04_HIT_DETECTION.md` /
+     `TRIGGER_REGISTRY_STOCKS.md`'s `STOCK_CONVERGENCE_MULTI_SOURCE` — that is a Hit-Detection-layer component
+     that watches independent raw signals across domains/sources *before* trigger detection and itself emits a
+     `TriggerEvent` with its own `OpportunityEvidence` output; neither `OpportunityEvidence` nor the Hit
+     Detection layer exist in this codebase (still SPECIFIED — NOT IMPLEMENTED, OD-009), and building them is a
+     separate, larger decision not made this sprint. This component instead resolves `TriggerEvent`s that are
+     *already* attached to one `EnrichedEvent` — a narrower, already-real problem. World Model's dedup key
+     (`entity_id`, `signal_type`) was **not** widened to merge different signal_types for the same entity
+     (that would be genuine cross-signal-type convergence, and a much larger, riskier change to existing
+     dedup semantics affecting every entity) — flagged as a separate future decision, not made tonight.
+  4. **Known limitation, documented not solved**: the strongest-not-summed rule doesn't yet model *companion*
+     triggers meant to net against another (e.g. `STOCK_EARNINGS_QUALITY_WARNING`'s registered `-0.15`, meant
+     to reduce `STOCK_EARNINGS_BEAT`'s `+0.22` specifically, not compete with it as an independent "strongest
+     signal" candidate). Not implemented, so not exercised — a real gap to revisit if/when it is.
+  5. **Known duplication, deliberately not fixed this sprint**: `trigger_detection/stocks.py`'s six threshold/
+     confidence constants (`_BEAT_PCT_THRESHOLD=5.0`, `_MISS_PCT_THRESHOLD=5.0`, `_IN_LINE_PCT_THRESHOLD=2.0`,
+     `_BEAT_CONFIDENCE_CONTRIBUTION=0.22`, `_MISS_CONFIDENCE_CONTRIBUTION=0.20`,
+     `_IN_LINE_CONFIDENCE_CONTRIBUTION=0.0`) are typed Python literals hand-copied from
+     `TRIGGER_REGISTRY_STOCKS.md`'s markdown table, not read from it at runtime — verified consistent as of
+     this sprint (2026-08-18), but nothing prevents the two from drifting apart as more trigger codes are
+     added by hand. Owner decision: do not build a machine-readable registry loader yet, at only 3 trigger
+     codes it would be premature infrastructure — but convert to one before trigger volume grows much
+     further. Flagged here and in `23_CURRENT_IMPLEMENTATION_STATE.md` so it isn't silently forgotten.
+- Consequences: `logan_core` test count rises from 143 to 162 (19 new: 13 `trigger_detection` unit/evaluator
+  tests for MISS/IN_LINE/the dead zone, 6 `ConvergenceDetector` unit tests, plus 2 new pipeline-integration
+  tests and 1 rewritten one in `test_pipeline_nvda_earnings.py`, plus 1 new `EvidenceTrustEngine` integration
+  test proving strongest-not-summed end to end). One pre-existing test
+  (`test_pipeline_nvda_earnings.py`'s non-qualifying-earnings case) was rewritten, not weakened: its old input
+  (0.99 vs 0.98, ~1.02%) now correctly fires `STOCK_EARNINGS_IN_LINE`, so the "nothing fires" case moved to a
+  genuine dead-zone value (~4.08%) and the old input became its own new IN_LINE test. Live-verified: the real
+  FMP `/v1/opportunities` NVDA path (ADR-044) still returns the identical result after this refactor (EPS 1.87
+  vs. 1.76, `STOCK_EARNINGS_BEAT` fired, confidence 0.595) — `StocksTriggerEvaluator`'s BEAT branch is
+  unchanged in behavior, only restructured to share a `_build_trigger_event` helper with MISS/IN_LINE. MISS
+  and IN_LINE are proven at the fixture/pipeline-integration level only, not yet against a live report that
+  actually misses or lands in-line — consistent with the "don't force a fire" rule; real live proof for those
+  two arrives whenever NVDA's next real report happens to land there, the same way BEAT's live proof arrived
+  in Sprint 3.6.6B/C, not forced or simulated here to close the gap artificially.

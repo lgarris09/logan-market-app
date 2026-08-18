@@ -121,8 +121,10 @@ def test_trigger_event_omitted_leaves_list_empty(now):
 def test_duplicate_trigger_does_not_double_count(now):
     """Phase 5's 'duplicate polling results' edge case: the same report
     re-observed within the dedup window must not accumulate two entries for
-    the same trigger_code (EvidenceTrustEngine sums confidence_contribution
-    across event.trigger_events -- duplicates would inflate it)."""
+    the same trigger_code (a duplicate would still inflate ConvergenceDetector's
+    trigger_codes list and audit trail even though it wouldn't change
+    trigger_confidence_bonus itself, since it resolves to the strongest
+    single trigger, not a sum -- see convergence/detector.py)."""
     normalizer = Normalizer()
     world_model = WorldModel()
     evaluator = StocksTriggerEvaluator()

@@ -8,6 +8,7 @@ from logan_core.contracts import (
     EvidenceTrust,
     NormalizedSignal,
 )
+from logan_core.convergence import ConvergenceDetector
 
 # V1 static source reputation registry (0.0-1.0). Extension point: dynamic
 # reputation learning, updated only by the Learning System per the spec.
@@ -33,10 +34,15 @@ class EvidenceTrustEngine:
     relevance, modifying event content.
     """
 
-    def __init__(self, registry: dict[str, float] | None = None) -> None:
+    def __init__(
+        self,
+        registry: dict[str, float] | None = None,
+        convergence_detector: ConvergenceDetector | None = None,
+    ) -> None:
         self._registry = (
             registry if registry is not None else SOURCE_REPUTATION_REGISTRY
         )
+        self._convergence_detector = convergence_detector or ConvergenceDetector()
 
     def _recency_score(self, occurred_at: datetime, now: datetime) -> float:
         hours_elapsed = max((now - occurred_at).total_seconds() / 3600.0, 0.0)
@@ -82,15 +88,19 @@ class EvidenceTrustEngine:
         ) * MANIPULATION_PENALTY[manipulation_risk]
         trust_score = max(0.0, min(1.0, trust_score))
 
-        # Sprint 3.6.6: sum of any attached TriggerEvent.confidence_contribution
-        # values -- a deterministic pass-through of the fixed registry constant
-        # (e.g. +0.22, STOCK_EARNINGS_BEAT), not a new scoring formula computed
-        # here. Empty event.trigger_events (every event before this sprint, and
-        # every event without a real trigger) yields exactly 0.0, so trust_score
-        # itself and every existing caller/test is unaffected.
-        trigger_confidence_bonus = max(
-            0.0, min(1.0, sum(t.confidence_contribution for t in event.trigger_events))
-        )
+        # Sprint 3.6.6D: resolved via ConvergenceDetector, not summed. When more
+        # than one TriggerEvent is attached to this event, the strongest single
+        # applicable trigger's confidence_contribution is used -- not the sum of
+        # all of them (owner decision: summing would silently double-count
+        # correlated evidence). Every attached TriggerEvent's own
+        # confidence_contribution is still a deterministic pass-through of its
+        # fixed registry constant (e.g. +0.22 STOCK_EARNINGS_BEAT); this layer
+        # only picks which one drives the bonus, never invents a value. Empty
+        # event.trigger_events (every event before Sprint 3.6.6, and every event
+        # without a real trigger) yields exactly 0.0, so trust_score itself and
+        # every single-trigger caller/test is numerically unaffected.
+        convergence = self._convergence_detector.resolve(event.trigger_events)
+        trigger_confidence_bonus = convergence.confidence_bonus
 
         decision_trace = [
             DecisionTraceEntry(
@@ -103,12 +113,18 @@ class EvidenceTrustEngine:
             )
         ]
         if event.trigger_events:
+            dominant_code = (
+                convergence.dominant_trigger.trigger_code
+                if convergence.dominant_trigger is not None
+                else "none"
+            )
             decision_trace.append(
                 DecisionTraceEntry(
                     layer="evidence_trust",
                     rule=f"trigger_confidence_bonus={trigger_confidence_bonus:.2f} "
-                    f"from {len(event.trigger_events)} attached trigger(s): "
-                    f"{', '.join(t.trigger_code for t in event.trigger_events)}",
+                    f"from strongest of {len(event.trigger_events)} attached "
+                    f"trigger(s) ({', '.join(convergence.trigger_codes)}); "
+                    f"dominant={dominant_code}",
                     confidence=trigger_confidence_bonus,
                     timestamp=now,
                 )
