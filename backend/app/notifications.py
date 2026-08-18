@@ -19,6 +19,7 @@ with a single demo user and a handful of tokens, not for real multi-device
 scale.
 """
 
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -92,6 +93,47 @@ def reset_notification_state() -> None:
     _reviewed_pushed_event_ids.clear()
 
 
+def _notification_body(item: FeedItem) -> str:
+    """Sprint 3.6.6H: a concise, human-scannable push body, built from the
+    existing DeliveredItem text rather than a new copy-generation layer.
+    `what_happened`/`headline` are both built from one deterministic
+    template in World Model (`world_model/model.py`'s `process()`:
+    `f"{entity.display_name}: {signal_type_readable} ({value})"`) -- the
+    right shape for the in-app card, which benefits from that fuller
+    mechanical context, but it reads as raw feed syntax in a push
+    notification, where the title already carries the entity name
+    (`FeedItem.display_name`). This extracts the same underlying `value`
+    text the template already wraps -- already natural, provider-authored
+    text, never invented here -- and strips a redundant leading mention of
+    the entity (display_name or ticker) from it. Falls back to the
+    unmodified headline whenever the expected template shape isn't found,
+    so a future receptor that builds `what_happened` differently never
+    produces an empty or broken notification.
+
+    Known limitation, not solved here: this is a generic strip/reformat,
+    not a semantic rewrite -- "AI infrastructure discussion volume rising"
+    becomes "Infrastructure discussion volume rising", not "...is
+    accelerating". Genuinely rephrasing tense/wording per signal would mean
+    either a hardcoded per-signal-type template table or real generative
+    copy -- both out of scope for this pass, and neither is "reusing
+    existing presentation logic."
+    """
+    match = re.search(r"\((.*?)\)", item.delivered_item.what_happened)
+    if not match:
+        return item.delivered_item.headline
+
+    value = match.group(1).strip()
+    for prefix in filter(None, [item.display_name, item.ticker]):
+        if value.lower().startswith(prefix.lower()):
+            value = value[len(prefix) :].lstrip(" :,-")
+            break
+
+    if not value:
+        return match.group(1).strip() or item.delivered_item.headline
+
+    return value[0].upper() + value[1:]
+
+
 def _build_push_message(token: str, item: FeedItem) -> dict:
     # event_id is the one piece of data the mobile app actually needs on tap
     # -- it feeds directly into the existing openNotificationCard(eventId)
@@ -101,7 +143,7 @@ def _build_push_message(token: str, item: FeedItem) -> dict:
     return {
         "to": token,
         "title": item.display_name,
-        "body": item.delivered_item.headline,
+        "body": _notification_body(item),
         "data": {"event_id": str(item.event_id)},
         "sound": "default",
     }

@@ -21,6 +21,7 @@ from backend.app.logan_feed import (
 )
 from backend.app.models import RegisterPushTokenRequest
 from backend.app.notifications import (
+    _notification_body,
     dispatch_eligible_notifications,
     get_pending_push_event_ids,
     register_token,
@@ -99,7 +100,7 @@ def test_push_payload_contains_event_id_display_name_and_headline():
     nvda_message = next(m for m in messages if m["title"] == "NVIDIA")
     assert nvda_message["to"] == "ExponentPushToken[aaa]"
     assert nvda_message["sound"] == "default"
-    assert nvda_message["body"]  # non-empty headline text
+    assert nvda_message["body"]  # non-empty body text
     UUID(nvda_message["data"]["event_id"])  # valid UUID, doesn't raise
 
 
@@ -298,3 +299,132 @@ def test_mark_notifications_reviewed_clears_pending_through_the_one_endpoint():
 
     mark_notifications_reviewed(list(pending))
     assert get_pending_push_event_ids() == set()
+
+
+# --- Sprint 3.6.6H: notification wording -----------------------------
+#
+# _build_push_message previously used delivered_item.headline verbatim --
+# World Model's raw "{entity}: {signal_type} ({value})" template, e.g.
+# "Federal Reserve: breaking news (Federal Reserve rate decision expected
+# this week)". Right for the in-app card; reads as raw feed syntax with a
+# redundant entity mention in a push notification, where the title already
+# carries the entity name. _notification_body extracts the same
+# already-natural `value` text that template wraps and strips a redundant
+# leading entity mention from it -- no new copy-generation layer, no
+# per-entity special-casing.
+
+
+def _item_for(entity_id: str):
+    items, _now, _alert = _run_feed_pipeline()
+    return next(i for i in items if i.entity_id == entity_id)
+
+
+def test_notification_body_strips_redundant_entity_name_fed():
+    """Direction example: 'Federal Reserve -- Rate decision expected this
+    week'."""
+    item = _item_for("FED")
+    body = _notification_body(item)
+    assert body == "Rate decision expected this week"
+    assert "Federal Reserve" not in body
+
+
+def test_notification_body_strips_redundant_entity_name_ai_sector():
+    """Direction example: 'AI -- Infrastructure discussion volume is
+    accelerating'. This mechanical strip/reformat produces 'rising' rather
+    than 'is accelerating' -- a real, documented limitation (see
+    _notification_body's own docstring), not a bug: genuine tense/wording
+    rewriting is out of scope for a generic, reusable transform."""
+    item = _item_for("AI_SECTOR")
+    body = _notification_body(item)
+    assert body == "Infrastructure discussion volume rising"
+    assert not body.lower().startswith("ai ")
+
+
+def test_notification_body_nfl_reads_naturally_without_prefix_stripping():
+    """Direction example: 'NFL -- Week 7 spreads are moving sharply'. The
+    raw value never mentions 'NFL', so nothing needs stripping here --
+    proves the transform is a no-op when there's no redundancy to remove,
+    not a rewrite applied unconditionally."""
+    item = _item_for("NFL")
+    body = _notification_body(item)
+    assert body == "Week 7 spreads moving sharply across the board"
+
+
+def test_notification_body_strips_ticker_when_display_name_does_not_match():
+    """A report-style value starting with the ticker (e.g. live NVDA
+    earnings: 'NVDA reported EPS of 1.87 vs. consensus 1.76') rather than
+    the full display_name ('NVIDIA') must still be recognized as
+    redundant."""
+    item = _item_for("NVDA")
+    fabricated = item.model_copy(
+        update={
+            "delivered_item": item.delivered_item.model_copy(
+                update={
+                    "what_happened": (
+                        "NVIDIA: earnings signal "
+                        "(NVDA reported EPS of 1.87 vs. consensus 1.76)"
+                    )
+                }
+            )
+        }
+    )
+    body = _notification_body(fabricated)
+    assert body == "Reported EPS of 1.87 vs. consensus 1.76"
+
+
+def test_notification_body_falls_back_to_headline_on_unexpected_shape():
+    """A what_happened string that doesn't match World Model's template at
+    all (e.g. a hypothetical future receptor) must never crash or produce
+    an empty body -- falls back to the existing headline."""
+    item = _item_for("FED")
+    fabricated = item.model_copy(
+        update={
+            "delivered_item": item.delivered_item.model_copy(
+                update={"what_happened": "No parenthetical value in this string"}
+            )
+        }
+    )
+    assert _notification_body(fabricated) == fabricated.delivered_item.headline
+
+
+def test_notification_body_never_contains_raw_signal_type_phrases():
+    """No mechanical signal_type label should ever leak into a push body
+    across the full simulated fixture set. Deliberately excludes labels
+    like "volatility spike" that legitimately overlap with real English in
+    a fixture's natural value text (BTC's "volatility spikes on ETF flow
+    data" is a genuine sentence, not leaked jargon) -- this checks for the
+    template's mechanical LABEL form specifically, not any word overlap."""
+    items, _now, _alert = _run_feed_pipeline()
+    mechanical_phrases = [
+        "trend emerging",
+        "line move",
+        "breaking news",
+        "technical breakout",
+        "earnings signal",
+        "news event",
+        "price change",
+    ]
+    for item in items:
+        body = _notification_body(item).lower()
+        for phrase in mechanical_phrases:
+            assert phrase not in body, f"{item.entity_id}: {body!r} contains {phrase!r}"
+
+
+def test_notification_body_does_not_repeat_the_title_verbatim():
+    """The body must never restate item.display_name at its start -- title
+    and body are shown together, so a leading repeat is always redundant."""
+    items, _now, _alert = _run_feed_pipeline()
+    for item in items:
+        body = _notification_body(item)
+        assert not body.lower().startswith(
+            item.display_name.lower()
+        ), f"{item.entity_id}: {body!r} repeats display_name {item.display_name!r}"
+
+
+def test_notification_body_is_short_enough_to_scan():
+    """Every simulated fixture's transformed body stays well under iOS's
+    ~2-line preview -- not a hard contract, just a sanity bound so this
+    stays 'concise' as new fixtures are added."""
+    items, _now, _alert = _run_feed_pipeline()
+    for item in items:
+        assert len(_notification_body(item)) <= 80
