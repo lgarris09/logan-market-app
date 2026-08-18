@@ -31,5 +31,5 @@ def run_opportunities() -> OpportunitiesResponse:
     this function adds nothing but `schema_version` and `generated_at` on top of the
     pipeline's own output.
     """
-    items, now = _run_feed_pipeline()
+    items, now, _alert_event_ids = _run_feed_pipeline()
     return OpportunitiesResponse(items=items, generated_at=now)

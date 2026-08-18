@@ -1,4 +1,7 @@
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,13 +23,50 @@ from .models import (
     BriefingResponse,
     NotificationsReviewRequest,
     NotificationsReviewResponse,
+    RegisterPushTokenRequest,
+    RegisterPushTokenResponse,
+)
+from .notifications import (
+    NOTIFICATION_POLL_INTERVAL_SECONDS,
+    dispatch_eligible_notifications,
+    register_token,
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
+
+
+async def _notification_poll_loop() -> None:
+    while True:
+        await asyncio.sleep(NOTIFICATION_POLL_INTERVAL_SECONDS)
+        try:
+            dispatch_eligible_notifications()
+        except Exception as exc:  # noqa: BLE001 -- see lifespan docstring below
+            print(f"[notifications] poller error, will retry next cycle: {exc}")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Sprint 3.6.6F -- STRATUS Watch. Starts the one piece of real
+    infrastructure this slice adds: something that notices a newly-
+    qualifying live opportunity on its own, independent of any client
+    request. Without this, a "notification" can only ever be the in-app
+    badge, which requires the app open and polling (see index.tsx's own 60s
+    foreground poll) -- it would never arrive while the app is closed. Runs
+    in-process (no new worker/deployment), reusing
+    dispatch_eligible_notifications()'s own dedup so a slow poll cadence
+    never double-sends. Never lets a dispatch failure kill the loop -- one
+    bad cycle must not silently end all future notifications for the rest
+    of the process's life.
+    """
+    task = asyncio.create_task(_notification_poll_loop())
+    yield
+    task.cancel()
+
 
 app = FastAPI(
     title="STRATUS API — Powered by LGI",
     version="1.0.0",
     description="Mobile intelligence backend with branch-based user memory.",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -85,6 +125,17 @@ def review_notifications(
     """
     mark_notifications_reviewed(request.event_ids)
     return NotificationsReviewResponse(reviewed_count=len(request.event_ids))
+
+
+@app.post("/v1/notifications/register", response_model=RegisterPushTokenResponse)
+def register_push_token(request: RegisterPushTokenRequest) -> RegisterPushTokenResponse:
+    """Sprint 3.6.6F -- STRATUS Watch. Registers a device's Expo push token so
+    the background poller (see _start_notification_poller above) can dispatch
+    real pushes to it. In-memory, process-lifetime only, single demo user --
+    see notifications.py's own docstring for why a durable per-user store is
+    an explicitly separate, not-yet-made decision.
+    """
+    return register_token(request)
 
 
 @app.post("/v1/memories", response_model=MemoryDecision)

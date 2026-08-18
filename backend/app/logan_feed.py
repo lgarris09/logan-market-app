@@ -257,7 +257,7 @@ def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]
     ]
 
 
-def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
+def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
     """Runs the simulated entity fixtures (Tesla, NVIDIA, Apple, Bitcoin, Federal
     Reserve, NFL, Music, Polymarket, Markets, Oil, AI) through one shared Orchestrator
     instance and builds the ranked, connected feed shared by every route that exposes
@@ -400,7 +400,22 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime]:
                 )
             )
 
-    return items, now
+        # Sprint 3.6.6F (STRATUS Watch): internal-only -- never added to the
+        # public FeedItem contract (same discipline as internal_rank_score,
+        # ADR-029). PrioritizedItem.interruption=="alert" is the existing,
+        # already-computed bar for "urgent enough to interrupt" (Prioritization
+        # Engine); reused here as the notification-eligibility gate rather than
+        # inventing a second threshold. Independent of is_first_load's badge
+        # silencing above -- a first-ever poll after a backend restart can
+        # still be alert-eligible for push purposes even though the in-app
+        # badge intentionally starts quiet.
+        alert_event_ids = [
+            r.event.event_id
+            for _, r in results
+            if r.prioritized_item.interruption == "alert"
+        ]
+
+    return items, now, alert_event_ids
 
 
 def run_demo_feed() -> DemoFeedResponse:
@@ -409,5 +424,17 @@ def run_demo_feed() -> DemoFeedResponse:
     V3.1.4 BATCH-4 API work. Delegates to the same pipeline run as the versioned API;
     the two do not compute this independently.
     """
-    items, now = _run_feed_pipeline()
+    items, now, _alert_event_ids = _run_feed_pipeline()
     return DemoFeedResponse(items=items, generated_at=now)
+
+
+def get_alert_eligible_items() -> list[FeedItem]:
+    """Sprint 3.6.6F (STRATUS Watch): the current pipeline run's items whose
+    PrioritizedItem.interruption == "alert" -- the existing "urgent enough to
+    interrupt" bar, reused as the notification-eligibility gate. Runs the
+    same shared, process-lifetime pipeline every other caller here uses; does
+    not compute anything independently.
+    """
+    items, _now, alert_event_ids = _run_feed_pipeline()
+    alert_ids = set(alert_event_ids)
+    return [item for item in items if item.event_id in alert_ids]

@@ -23,7 +23,10 @@ def _reset_logan_feed_pipeline_state():
     cheap, and removes an entire class of order-dependent flakiness.
     """
     from backend.app.logan_feed import reset_pipeline_state
+    from backend.app.notifications import reset_notification_state
 
     reset_pipeline_state()
+    reset_notification_state()
     yield
     reset_pipeline_state()
+    reset_notification_state()

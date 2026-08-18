@@ -38,3 +38,12 @@ class NotificationsReviewRequest(BaseModel):
 
 class NotificationsReviewResponse(BaseModel):
     reviewed_count: int
+
+
+class RegisterPushTokenRequest(BaseModel):
+    expo_push_token: str
+
+
+class RegisterPushTokenResponse(BaseModel):
+    registered: bool
+    token_count: int

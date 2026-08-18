@@ -1,10 +1,15 @@
 fastapi>=0.115
 uvicorn[standard]>=0.34
 pydantic>=2.10
+# Sprint 3.6.6F: httpx gains a genuine runtime role here for the first time --
+# backend/app/notifications.py uses it to call Expo's push API. Previously
+# dev/test-only in this file (FastAPI's TestClient); same package, wider role
+# now, flagged per the project's "dependency role changes require visibility"
+# convention (see logan_core/requirements.txt's identical ADR-043 precedent).
+httpx>=0.27
 
 # Development-only (test suite / lint / format / type-check) -- V3.1.4 BATCH-1/2, ADR-007
 pytest>=8.0
-httpx>=0.27
 black>=24.0
 ruff>=0.6
 mypy>=1.10
