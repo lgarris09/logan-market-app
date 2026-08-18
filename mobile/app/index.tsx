@@ -27,6 +27,10 @@ import { FieldBiasControl } from "../components/FieldBiasControl";
 import { PressableScale } from "../components/PressableScale";
 import { fetchJson } from "../lib/apiClient";
 import { FieldBias } from "../lib/fieldBias";
+import {
+  registerForPushNotificationsAsync,
+  useNotificationTapHandler,
+} from "../lib/notifications";
 import { OpportunitiesResponse } from "../types/loganFeed";
 
 // Sprint 3.6 device retest: the Attention Field header and the menu drawer
@@ -259,30 +263,20 @@ export default function AttentionFieldScreen() {
   // dropdown marks its contents reviewed with the backend (POST
   // /v1/notifications/review), but that only takes effect on the *next*
   // poll (up to 60s later); without this overlay the badge would
-  // incorrectly reappear/stay visible until then. `devForcedIds` lets the
-  // __DEV__ test button force a real, currently-displayed item to read as
-  // unread on demand, without waiting on real backend timing (repeated
-  // requests for the same underlying opportunity correctly stay quiet now
-  // that the backend fix landed, so there's rarely a *naturally occurring*
-  // new notification to test against during a short session).
+  // incorrectly reappear/stay visible until then.
   const [locallyReviewedIds, setLocallyReviewedIds] = useState<Set<string>>(new Set());
-  const [devForcedIds, setDevForcedIds] = useState<Set<string>>(new Set());
   const [panelItems, setPanelItems] = useState<OpportunityNotification[] | null>(null);
 
   const unread = useMemo<OpportunityNotification[]>(() => {
     if (state.kind !== "loaded") return [];
     return state.response.items
-      .filter(
-        (item) =>
-          (item.is_new_for_user || devForcedIds.has(item.event_id)) &&
-          !locallyReviewedIds.has(item.event_id)
-      )
+      .filter((item) => item.is_new_for_user && !locallyReviewedIds.has(item.event_id))
       .map((item) => ({
         eventId: item.event_id,
         name: item.ticker ?? item.display_name,
         confidencePct: Math.round(item.confidence_score * 100),
       }));
-  }, [state, devForcedIds, locallyReviewedIds]);
+  }, [state, locallyReviewedIds]);
 
   const openNotifications = useCallback(() => {
     setPanelItems(unread);
@@ -313,27 +307,23 @@ export default function AttentionFieldScreen() {
     setOpenRequest({ eventId, token: Date.now() });
   }, []);
 
-  // Dev-only test hook (__DEV__ -- stripped from production/TestFlight
-  // builds, same gating as the existing Developer/Diagnostics menu row).
-  // Forces a real, currently-displayed item to read as unread, rather than
-  // inventing a fake event_id the way the pre-fix version of this button
-  // had to -- so it exercises the actual open-card flow too, not just the
-  // badge/dropdown chrome.
-  const injectTestNotification = useCallback(() => {
-    if (state.kind !== "loaded" || state.response.items.length === 0) return;
-    const candidates = state.response.items.filter(
-      (item) => !devForcedIds.has(item.event_id) && !unread.some((n) => n.eventId === item.event_id)
-    );
-    const pool = candidates.length > 0 ? candidates : state.response.items;
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    setDevForcedIds((prev) => new Set(prev).add(pick.event_id));
-    setLocallyReviewedIds((prev) => {
-      if (!prev.has(pick.event_id)) return prev;
-      const next = new Set(prev);
-      next.delete(pick.event_id);
-      return next;
+  // Sprint 3.6.6F -- STRATUS Watch. Fire-and-forget: a denied permission or
+  // failed registration must not block the rest of the app -- the in-app
+  // badge above is fully independent and keeps working either way. Runs
+  // once per app start; expo-notifications/the backend route are both
+  // idempotent, so this is also safe to leave running on every mount.
+  useEffect(() => {
+    registerForPushNotificationsAsync().then((result) => {
+      if (result.status !== "registered") {
+        console.log("[stratus-watch] push registration:", result.status);
+      }
     });
-  }, [state, devForcedIds, unread]);
+  }, []);
+
+  // Tapping a real push notification opens the same card a direct vessel
+  // tap or an in-app dropdown notification would -- see
+  // openNotificationCard above and lib/notifications.ts's own docstring.
+  useNotificationTapHandler(openNotificationCard);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -475,17 +465,6 @@ export default function AttentionFieldScreen() {
           />
           <FieldBiasControl value={fieldBias} onChange={setFieldBias} />
         </View>
-      )}
-
-      {__DEV__ && (
-        <Pressable
-          onPress={injectTestNotification}
-          style={styles.devNotifButton}
-          accessibilityRole="button"
-          accessibilityLabel="Dev: inject a test notification"
-        >
-          <Text style={styles.devNotifButtonText}>DEV +1 NOTIF</Text>
-        </Pressable>
       )}
 
       <Modal
@@ -697,34 +676,6 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   notifRowPct: { color: theme.accent, fontSize: type.body, fontFamily: font.bodyMedium },
-  // Dev-only (__DEV__) -- deliberately utilitarian/dashed rather than
-  // matching the app's polished chrome, so it reads as a debug tool, not a
-  // real feature. Never present in a production/TestFlight build.
-  // Sprint 3.6.5 device-feedback pass: moved from bottom-right (where it
-  // sat just above FieldBiasControl, visually competing with it during
-  // physical-device review of the production-facing FIELD BIAS chrome) to
-  // top-right, clear of both the Attention Field and the header's own
-  // live-dot/notification-badge area. Purely a position change -- the
-  // button's function (forcing a real, currently-displayed item to read as
-  // unread) is untouched.
-  devNotifButton: {
-    position: "absolute",
-    top: 52,
-    right: 20,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: theme.muted,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: theme.background + "CC",
-  },
-  devNotifButtonText: {
-    color: theme.muted,
-    fontSize: 9,
-    fontFamily: font.metadata,
-    letterSpacing: tracking.metadata,
-  },
   centerFill: {
     flex: 1,
     alignItems: "center",
