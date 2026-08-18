@@ -18,10 +18,14 @@ import {
 import { biasStateFor, FieldBias } from "../lib/fieldBias";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
-import { CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
+import { CARD_BOTTOM_MARGIN, CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
 
 const SWIPE_THRESHOLD = 56;
-const READING_WIDTH_RATIO = 0.82;
+// Opportunity Card redesign (owner device feedback): 0.82 -> 0.87 -> 0.91,
+// each step still reading as "could be wider" -- 0.95 is close to
+// edge-to-edge (roughly 9-10pt clear on each side on a typical phone
+// width) but is what the owner explicitly asked for.
+const READING_WIDTH_RATIO = 0.95;
 // Must comfortably exceed Vessel.tsx's own exit-fade duration (420ms, or
 // 160ms under reduced motion) -- this is how long a departed vessel keeps
 // rendering (frozen at its last known position) after leaving `items`, so
@@ -85,6 +89,23 @@ export function AttentionField({
     setDisclosure(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
+
+  // Owner request: switching FIELD BIAS while a card is open should close
+  // it, rather than leaving an open card whose contents may no longer match
+  // the newly-selected lens sitting on top of a field that just visually
+  // rebalanced underneath it. `useRef` (not a dependency-array trick) skips
+  // the very first render deliberately -- `fieldBias` genuinely changes
+  // value on mount (from its default) in some call patterns, and that
+  // should never auto-close a card that a caller just explicitly asked to
+  // open via `openRequest`.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    setDisclosure(0);
+  }, [fieldBias]);
 
   const layouts = useMemo(
     () => computeAtmosphereLayout(items, width, height),
@@ -270,9 +291,11 @@ export function AttentionField({
   // Round 2 (real-device screenshots): the card could previously grow to a
   // fixed height regardless of how much room the field actually had,
   // rendering partially off-screen near the top/bottom edge. Capping it to
-  // the real measured field height (minus safe margins) is what lets
-  // Vessel.tsx fall back to its internal ScrollView instead.
-  const maxCardHeight = Math.max(220, height - CARD_SAFE_MARGIN * 2);
+  // the real measured field height (minus top/bottom margins -- see
+  // CARD_SAFE_MARGIN/CARD_BOTTOM_MARGIN's own comments for why they're not
+  // equal) is what lets Vessel.tsx fall back to its internal ScrollView
+  // instead.
+  const maxCardHeight = Math.max(220, height - CARD_SAFE_MARGIN - CARD_BOTTOM_MARGIN);
   const anyExpanded = disclosure > 0;
 
   // FIELD BIAS paint order: when a lens is active, emphasized items render
@@ -318,27 +341,40 @@ export function AttentionField({
           // biasState handling for the "recede but stay visible" guarantee.
           const biasState = biasStateFor(item, fieldBias);
 
-          // Clamp the card's eventual on-screen center (not the vessel's own
-          // resting position) into a safe reading region, with margins. If
-          // the field is too narrow/short for any valid clamp range (a
-          // degenerate size), fall back to the field's own center rather
-          // than an inverted range.
+          // Every opened card lands at the same fixed point -- the field's
+          // own center -- regardless of which vessel was tapped or where it
+          // happens to sit (owner request: opening a card from the edge of
+          // the field used to detach only as far as the nearest safe
+          // reading region, so different opportunities could land in
+          // visibly different spots; that inconsistency is what this
+          // replaces). The vessel's own natural position (`anchorX/anchorY`)
+          // no longer factors into where the card lands at all -- only
+          // cardOffsetX/Y (safeX/Y minus anchorX/Y) does, and Vessel.tsx
+          // only applies that offset once disclosureAnim actually starts
+          // moving toward 1, so the glow/label still stay exactly where
+          // Attention Gravity placed them at rest.
           const anchorX = layout.x * width;
           const anchorY = layout.y * height;
-          const cardHalfW = readingWidth / 2;
+          const safeX = width / 2;
+          // Owner device feedback (round 2): with CARD_HEIGHT set to always
+          // exceed maxCardHeight, cardHeight always equals maxCardHeight
+          // exactly -- which made a *symmetric* margin (the original
+          // CARD_SAFE_MARGIN*2 split) produce identical top/bottom
+          // clearance no matter how this center target was computed, so the
+          // round-1 "anchor to a fixed bottom" fix had no actual effect
+          // (bottom kept landing at the same spot centering already gave
+          // it, and the card visibly touched/overlapped FieldBiasControl
+          // below). CARD_SAFE_MARGIN (top) and CARD_BOTTOM_MARGIN (bottom)
+          // are now genuinely different constants -- see their own
+          // comments in Vessel.tsx -- so top clearance and bottom clearance
+          // are independently real: the card sits CARD_SAFE_MARGIN from the
+          // header above it and CARD_BOTTOM_MARGIN (deliberately larger,
+          // a clearly visible gap) from FieldBiasControl below it. Mirrors
+          // Vessel.tsx's own Math.min(CARD_HEIGHT, maxCardHeight) exactly
+          // so this position math never assumes a height the card doesn't
+          // actually render at.
           const cardHalfH = Math.min(CARD_HEIGHT, maxCardHeight) / 2;
-          const minCenterX = CARD_SAFE_MARGIN + cardHalfW;
-          const maxCenterX = width - CARD_SAFE_MARGIN - cardHalfW;
-          const minCenterY = CARD_SAFE_MARGIN + cardHalfH;
-          const maxCenterY = height - CARD_SAFE_MARGIN - cardHalfH;
-          const safeX =
-            minCenterX <= maxCenterX
-              ? Math.min(Math.max(anchorX, minCenterX), maxCenterX)
-              : width / 2;
-          const safeY =
-            minCenterY <= maxCenterY
-              ? Math.min(Math.max(anchorY, minCenterY), maxCenterY)
-              : height / 2;
+          const safeY = height - CARD_BOTTOM_MARGIN - cardHalfH;
 
           return (
             <Vessel

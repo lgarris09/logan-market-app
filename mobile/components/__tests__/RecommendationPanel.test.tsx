@@ -18,7 +18,7 @@ jest.mock("@expo/vector-icons", () => {
 // component is built against for when a real recommendation exists.
 describe("RecommendationPanel", () => {
   it("renders a locked teaser, not fabricated content, when no recommendation exists", () => {
-    render(<RecommendationPanel color="#22C55E" />);
+    render(<RecommendationPanel />);
 
     expect(screen.getByText("STRATUS RECOMMENDATION")).toBeTruthy();
     expect(screen.getByText("icon:lock-closed")).toBeTruthy();
@@ -30,7 +30,6 @@ describe("RecommendationPanel", () => {
   it("renders the action and a distinctly-labeled risk when a recommendation is present", () => {
     render(
       <RecommendationPanel
-        color="#22C55E"
         recommendation={{
           action: "Wait for confirmation before entering.",
           risk: "moderate",
@@ -51,7 +50,6 @@ describe("RecommendationPanel", () => {
   it("omits the WHAT WOULD CHANGE THIS section when that detail isn't available", () => {
     render(
       <RecommendationPanel
-        color="#22C55E"
         recommendation={{ action: "Consider a limited/small exposure.", risk: "speculative" }}
       />
     );

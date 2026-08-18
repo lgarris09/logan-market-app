@@ -18,6 +18,13 @@ export const theme = {
   accentSoft: "#2A1C10",
   success: "#4FD1A5",
   warning: "#F0B64A",
+  // Opportunity Card redesign (owner rendering reference): a restrained
+  // blue/steel accent for analytical "what changed" information -- distinct
+  // from `accent` (timing/action orange) and `success` (confidence/positive
+  // green). Used sparingly, only where a section's meaning is genuinely
+  // informational/analytical rather than a confidence signal or a
+  // timing/action cue.
+  info: "#6EA6E8",
 };
 
 // A small shared scale so spacing, corner radius, and text size stay consistent
