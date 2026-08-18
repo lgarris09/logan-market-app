@@ -199,29 +199,43 @@ def test_register_route_via_test_client():
 
 
 def test_pending_push_notification_full_lifecycle():
-    """3 pushed -> badge reflects 3 -> open (review) one -> badge reflects
-    2 -> review the remaining two -> badge reflects 0."""
+    """N pushed -> badge reflects N -> open (review) one -> badge reflects
+    N-1 -> review the remaining N-1 -> badge reflects 0. Deliberately does
+    not hardcode N: the exact alert-eligible count against the fixed
+    simulated fixtures depends on real engagement-derived lifecycle state
+    (Sprint 3.6.6I fixed a timing artifact that was inflating it) -- this
+    test proves the pending/badge state-machine mechanics, not a specific
+    count. See test_engagement_fixture_timing.py for engagement timing
+    coverage and the eligibility trace in docs/DECISIONS.md's Sprint
+    3.6.6I ADR for what the real count is and why."""
     register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
 
-    # The app's first-ever /v1/opportunities call -- forces is_new_for_user
-    # False for everything under the pre-existing first-load rule.
+    # This test scripts two pipeline calls in a fixed order (a first-load-
+    # style call, then a dispatch call) to exercise both code paths
+    # deterministically -- it is not a claim that the background poller is
+    # guaranteed to run after the app's own first request in real deployment.
+    # Startup/request ordering between the app's initial fetch and the
+    # poller's own first cycle can vary; get_pending_push_event_ids()'s fix
+    # is deliberately correct either way (see its own docstring) rather than
+    # relying on one specific order. This sequence matches the on-device
+    # scenario this fix was written for, not a guaranteed runtime ordering.
     first_load_items, _now, _alert = _run_feed_pipeline()
     assert all(not item.is_new_for_user for item in first_load_items)
 
-    # The poller's own next cycle -- dispatches real pushes independent of
-    # the first-load badge override above.
+    # The next pipeline call in this test's own sequence -- dispatches real
+    # pushes independent of the first-load badge override above.
     dispatched_count = dispatch_eligible_notifications(client=_mock_client())
-    assert dispatched_count == 3  # deterministic against the fixed fixtures
+    assert dispatched_count >= 2  # sanity: still a real, non-trivial alert set
 
     pending = get_pending_push_event_ids()
-    assert len(pending) == 3
+    assert len(pending) == dispatched_count
 
     # Badge == items whose is_new_for_user is True.
     items, _now, _alert = _run_feed_pipeline()
     pushed_items = [item for item in items if item.event_id in pending]
-    assert len(pushed_items) == 3
+    assert len(pushed_items) == dispatched_count
     assert all(item.is_new_for_user for item in pushed_items)
-    assert sum(1 for item in items if item.is_new_for_user) == 3
+    assert sum(1 for item in items if item.is_new_for_user) == dispatched_count
 
     # "Open one" -- reviewing a single event_id (what openNotificationCard
     # now does on the mobile side) clears only that one.
@@ -232,11 +246,11 @@ def test_pending_push_notification_full_lifecycle():
     items, _now, _alert = _run_feed_pipeline()
     reviewed_item = next(i for i in items if i.event_id == first_reviewed)
     assert reviewed_item.is_new_for_user is False
-    assert sum(1 for item in items if item.is_new_for_user) == 2
+    assert sum(1 for item in items if item.is_new_for_user) == dispatched_count - 1
 
     # "Review remaining" -- clears the badge to zero.
     remaining = list(pending - {first_reviewed})
-    assert len(remaining) == 2
+    assert len(remaining) == dispatched_count - 1
     mark_notifications_reviewed(remaining)
     assert get_pending_push_event_ids() == set()
 

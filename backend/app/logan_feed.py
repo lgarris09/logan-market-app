@@ -1,6 +1,6 @@
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -197,6 +197,22 @@ def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
     mark_pushed_notifications_reviewed(event_ids)
 
 
+# Sprint 3.6.6I: the two points per entity below represent readings taken at
+# the start and end of one observation window, not two readings both taken
+# "now" -- see _engagement_samples' own comment for why that distinction
+# matters (it was silently producing an artificially inflated
+# engagement_velocity for nearly every entity). ENGAGEMENT_SAMPLE_WINDOW is
+# that window's length. Chosen to reuse an existing, already-meaningful time
+# constant in this system rather than invent a new arbitrary number:
+# world_model/model.py's DEDUP_WINDOW (1 hour) is STRATUS's own established
+# granularity for "how long an observation stays part of the same ongoing
+# event" -- an engagement snapshot taken at the start vs. end of that same
+# window is a defensible, in-universe-consistent choice for what these two
+# fixture points represent. Not tuned to produce any particular downstream
+# alert count -- see docs/DECISIONS.md's Sprint 3.6.6I ADR for the full
+# reasoning and the before/after eligibility trace this produced.
+ENGAGEMENT_SAMPLE_WINDOW = timedelta(hours=1)
+
 # Per-entity simulated engagement, tuned for visual variety in the demo field --
 # not meant to represent real-world volumes. Entities not listed fall back to a
 # modest default.
@@ -255,17 +271,53 @@ class DemoFeedResponse(BaseModel):
     generated_at: datetime
 
 
+def _spaced_timestamps(now: datetime, count: int, window: timedelta) -> list[datetime]:
+    """Evenly spaces `count` timestamps across `window`, ending at `now` (the
+    most recent reading) -- the same shape a real periodic poll would
+    produce. A single timestamp has no interval to span, so it's just `now`.
+    Pulled out of _engagement_samples as its own pure function specifically
+    so this spacing behavior is testable independent of the entity fixture
+    lookup below.
+    """
+    if count <= 1:
+        return [now]
+    step = window / (count - 1)
+    return [now - window + step * i for i in range(count)]
+
+
 def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]:
+    """Sprint 3.6.6I fix: every sample previously shared the identical
+    `observed_at=now` timestamp. CommunityIntelligenceEngine.measure() floors
+    `hours_elapsed` at 0.25 when the elapsed time is zero (its own division-
+    by-zero guard) and computes engagement_velocity as a raw point-delta
+    divided by that floor -- with two same-timestamp samples, this silently
+    multiplied every entity's real point-delta by 4, which pushed
+    lifecycle_state to "emerging" for nearly every entity regardless of
+    whether its underlying delta was actually a meaningful spike. Real-Case-
+    Instrumented trace (2026-08-19, prior to this fix): 10 of 11 simulated
+    entities computed "emerging" this way -- an artifact of fixture
+    construction, not a real signal.
+
+    Fixed by spreading each entity's points evenly across
+    ENGAGEMENT_SAMPLE_WINDOW ending at `now` (first point = start of window,
+    last point = now) -- the same shape a real periodic engagement poll
+    would produce, and the same underlying (volume, unique_users,
+    saves_shares, questions) fixture values as before (untouched -- this is
+    a timing fix only, not a data/tuning change). CommunityIntelligenceEngine
+    itself, its lifecycle thresholds, PolicyEngine, PrioritizationEngine, and
+    STRATUS Watch's dispatch logic are all unmodified.
+    """
     points = _ENGAGEMENT_BY_ENTITY.get(entity_id, [(5, 4, 0, 0), (8, 6, 1, 0)])
+    timestamps = _spaced_timestamps(now, len(points), ENGAGEMENT_SAMPLE_WINDOW)
     return [
         EngagementSample(
-            observed_at=now,
+            observed_at=t,
             volume_at_point=v,
             unique_users=u,
             saves_shares=s,
             questions=q,
         )
-        for v, u, s, q in points
+        for t, (v, u, s, q) in zip(timestamps, points, strict=True)
     ]
 
 

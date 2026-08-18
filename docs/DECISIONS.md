@@ -957,3 +957,54 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   actually misses or lands in-line — consistent with the "don't force a fire" rule; real live proof for those
   two arrives whenever NVDA's next real report happens to land there, the same way BEAT's live proof arrived
   in Sprint 3.6.6B/C, not forced or simulated here to close the gap artificially.
+
+## ADR-046: Sprint 3.6.6I — fixed a same-timestamp engagement fixture artifact inflating `lifecycle_state`
+- Date: 2026-08-19
+- Status: Accepted
+- Context: A STRATUS Watch eligibility trace (owner request, tracing why FED/AI_SECTOR/NFL all qualified for
+  push simultaneously) found that `backend/app/logan_feed.py`'s `_engagement_samples()` gave both simulated
+  engagement readings the identical `observed_at=now` timestamp. `CommunityIntelligenceEngine.measure()`
+  (unmodified, `logan_core/community_intelligence/community.py`) floors elapsed time at 0.25 hours as its own
+  division-by-zero guard, then computes `engagement_velocity` as the raw point-delta divided by elapsed time.
+  With two same-timestamp samples, every entity's real point-delta was silently multiplied by 4, pushing
+  `lifecycle_state` to `"emerging"` for 10 of 11 simulated entities regardless of whether the underlying delta
+  was a genuine spike — an artifact of fixture construction, not a real signal, and not something owner-facing
+  documentation or code had previously called out.
+- Decision:
+  1. `_engagement_samples()` now spreads each entity's fixture points evenly across a new
+     `ENGAGEMENT_SAMPLE_WINDOW = timedelta(hours=1)` ending at `now`, instead of stamping every point with
+     `now`. The window length reuses `world_model/model.py`'s existing `DEDUP_WINDOW` (also 1 hour) as its
+     reference rather than inventing a new arbitrary constant — an in-universe-consistent choice for "how long
+     an observation window is" in this system, not a value tuned to produce a particular alert count. The
+     underlying `(volume, unique_users, saves_shares, questions)` fixture data is untouched — this is a timing
+     fix only.
+  2. The spacing logic is a small, separately-testable pure function, `_spaced_timestamps(now, count, window)`,
+     handling the general N-point case (today's fixtures always have exactly 2 points, but nothing hardcodes
+     that).
+  3. `CommunityIntelligenceEngine`, its lifecycle thresholds, `PolicyEngine`, `PrioritizationEngine`, and
+     STRATUS Watch's dispatch/dedup logic are all unmodified — this ADR is scoped to fixture timing only, per
+     explicit owner instruction. No personalization floor or push-count cap was added; those remain open,
+     separately-tracked questions from the eligibility trace this fix responded to.
+  4. Wording correction made before this ADR was written: an earlier internal trace and test comments
+     described dispatch as happening on "the app's first load, then the poller's next cycle" as if that were a
+     guaranteed two-step runtime order. It is not — it was the specific sequence *observed and reproduced* in
+     testing (the app's own initial fetch and the background poller's first cycle can occur in either order in
+     real deployment, and `get_pending_push_event_ids()` is deliberately written to be correct regardless of
+     which happens first). Test comments were corrected to describe this as a scripted, representative test
+     sequence, not a guaranteed ordering.
+- Consequences: the corrected eligibility trace (real engagement deltas over a real hour, not the floor
+  artifact) changes NFL from `emerging`/`velocity=16.0` (artifact) to `peak`/`velocity=4.0` (real) — it no
+  longer clears the `urgency >= 0.7` alert bar and stops qualifying for push. FED (`velocity=14.0`) and
+  AI_SECTOR (`velocity=25.0`) both still qualify — their deltas are genuinely large, not artifacts. TSLA/NVDA/
+  AAPL still qualify on a first observation but never actually reach dispatch in practice, because stocks-
+  domain fatigue (a separate, pre-existing mechanism, untouched here) trips before a real second pipeline call
+  can dispatch them. Net effect: the realistic simultaneous-alert count drops from 3 (one of which was a
+  measurement artifact) to 2, both now backed by real data. FED still qualifies with `personal_relevance=0.50`
+  — the fully generic, unconnected default — confirming personalization is still not required for alert
+  eligibility; that remains an open, separately-tracked question, not addressed by this timing-only pass.
+  10 new tests (`test_engagement_fixture_timing.py`): window-span exactness, even N-point spacing, single-
+  point safety, unchanged fixture values, the zero-elapsed precondition no longer being reachable for any real
+  fixture, and two representative before/after cases (NFL's artifact-vs-real velocity, TSLA's genuine spike
+  still correctly emerging). One existing test (`test_pending_push_notification_full_lifecycle`) updated to
+  assert against the real dispatched count rather than a hardcoded value that depended on the artifact.
+  `backend`/`logan_core` test count: 221 → 231. mypy/ruff/black clean.
