@@ -127,4 +127,85 @@ preserved), `app/_layout.tsx`, `components/EntitySymbol.tsx`, `components/Opport
 2. Decide what to do with the two flagged stray files (`.claude/settings.json`, the reference PNG).
 3. Once the Field is validated on-device, revisit the deferred items with real reaction in hand: traveling
    connection-line animation, the top Market Pulse/Portfolio Growth widgets (currently omitted — they'd
+
+---
+
+# Session Notes — 2026-08-19 (behavioral-personalization foundation, UserModel persistence pass)
+
+Branch: `integration/sprint-3.6.6-stratus-watch`. Prior commit this session: `9f1f5e3` (ADR-047 — card-open/
+dwell/notification-open interaction capture wired into the existing `FeedbackSignal -> FeedbackEngine ->
+LearningEngine -> MemoryStore` path). **No new commit was made in this pass** — see stop condition below.
+
+## What was asked
+
+Turn interaction capture into persistent user learning: make `UserModel` survive across repeated
+`/v1/opportunities` requests (today it's rebuilt from scratch via `UserModelBuilder().seed(...)` on every
+single call in `backend/app/logan_feed.py::_run_feed_pipeline()`), and extend `UserModelBuilder.build()` to
+read the `feedback_record`s Part A now produces into `established_behaviors` / `domain_preferences` /
+`Interest(source="inferred")`, without touching STRATUS Watch eligibility.
+
+## What was inspected (Phase 1, complete)
+
+- `UserModelBuilder.seed()`/`.build()` (`logan_core/user_model/model.py`): `.build()` already does the right
+  shape for safe persistence — `base.model_copy(update={...})` only ever touches `model_confidence`/
+  `last_updated`/`version`, leaving `interests`/`holdings`/`domain_preferences`/`established_behaviors`/
+  `inferred_expertise` copied through from `base` untouched. That's the existing mechanism that would keep
+  explicit data intact across rebuilds — no new mechanism needed for that part.
+- `.build()`'s `preference_records` filter only matches `record_type in ("preference_signal",
+  "user_statement")`. Nothing in live code ever produces `preference_signal`. Our new interactions produce
+  `feedback_record`s, which `.build()` currently ignores entirely — confirms the verified gap.
+- **New finding, not previously surfaced**: `MemoryRecord.content` for our Part A interactions is just
+  `f"{interaction_type} on {entity_id} ({domain})"` (`logan_feed.record_interaction()`) — it does **not**
+  preserve `FeedbackEngine.interpret()`'s output (`inferred_intent`, `intent_confidence`). Consuming
+  behavioral evidence deterministically (not by re-parsing prose or re-deriving from a `duration_ms` that also
+  isn't stored) needs that interpretation captured at write time. Fixing this is in-scope, small, and doesn't
+  touch any Pydantic contract (`MemoryRecord.content: object` is already deliberately untyped) — it just means
+  building `content` in `record_interaction()` *after* calling `feedback_engine.interpret()` instead of before.
+- No existing `UserModelStore`/cache abstraction exists. The correct precedent to mirror is the
+  `_orchestrator: Orchestrator | None` process-lifetime singleton already in `logan_feed.py` (Sprint 3.6.6C) —
+  same file, same pattern, not a new persistence layer.
+- Confirmed `Orchestrator.run()` already calls `user_model_builder.build()` once **per entity, per pipeline
+  run**, scoped to that entity's own `memory_store.query(entities=[...])` records — this internal, narrow
+  call is separate from (and should stay untouched by) a new top-level call using the user's full record set,
+  which is what would actually need to persist forward as next request's `base`.
+
+## Stop condition hit — implementation did not proceed past inspection
+
+`ReasoningEngine.reason()` (`logan_core/reasoning/engine.py`) reads `user_model.interests` **without
+filtering by `source`**:
+```python
+interest_topics = {i.topic for i in user_model.interests}
+connected_entities = sorted(touched_ids & (holding_ids | interest_topics))
+```
+`connected_entities` (any interest, explicit or inferred, matching) is one of the two branches that raise
+`personal_relevance` in `opportunity/engine.py` (`_ACTIONABILITY_SCORE...` then `max(personal_relevance,
+0.6)`), and `Dimensions.personal_relevance` is a live input to `PrioritizationEngine`'s alert/interruption
+gating (confirmed by ADR-046's own trace, which already showed `personal_relevance` values driving alert
+eligibility). **Writing any `Interest(source="inferred")` today would therefore change STRATUS Watch
+eligibility as a side effect**, in direct contradiction of this task's explicit instruction not to touch Watch
+eligibility tonight — and the fix (making `ReasoningEngine` distinguish `source="explicit"` from
+`source="inferred"`) is itself a Reasoning-layer logic change, which is out of scope for a "no Watch policy
+changes tonight" pass, not something to route around silently.
+
+This is exactly one of the user's own listed stop conditions ("changing Watch policy," reached as an
+unintended side effect rather than a direct ask) — so the pass stopped here rather than guessing. No code was
+changed this turn; the branch is unchanged from commit `9f1f5e3`, clean and synced with
+`origin/integration/sprint-3.6.6-stratus-watch`.
+
+## Recommended next steps, in order
+
+1. **Decide/confirm** whether `ReasoningEngine.reason()` should filter `user_model.interests` to
+   `source == "explicit"` only when computing `connected_entities`/`personal_relevance_narrative` (keeping
+   inferred interests legible elsewhere, e.g. a future personalization surface, without them silently feeding
+   today's Watch-adjacent relevance signal). This is a real product/architecture decision, not an
+   implementation detail — needs explicit sign-off before any `Interest(source="inferred")` write is safe.
+2. Once (1) is decided: implement the persistence + `.build()` extension exactly as scoped tonight —
+   process-lifetime `UserModel` cache in `logan_feed.py` (mirroring `_orchestrator`), `record_interaction()`
+   enriched to capture `inferred_intent`/`intent_confidence` in `content`, `.build()` extended to populate
+   `established_behaviors` and `domain_preferences.active` from repeated (>=2, the minimal definition of
+   "not isolated") same-`(domain, entity_id)` `interested`-intent evidence, confidence values reused directly
+   from `FeedbackEngine.interpret()`'s output rather than invented. `inferred_expertise` was already ruled out
+   for this pass — "expertise" isn't demonstrated by view/click/dwell signals, only attention is.
+3. Everything else from this pass's brief (impression/exposure, Watch Personal/Exceptional routes, FIELD
+   BIAS learning, Ask STRATUS linkage) remains correctly deferred, unchanged from the prior session's report.
    need real data, not invented numbers), and whether the full 5-tab navigation is worth building next.
