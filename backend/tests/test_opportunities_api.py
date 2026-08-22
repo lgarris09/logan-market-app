@@ -11,18 +11,19 @@ from fastapi.testclient import TestClient
 from backend.app.logan_feed import reset_pipeline_state, run_demo_feed
 from backend.app.main import app
 from backend.app.opportunities import OPPORTUNITIES_SCHEMA_VERSION, run_opportunities
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 client = TestClient(app)
 
 
 def test_opportunities_response_has_schema_version():
-    result = run_opportunities()
+    result = run_opportunities(LOCAL_FOUNDER_USER_ID)
     assert result.schema_version == OPPORTUNITIES_SCHEMA_VERSION
     assert result.schema_version == "1.0"
 
 
 def test_opportunities_response_has_no_internal_score_fields():
-    result = run_opportunities()
+    result = run_opportunities(LOCAL_FOUNDER_USER_ID)
     payload = result.model_dump()
     flat = str(payload)
     assert "priority_score" not in flat
@@ -43,7 +44,7 @@ def test_opportunities_matches_demo_feed_pipeline_output():
     computation) from that new, deliberate cross-request behavior.
     """
     reset_pipeline_state()
-    opportunities_result = run_opportunities()
+    opportunities_result = run_opportunities(LOCAL_FOUNDER_USER_ID)
     reset_pipeline_state()
     demo_result = run_demo_feed()
     assert [item.entity_id for item in opportunities_result.items] == [

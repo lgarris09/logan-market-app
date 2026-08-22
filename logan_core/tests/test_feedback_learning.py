@@ -30,8 +30,11 @@ def test_memory_inbox_confirm_writes_through_learning(
     assert feedback.intent_confidence == 1.0
     assert feedback.inferred_intent == "interested"
     assert write.target == "memory"
-    assert len(orchestrator.deps.memory_store.all()) == 1
-    assert orchestrator.deps.memory_store.all()[0].source_layer == "learning_system"
+    assert len(orchestrator.deps.memory_store.all(user_id="demo_user")) == 1
+    assert (
+        orchestrator.deps.memory_store.all(user_id="demo_user")[0].source_layer
+        == "learning_system"
+    )
 
 
 def test_memory_inbox_reject_writes_correction_record(
@@ -54,7 +57,7 @@ def test_memory_inbox_reject_writes_correction_record(
     )
 
     assert feedback.inferred_intent == "dismissing"
-    stored = orchestrator.deps.memory_store.all()
+    stored = orchestrator.deps.memory_store.all(user_id="demo_user")
     assert stored[0].record_type == "correction_record"
 
 
@@ -80,7 +83,7 @@ def test_low_confidence_feedback_is_flagged_not_written(
     )
 
     assert feedback.inferred_intent == "unknown"
-    assert len(orchestrator.deps.memory_store.all()) == 0
+    assert len(orchestrator.deps.memory_store.all(user_id="demo_user")) == 0
     assert write in orchestrator.deps.learning_engine.flagged_for_review
 
 
@@ -120,7 +123,7 @@ def test_run_feedback_loop_accepts_a_content_builder(
 
     assert len(calls) == 1
     assert calls[0] is feedback
-    stored = orchestrator.deps.memory_store.all()
+    stored = orchestrator.deps.memory_store.all(user_id="demo_user")
     assert stored[0].content == {
         "inferred_intent": "interested",
         "intent_confidence": 0.85,
@@ -199,7 +202,7 @@ def test_process_outcome_is_an_explicit_unimplemented_stub(orchestrator):
         orchestrator.deps.learning_engine.process_outcome(outcome)
 
     # No side effects — nothing was written, nothing was flagged.
-    assert orchestrator.deps.memory_store.all() == []
+    assert orchestrator.deps.memory_store.all(user_id="demo_user") == []
     assert orchestrator.deps.learning_engine.flagged_for_review == []
 
 
@@ -222,7 +225,7 @@ def test_memory_inbox_confirm_stamps_user_id(
         content="User confirmed Tesla AI partnership is relevant to their portfolio.",
     )
 
-    stored = orchestrator.deps.memory_store.all()
+    stored = orchestrator.deps.memory_store.all(user_id="demo_user")
     assert stored[0].user_id == "demo_user"
 
 
@@ -250,7 +253,7 @@ def test_run_exposure_loop_writes_an_exposure_record(
     )
 
     assert write.write_type == "new_record"
-    records = orchestrator.deps.memory_store.all()
+    records = orchestrator.deps.memory_store.all(user_id="demo_user")
     assert any(r.record_type == "exposure_record" for r in records)
 
 
@@ -277,7 +280,7 @@ def test_run_exposure_loop_never_writes_a_feedback_record(
         entity_id="TSLA",
     )
 
-    records = orchestrator.deps.memory_store.all()
+    records = orchestrator.deps.memory_store.all(user_id="demo_user")
     assert not any(r.record_type == "feedback_record" for r in records)
 
 
@@ -304,7 +307,7 @@ def test_run_exposure_loop_is_idempotent_across_repeated_calls(
 
     exposure_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id="demo_user")
         if r.record_type == "exposure_record"
     ]
     assert len(exposure_records) == 1

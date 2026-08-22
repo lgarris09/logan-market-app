@@ -12,6 +12,7 @@ from backend.app.logan_feed import (
     reset_pipeline_state,
     run_demo_feed,
 )
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 
 def test_feed_item_has_no_internal_score_fields():
@@ -73,12 +74,12 @@ def test_user_model_persists_across_repeated_requests():
     """
     reset_pipeline_state()
     run_demo_feed()
-    seeded_model = logan_feed_module._user_model
+    seeded_model = logan_feed_module._user_models[LOCAL_FOUNDER_USER_ID]
     assert seeded_model is not None
     assert seeded_model.established_behaviors == []
 
     run_demo_feed()
-    rebuilt_model = logan_feed_module._user_model
+    rebuilt_model = logan_feed_module._user_models[LOCAL_FOUNDER_USER_ID]
     assert rebuilt_model is not None
     # A later call must rebuild forward from the same instance -- not
     # silently reseed a brand-new one (`.build()` always increments
@@ -98,14 +99,22 @@ def test_repeated_behavioral_evidence_compounds_into_persisted_user_model():
     run_demo_feed()  # seeds the persisted UserModel
 
     record_interaction(
-        event_id=uuid4(), entity_id="TSLA", domain="stocks", interaction_type="watch"
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=uuid4(),
+        entity_id="TSLA",
+        domain="stocks",
+        interaction_type="watch",
     )
     record_interaction(
-        event_id=uuid4(), entity_id="TSLA", domain="stocks", interaction_type="watch"
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=uuid4(),
+        entity_id="TSLA",
+        domain="stocks",
+        interaction_type="watch",
     )
 
     run_demo_feed()  # folds the accumulated feedback_records into the model
-    model = logan_feed_module._user_model
+    model = logan_feed_module._user_models[LOCAL_FOUNDER_USER_ID]
     assert model is not None
 
     behavior_labels = {b.label for b in model.established_behaviors}
@@ -127,11 +136,15 @@ def test_single_interaction_does_not_create_inferred_preference():
     run_demo_feed()
 
     record_interaction(
-        event_id=uuid4(), entity_id="OIL", domain="stocks", interaction_type="watch"
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=uuid4(),
+        entity_id="OIL",
+        domain="stocks",
+        interaction_type="watch",
     )
 
     run_demo_feed()
-    model = logan_feed_module._user_model
+    model = logan_feed_module._user_models[LOCAL_FOUNDER_USER_ID]
     assert model is not None
     assert "engaged_with_OIL" not in {b.label for b in model.established_behaviors}
     assert "OIL" not in {i.topic for i in model.interests if i.source == "inferred"}

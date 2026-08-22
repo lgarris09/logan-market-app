@@ -50,7 +50,7 @@ def test_in_memory_default_is_unaffected_by_persistence_support():
     store = MemoryStore()
     record = _record()
     store.write(record, writer="learning_system")
-    assert store.all() == [record]
+    assert store.all(user_id="demo_user") == [record]
     # No-op close, no crash, no file created anywhere.
     store.close()
 
@@ -63,9 +63,9 @@ def test_records_survive_reload_from_a_fresh_store_instance(tmp_path):
     store.close()
 
     reloaded = MemoryStore(db_path=db_path)
-    assert len(reloaded.all()) == 1
-    assert reloaded.all()[0].record_id == record.record_id
-    assert reloaded.all()[0].content == record.content
+    assert len(reloaded.all(user_id="demo_user")) == 1
+    assert reloaded.all(user_id="demo_user")[0].record_id == record.record_id
+    assert reloaded.all(user_id="demo_user")[0].content == record.content
 
 
 def test_query_and_all_are_unaffected_by_the_sqlite_backing(tmp_path):
@@ -75,10 +75,10 @@ def test_query_and_all_are_unaffected_by_the_sqlite_backing(tmp_path):
     store.write(_record(entities=["NVDA"], content={"a": 1}), writer="learning_system")
     store.write(_record(entities=["AMD"], content={"a": 2}), writer="learning_system")
 
-    assert len(store.all()) == 2
-    assert len(store.query(entities=["NVDA"])) == 1
-    assert len(store.query(domain="stocks")) == 2
-    assert len(store.query(domain="sports")) == 0
+    assert len(store.all(user_id="demo_user")) == 2
+    assert len(store.query(user_id="demo_user", entities=["NVDA"])) == 1
+    assert len(store.query(user_id="demo_user", domain="stocks")) == 2
+    assert len(store.query(user_id="demo_user", domain="sports")) == 0
 
 
 def test_permission_check_is_unaffected_by_persistence(tmp_path):
@@ -100,8 +100,8 @@ def test_updating_an_existing_record_id_persists_the_new_content(tmp_path):
     store.close()
 
     reloaded = MemoryStore(db_path=db_path)
-    assert len(reloaded.all()) == 1
-    assert reloaded.all()[0].content == {"count": 2}
+    assert len(reloaded.all(user_id="demo_user")) == 1
+    assert reloaded.all(user_id="demo_user")[0].content == {"count": 2}
 
 
 def test_schema_meta_records_the_current_version(tmp_path):
@@ -124,7 +124,9 @@ def test_reopening_an_existing_database_does_not_reset_its_version(tmp_path):
     store1.close()
 
     store2 = MemoryStore(db_path=db_path)
-    assert len(store2.all()) == 1  # data survived a schema re-init on reopen
+    assert (
+        len(store2.all(user_id="demo_user")) == 1
+    )  # data survived a schema re-init on reopen
 
 
 # --- Bounded-history compaction ---------------------------------------
@@ -141,7 +143,7 @@ def test_compaction_prunes_oldest_feedback_records_beyond_the_cap(
             _record(created_at=base + timedelta(seconds=i)), writer="learning_system"
         )
 
-    all_records = store.all()
+    all_records = store.all(user_id="demo_user")
     assert len(all_records) == _TEST_CAP
     # The oldest 5 were pruned -- the earliest remaining record is newer than
     # the very first one written.
@@ -163,7 +165,7 @@ def test_compaction_never_prunes_explicit_high_value_record_types(
             writer="learning_system",
         )
 
-    all_records = store.all()
+    all_records = store.all(user_id="demo_user")
     assert explicit.record_id in {r.record_id for r in all_records}
 
 
@@ -181,5 +183,11 @@ def test_compaction_is_scoped_per_user(tmp_path, monkeypatch):
             writer="learning_system",
         )
 
-    all_records = store.all()
-    assert other_user_record.record_id in {r.record_id for r in all_records}
+    other_user_records = store.all(user_id="other_user")
+    assert other_user_record.record_id in {r.record_id for r in other_user_records}
+    # demo_user's own heavy volume was compacted down to the cap, exactly as
+    # test_compaction_prunes_oldest_feedback_records_beyond_the_cap proves --
+    # this test's own point is that other_user's single record survived
+    # untouched regardless, not that no compaction happened at all.
+    demo_user_records = store.all(user_id="demo_user")
+    assert len(demo_user_records) == _TEST_CAP

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
@@ -44,6 +44,7 @@ from .notifications import (
     register_token,
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
+from .user_context import resolve_user_id
 
 
 async def _notification_poll_loop() -> None:
@@ -109,14 +110,21 @@ def briefing() -> BriefingResponse:
 
 
 @app.get("/v1/opportunities", response_model=OpportunitiesResponse)
-def opportunities(category: str | None = None) -> OpportunitiesResponse:
+def opportunities(
+    category: str | None = None, user_id: str = Depends(resolve_user_id)
+) -> OpportunitiesResponse:
     """Real, versioned opportunities API -- a thin adapter over `logan_core`
     (V3.1.4 BATCH-4). Runs the actual pipeline (simulated receptors, real scoring/
     policy/prioritization) rather than returning the static `DEMO_OPPORTUNITIES`
     fixture the old version of this route used. `internal_rank_score` is never
     serialized (ADR-029) -- only the resulting ordinal `rank` is public.
+
+    Sprint 3.6.8 Block 2: `user_id` resolves from the `X-Stratus-User-Id`
+    header (see user_context.resolve_user_id), defaulting to the founder
+    constant when absent -- every pre-Block-2 caller (which sends no such
+    header) gets byte-for-byte the same response as before.
     """
-    response = run_opportunities()
+    response = run_opportunities(user_id)
     if category is None:
         return response
     filtered = [item for item in response.items if item.category == category.lower()]
@@ -125,43 +133,47 @@ def opportunities(category: str | None = None) -> OpportunitiesResponse:
 
 @app.post("/v1/notifications/review", response_model=NotificationsReviewResponse)
 def review_notifications(
-    request: NotificationsReviewRequest,
+    request: NotificationsReviewRequest, user_id: str = Depends(resolve_user_id)
 ) -> NotificationsReviewResponse:
-    """Marks event_ids as reviewed by the current (single, local) user -- the
-    only way an item's `is_new_for_user` clears on a later `/v1/opportunities`
-    call. See `logan_feed.mark_notifications_reviewed` and
+    """Marks event_ids as reviewed by `user_id` -- the only way an item's
+    `is_new_for_user` clears on a later `/v1/opportunities` call. See
+    `logan_feed.mark_notifications_reviewed` and
     `PrioritizationEngine.mark_reviewed` for why this is deliberately a
     separate concept from World Model event identity/dedup. In-memory,
     process-lifetime only -- resets on backend restart, same as the rest of
     this notification state.
     """
-    mark_notifications_reviewed(request.event_ids)
+    mark_notifications_reviewed(user_id, request.event_ids)
     return NotificationsReviewResponse(reviewed_count=len(request.event_ids))
 
 
 @app.post("/v1/notifications/register", response_model=RegisterPushTokenResponse)
-def register_push_token(request: RegisterPushTokenRequest) -> RegisterPushTokenResponse:
+def register_push_token(
+    request: RegisterPushTokenRequest, user_id: str = Depends(resolve_user_id)
+) -> RegisterPushTokenResponse:
     """Sprint 3.6.6F -- STRATUS Watch. Registers a device's Expo push token so
     the background poller (see _start_notification_poller above) can dispatch
-    real pushes to it. In-memory, process-lifetime only, single demo user --
-    see notifications.py's own docstring for why a durable per-user store is
-    an explicitly separate, not-yet-made decision.
+    real pushes to it. In-memory, process-lifetime only -- Sprint 3.6.8 Block
+    2 scopes token storage per `user_id` (see notifications.py); a durable
+    per-user store surviving a restart remains an explicitly separate,
+    not-yet-made decision.
     """
-    return register_token(request)
+    return register_token(user_id, request)
 
 
 @app.post("/v1/interactions", response_model=RecordInteractionResponse)
 def record_interaction_route(
-    request: RecordInteractionRequest,
+    request: RecordInteractionRequest, user_id: str = Depends(resolve_user_id)
 ) -> RecordInteractionResponse:
     """Behavioral-personalization foundation: the first live caller of the
     existing FeedbackSignal -> FeedbackEngine -> LearningEngine -> MemoryStore
     path (see logan_feed.record_interaction and ADR-047). Deliberately a thin
     passthrough -- `content` is derived server-side from structured fields
-    only, never accepted as client text, and `user_id` is inferred as the
-    single local user, matching /v1/notifications/review's own pattern.
+    only, never accepted as client text. `user_id` resolves from the request
+    header (Sprint 3.6.8 Block 2), matching every other route's pattern.
     """
     record_interaction(
+        user_id=user_id,
         event_id=request.event_id,
         entity_id=request.entity_id,
         domain=request.domain,
@@ -217,7 +229,7 @@ def demo_tesla() -> TeslaDemoResponse:
 
 
 @app.get("/v1/demo/feed", response_model=DemoFeedResponse, deprecated=True)
-def demo_feed() -> DemoFeedResponse:
+def demo_feed(user_id: str = Depends(resolve_user_id)) -> DemoFeedResponse:
     """Runs all five simulated domain fixtures through logan_core on one shared
     Orchestrator and returns a multi-item feed, ranked by priority and annotated with
     cross-item ripple connections. Demo/proof-of-connectivity endpoint -- see ADR-022.
@@ -226,11 +238,13 @@ def demo_feed() -> DemoFeedResponse:
     schema-versioned response. Kept only so existing callers don't break during the
     mobile migration window (BATCH-4 mobile task).
     """
-    return run_demo_feed()
+    return run_demo_feed(user_id)
 
 
 @app.post("/v1/ask", response_model=AskResponse)
-def ask_logan(request: AskRequest) -> AskResponse:
+def ask_logan(
+    request: AskRequest, user_id: str = Depends(resolve_user_id)
+) -> AskResponse:
     """V3.1.4.2 brand correction pass: the returned copy was exposing internal
     implementation language ("confirmed memory", "V1", "category-linked
     memories") directly to consumers -- a wording-only fix, the underlying
@@ -260,6 +274,13 @@ def ask_logan(request: AskRequest) -> AskResponse:
     exactly once per (session, opportunity), regardless of which path
     produced the answer -- the LLM is an interpretation layer over this
     same grounded context, never a second source of behavioral evidence.
+
+    Sprint 3.6.8 Block 2 (ADR-057): `user_id` resolves from the request
+    header (see user_context.resolve_user_id) and scopes every one of the
+    above -- the OpportunityContext this question can be grounded in, the
+    session continuity anchor, and the resulting ASK_FOLLOWUP behavioral
+    evidence are all `user_id`-scoped, so one user's Ask STRATUS activity
+    can never read or influence another's.
     """
     clean_message = request.message.strip()
     if not clean_message:
@@ -271,10 +292,10 @@ def ask_logan(request: AskRequest) -> AskResponse:
 
     target_event_id = request.event_id
     if target_event_id is None and request.session_id:
-        target_event_id = get_ask_session_event(request.session_id)
+        target_event_id = get_ask_session_event(user_id, request.session_id)
 
     if target_event_id is not None:
-        context = get_opportunity_context(target_event_id)
+        context = get_opportunity_context(user_id, target_event_id)
         if context is not None:
             grounded_answer = generate_grounded_answer(
                 context, clean_message, get_ask_llm_provider()
@@ -282,15 +303,18 @@ def ask_logan(request: AskRequest) -> AskResponse:
             answer = grounded_answer.text
 
             if request.session_id:
-                set_ask_session_event(request.session_id, target_event_id)
+                set_ask_session_event(user_id, request.session_id, target_event_id)
                 # Feedback-loop protection: at most one ASK_FOLLOWUP
                 # behavioral-evidence contribution per (session, opportunity)
                 # pair -- see should_record_ask_followup's own docstring.
                 # Repeated follow-ups in the same session still get a real,
                 # freshly-grounded answer every time; only the *behavioral
                 # evidence* is capped.
-                if should_record_ask_followup(request.session_id, target_event_id):
+                if should_record_ask_followup(
+                    user_id, request.session_id, target_event_id
+                ):
                     record_interaction(
+                        user_id=user_id,
                         event_id=target_event_id,
                         entity_id=context.entity_id,
                         domain=context.domain,
@@ -301,6 +325,7 @@ def ask_logan(request: AskRequest) -> AskResponse:
                 # real, single question about a real opportunity, recorded
                 # once with no session-level cap to apply.
                 record_interaction(
+                    user_id=user_id,
                     event_id=target_event_id,
                     entity_id=context.entity_id,
                     domain=context.domain,

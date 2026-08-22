@@ -38,7 +38,7 @@ def test_first_exposure_creates_a_new_exposure_record():
 
     assert write.write_type == "new_record"
     assert write.confidence == 1.0
-    records = store.all()
+    records = store.all(user_id="demo_user")
     assert len(records) == 1
     assert records[0].record_type == "exposure_record"
     assert records[0].operational_ref == event_id
@@ -59,7 +59,7 @@ def test_repeated_exposure_updates_the_same_record_not_a_duplicate():
     )
 
     assert write2.write_type == "update_record"
-    records = store.all()
+    records = store.all(user_id="demo_user")
     assert len(records) == 1
     content = records[0].content
     assert isinstance(content, dict)
@@ -76,7 +76,7 @@ def test_exposure_records_do_not_grow_unbounded_over_many_impressions():
             event_id, "demo_user", "stocks", "NVDA", now=NOW + timedelta(minutes=i)
         )
 
-    records = store.all()
+    records = store.all(user_id="demo_user")
     assert len(records) == 1
     content = records[0].content
     assert isinstance(content, dict)
@@ -90,7 +90,7 @@ def test_exposure_for_different_events_creates_independent_records():
     engine.process_exposure(uuid4(), "demo_user", "stocks", "NVDA", now=NOW)
     engine.process_exposure(uuid4(), "demo_user", "stocks", "NVDA", now=NOW)
 
-    assert len(store.all()) == 2
+    assert len(store.all(user_id="demo_user")) == 2
 
 
 def test_exposure_never_creates_a_feedback_record():
@@ -101,7 +101,9 @@ def test_exposure_never_creates_a_feedback_record():
     engine = LearningEngine(store)
     engine.process_exposure(uuid4(), "demo_user", "stocks", "NVDA", now=NOW)
 
-    assert all(r.record_type == "exposure_record" for r in store.all())
+    assert all(
+        r.record_type == "exposure_record" for r in store.all(user_id="demo_user")
+    )
 
 
 # --- process_feedback short-window dedup -------------------------------
@@ -129,7 +131,7 @@ def test_duplicate_feedback_within_window_does_not_create_a_second_record():
 
     assert write1.write_type == "new_record"
     assert write2.write_type == "update_record"
-    assert len(store.all()) == 1
+    assert len(store.all(user_id="demo_user")) == 1
 
 
 def test_feedback_outside_dedup_window_creates_a_genuinely_new_record():
@@ -154,7 +156,7 @@ def test_feedback_outside_dedup_window_creates_a_genuinely_new_record():
         {"interaction_type": "save"},
     )
 
-    assert len(store.all()) == 2
+    assert len(store.all(user_id="demo_user")) == 2
 
 
 def test_different_interaction_type_on_same_event_is_not_deduped():
@@ -179,7 +181,7 @@ def test_different_interaction_type_on_same_event_is_not_deduped():
         {"interaction_type": "view"},
     )
 
-    assert len(store.all()) == 2
+    assert len(store.all(user_id="demo_user")) == 2
 
 
 def test_memory_inbox_paths_are_never_deduped():
@@ -201,4 +203,4 @@ def test_memory_inbox_paths_are_never_deduped():
     engine.process_feedback(signal, "demo_user", "stocks", ["NVDA"], "confirmed once")
     engine.process_feedback(signal, "demo_user", "stocks", ["NVDA"], "confirmed again")
 
-    assert len(store.all()) == 2
+    assert len(store.all(user_id="demo_user")) == 2

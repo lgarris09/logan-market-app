@@ -1916,3 +1916,133 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   functional and behaves exactly as before this block until the owner both sets `STRATUS_LLM_ASK=true` and
   adds a real key locally; a missing key at that point degrades gracefully to the deterministic path rather
   than erroring (Decision 5).
+
+## ADR-057: Sprint 3.6.8 Block 2 — production user boundaries: real per-request identity, user-scoped MemoryStore reads, and per-user process-lifetime state
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: Every layer inside `logan_core` was already built to be multi-user-safe by construction —
+  `MemoryRecord.user_id` is required and validated (ADR-033), `Orchestrator.run()`/`run_feedback_loop()`/
+  `run_exposure_loop()` all take an explicit `user_id`, and `PrioritizationEngine`'s `AttentionState` was
+  already stored in a `dict[user_id, AttentionState]` internally. The actual gap, confirmed by direct
+  inspection before writing any code, was concentrated in two places: (1) `backend/app/logan_feed.py` never
+  threaded any real per-request identity through — every one of 8 call sites hardcoded
+  `user_id=LOCAL_FOUNDER_USER_ID`, and its process-lifetime singletons (`_user_model`, the
+  `OpportunityContextCache`, `_ask_sessions`) were single global instances, not per-user; (2)
+  `logan_core/orchestrator/pipeline.py`'s `run()` called `self.deps.memory_store.query(entities=...)` with
+  **no `user_id` filter at all**, even though `user_id` was in scope two lines below — a genuine, real
+  cross-user data leak (any user's `feedback_record`s for a shared entity fed directly into every other
+  user's `UserModelBuilder.build()` rebuild), not just a wiring gap. `MemoryStore.query()`/`.all()`
+  (`logan_core/memory/store.py`) had no `user_id` parameter at all despite the SQLite schema already having a
+  required `user_id` column and index (Sprint 3.6.7 Block 3) — the isolation that column was built for was
+  never actually enforced at the read path. `backend/app/notifications.py`'s registered-token/dispatched/
+  reviewed-event-id state was also fully global — one user's push-token registration received every alert-
+  eligible item regardless of whose personalization produced it, and one user reviewing a notification
+  silenced the pending-push badge for everyone. This work explicitly supersedes
+  `27_SECURITY_PRIVACY_COMPLIANCE.md`'s prior "auth and multi-user persistence are explicitly excluded from
+  V3.1.4 scope" note — a deliberate, owner-directed scope change this sprint, not a silent reversal; that
+  document is updated as part of this block's own consequences.
+- Two review points raised and resolved before/during implementation, not treated as pre-decided:
+  1. **`record_interaction()` ownership.** Reviewed whether this function bypasses `Orchestrator.run_feedback_loop()`/
+     `run_exposure_loop()` in favor of calling `feedback_engine.interpret()`/`learning_engine.process_feedback()`
+     directly. Confirmed by inspection (both a direct read of the function and a repo-wide grep for those two
+     method names outside `orchestrator/pipeline.py`) that no such bypass exists anywhere in this codebase —
+     `record_interaction()` has gone through the Orchestrator's content-builder-callable pattern (ADR-047)
+     since Sprint 3.6.6, unchanged by this block. `user_id` is now the caller's real resolved identity instead
+     of the hardcoded founder constant, but the orchestration path itself is untouched. No code change was
+     needed for this point; documented here as reviewed-and-confirmed-clean rather than silently assumed.
+  2. **`DomainPref(weight=0.5)`.** Reviewed whether this is an arbitrary invented behavioral weight.
+     Confirmed by inspection: `DomainPref.weight` is a required contract field (`contracts/user_model.py`)
+     with no documented semantic meaning anywhere in `07_DATA_CONTRACTS.md`/`06_LAYER_INTERFACE_SPECIFICATION.md`,
+     and — checked directly, not assumed — **no consumer reads `domain_preferences[].weight` anywhere in
+     Reasoning, OpportunityEngine, Policy, or Prioritization today**; it is never updated again after creation
+     either (`_fold_behavioral_evidence` only ever flips `active`/`last_updated` on an existing entry). Unlike
+     `model_confidence`'s own `0.5` (a documented, evidence-scaled floor with a real formula), this is an inert
+     placeholder satisfying a required field, not a computed or reasoned behavioral signal — and it predates
+     this block (Sprint 3.6.7 Block 3/ADR-048/053), not something introduced here. Resolution: left the value
+     unchanged (removing it would require a contract change — making the field optional — which is out of this
+     block's scope and not something to do silently) and added an explicit comment at both construction sites
+     (`user_model/model.py`) documenting why it is inert and flagging that a real per-domain weighting design,
+     if one is ever needed, is a separate future decision — not invented here.
+- Decision (by area):
+  1. **Identity transport, owner-approved.** A new `X-Stratus-User-Id` request header
+     (`backend/app/user_context.py`'s `resolve_user_id()`, a FastAPI dependency), not authentication — no
+     login, no verification of who is actually making a request, explicitly out of this block's scope per the
+     owner's own instruction. Absent header → `LOCAL_FOUNDER_USER_ID`, so every existing caller (the mobile
+     app sends no such header today) is completely unaffected. Wired into every user-facing route:
+     `/v1/opportunities`, `/v1/notifications/review`, `/v1/notifications/register`, `/v1/interactions`,
+     `/v1/ask`, and the deprecated `/v1/demo/feed`.
+  2. **`MemoryStore.query()`/`.all()` now require `user_id` explicitly, owner-approved — no "all users" mode,
+     no default.** Every call site (3 production: `orchestrator/pipeline.py`, `learning/engine.py`,
+     `backend/app/logan_feed.py`; ~15 test) was migrated deliberately, not silently defaulted. This closes the
+     real cross-user leak described above at its root: `orchestrator/pipeline.py`'s `run()` now passes
+     `user_id=user_id` into its `memory_store.query()` call; `learning/engine.py`'s `_recent_record()` now
+     calls `memory_store.all(user_id=user_id)` instead of filtering `user_id` in Python after fetching every
+     user's records. No SQLite schema change — the `user_id` column and its index already existed
+     (Sprint 3.6.7 Block 3); this is a Python interface-contract change only.
+  3. **`backend/app/logan_feed.py`'s process-lifetime singletons converted to per-user dicts.** `_user_model`
+     → `_user_models: dict[str, UserModel]`; `_opportunity_context_cache` → `_opportunity_context_caches:
+     dict[str, OpportunityContextCache]` (closes the sharpest read-side leak: `OpportunityContext` carries
+     personalized fields — `personal_relevance`, `connection_basis`, `is_new_for_user` — and a shared cache
+     would have let any caller who knew an `event_id` read another user's personalization); `_ask_sessions` →
+     keyed by `(user_id, session_id)` tuple, not `session_id` alone (a session_id is client-generated and not
+     itself a secret — an unscoped store would let a guessed/predictable session_id from one user read or
+     extend another user's Ask STRATUS session). `_baseline_established` was already a `set[user_id]` — no
+     structural change, just real values flowing in now. The shared `_orchestrator` instance (one World Model,
+     one MemoryStore) is deliberately **not** duplicated per user — two users seeing the identical `event_id`
+     for the identical real-world fact (e.g. "NVIDIA beat earnings") is correct: World Model event identity is
+     shared world state, not personalization state. What's user-scoped is the `UserModel` folded into each
+     `orchestrator.run()` call, `PrioritizationEngine`'s `AttentionState` (already per-user internally, now
+     receiving real `user_id`s), and the OpportunityContext/session state above.
+  4. **New-user seeding, owner-approved: blank, never copied from the founder.** `_get_user_model()` seeds
+     `LOCAL_FOUNDER_USER_ID` alone with the existing NVDA holding/AI_SECTOR interest (unchanged); any other
+     `user_id` gets `UserModelBuilder().seed(user_id=user_id)`'s own blank/unknown defaults (no holdings, no
+     explicit interests, `risk_tolerance="unknown"`). The founder's specific portfolio is founder-only demo
+     data — copying it into every new user would be factually wrong, not a harmless placeholder.
+  5. **`backend/app/notifications.py`'s token/dispatch/review state converted to per-`user_id` dicts.**
+     `_registered_tokens`, `_dispatched_event_ids`, `_reviewed_pushed_event_ids` are now
+     `dict[str, set[...]]`. `dispatch_eligible_notifications()` (the background poller's own function) now
+     loops once per `user_id` with at least one registered token, computing that user's own
+     `get_alert_eligible_items(user_id)` and dispatching only to that user's own tokens — a real behavior
+     change (the poller now runs the full pipeline once per registered user per cycle, not once total), a
+     necessary and correct consequence of per-user personalized alert eligibility, and an accepted cost at
+     current local-dev scale (flagged, not a blocker). A push-service failure for one user's dispatch no
+     longer stops dispatch for any other user (the retry/continue logic is now per-user-scoped).
+- Consequences: `backend/app/user_context.py` is new. `backend/app/logan_feed.py`, `main.py`,
+  `notifications.py`, `opportunities.py` all changed to thread `user_id` through every route/function.
+  `logan_core/memory/store.py`, `orchestrator/pipeline.py`, `learning/engine.py` changed for the `user_id`-
+  required `MemoryStore` contract. `logan_core/user_model/model.py` gained two documentation-only comments
+  (Review point 2 above) — no behavior change. `AskRequest`/`AskResponse`/`RecordInteractionRequest`/
+  `RegisterPushTokenRequest`/`NotificationsReviewRequest` (`models.py`) are **unchanged** — identity travels
+  via header, not request body, so there is no mobile contract impact and no mobile UI change in this block.
+  New tests: `test_multi_user_isolation.py` (14 — identity-boundary backward compatibility, two distinct
+  `user_id`s getting independent UserModels while sharing the same World Model event identity, behavioral-
+  evidence isolation, explicit-vs-inferred relevance isolation including the founder-seed-never-copied
+  guarantee, Ask STRATUS session/OpportunityContext isolation including a deliberate session-id-collision
+  case, ASK_FOLLOWUP recorded under the correct user, Watch notification-review isolation, push-token/
+  dispatch/review isolation, and restart-persistence staying correctly user-scoped). Every pre-existing test
+  across both `logan_core` and `backend` was migrated to the new required-`user_id` signatures (not skipped
+  or weakened) and passes unchanged in intent — including `test_compaction_is_scoped_per_user`
+  (`logan_core/tests/test_memory_store_persistence.py`), rewritten to check each user's own `.all(user_id=...)`
+  view directly now that a global "all users" read no longer exists, rather than the pattern it used before
+  this block. `backend` test count 179 → 193 (+14, `test_multi_user_isolation.py`); `logan_core` unchanged at
+  306; combined 485 → 499. mypy/ruff/black clean on every new/changed file — the same 14 pre-existing
+  `**dict[str, object]` mypy findings from Block 1 (`test_ask_engine.py`, `test_ask_route.py`,
+  `test_ask_llm.py`) are unchanged in count and location, not introduced or worsened by this block. Mobile
+  test suite not run — no mobile-facing contract changed. No merge to main; this commit is not pushed pending
+  review (per explicit instruction).
+- Deferred / flagged for the owner: (1) wiring the mobile app to generate and persist a real per-device
+  `user_id` (so `X-Stratus-User-Id` is ever actually sent by a real client) is explicitly not done in this
+  block — it would require a new client-side storage dependency (e.g. `expo-secure-store`) that doesn't exist
+  in this app today, a separate dependency-addition decision; until then, every real request still resolves
+  to the founder default, and the isolation this block proves is exercised only via the header directly (as
+  the new tests do), not yet by any real second user. (2) `DomainPref.weight`'s "inert placeholder, no
+  consumer" status (review point 2) is now explicitly documented but not resolved — a real per-domain
+  weighting design remains a genuinely separate future decision. (3) Push-token/dispatch/review state remains
+  in-memory, process-lifetime only per user — a durable, per-user token store surviving a backend restart is
+  still an ADR-006-scale decision, unmade. (4) The single process-wide `_state_lock` remains coarse-grained
+  (one lock across every user's pipeline runs) — correct, not a regression, but a real scalability limit at
+  higher concurrent-user counts; not addressed here per the block's own "no broad observability/performance
+  work" scope boundary. (5) `docs/specs/.../27_SECURITY_PRIVACY_COMPLIANCE.md`'s prior "multi-user persistence
+  explicitly excluded from V3.1.4 scope" note needs a follow-up edit reflecting this block's real, if partial,
+  multi-user isolation work — flagged for the next docs pass, not done as part of this commit's diff.

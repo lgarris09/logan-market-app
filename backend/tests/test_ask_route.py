@@ -16,6 +16,7 @@ from backend.app.logan_feed import (
     run_demo_feed,
 )
 from backend.app.main import app
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 client = TestClient(app)
 
@@ -65,7 +66,9 @@ def test_contextual_ask_is_grounded_in_real_opportunity_data():
     payload = response.json()
     assert payload["grounded"] is True
     assert payload["event_id"] == event_id
-    context = get_opportunity_context(uuid4())  # unrelated lookup, no crash
+    context = get_opportunity_context(
+        LOCAL_FOUNDER_USER_ID, uuid4()
+    )  # unrelated lookup, no crash
     assert context is None  # sanity: a random id never resolves
     assert "1.87" in payload["answer"] or "NVIDIA" in payload["answer"]
 
@@ -132,7 +135,7 @@ def test_session_event_is_queryable_after_a_contextual_question():
         "/v1/ask",
         json={"message": "What changed?", "event_id": event_id, "session_id": "s5"},
     )
-    assert get_ask_session_event("s5") == UUID(event_id)
+    assert get_ask_session_event(LOCAL_FOUNDER_USER_ID, "s5") == UUID(event_id)
 
 
 # --- ASK_FOLLOWUP persistence, idempotency, session cap ------------------
@@ -147,7 +150,7 @@ def test_successful_contextual_question_records_ask_followup():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -168,7 +171,7 @@ def test_invalid_event_id_never_records_engagement():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -184,7 +187,7 @@ def test_empty_message_never_records_engagement():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -211,7 +214,7 @@ def test_repeated_same_session_questions_record_at_most_one_ask_followup():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -241,7 +244,7 @@ def test_close_in_time_sessions_still_share_the_pre_existing_short_window_dedup(
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -260,6 +263,7 @@ def test_ask_followup_carries_stronger_weight_than_a_short_view():
 
     event_id = UUID(event_id_str)
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="NVDA",
         domain="stocks",
@@ -268,7 +272,7 @@ def test_ask_followup_carries_stronger_weight_than_a_short_view():
     orchestrator = _get_orchestrator()
     record = next(
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -293,7 +297,6 @@ def test_matured_ask_followup_evidence_survives_restart_and_raises_relevance(
     above -- to each independently qualify), a simulated backend restart
     occurs, and the inferred AAPL relevance is still present and has
     genuinely matured."""
-    from logan_core.contracts import LOCAL_FOUNDER_USER_ID
     from logan_core.learning.engine import FEEDBACK_DEDUP_WINDOW
     from logan_core.user_model import UserModelBuilder
 
@@ -331,7 +334,7 @@ def test_matured_ask_followup_evidence_survives_restart_and_raises_relevance(
             # record's created_at, the same class of fixture-timing
             # adjustment test_user_model_behavioral.py already relies on,
             # rather than sleeping the test for real minutes.
-            records = orchestrator.deps.memory_store.all()
+            records = orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
             latest = max(
                 (
                     r
@@ -354,7 +357,9 @@ def test_matured_ask_followup_evidence_survives_restart_and_raises_relevance(
     base = UserModelBuilder().seed(user_id=LOCAL_FOUNDER_USER_ID)
     rebuilt = UserModelBuilder().build(
         user_id=LOCAL_FOUNDER_USER_ID,
-        memory_records=orchestrator.deps.memory_store.query(),
+        memory_records=orchestrator.deps.memory_store.query(
+            user_id=LOCAL_FOUNDER_USER_ID
+        ),
         base=base,
     )
     aapl_interest = next((i for i in rebuilt.interests if i.topic == "AAPL"), None)

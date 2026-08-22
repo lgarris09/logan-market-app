@@ -25,11 +25,11 @@ class OpportunitiesResponse(BaseModel):
     generated_at: datetime
 
 
-def run_opportunities() -> OpportunitiesResponse:
-    """Builds the `/v1/opportunities` response. `FeedItem` (see `logan_feed.py`)
-    already excludes `internal_rank_score` and every other internal-only field --
-    this function adds nothing but `schema_version` and `generated_at` on top of the
-    pipeline's own output.
+def run_opportunities(user_id: str) -> OpportunitiesResponse:
+    """Builds the `/v1/opportunities` response for `user_id`. `FeedItem` (see
+    `logan_feed.py`) already excludes `internal_rank_score` and every other
+    internal-only field -- this function adds nothing but `schema_version`
+    and `generated_at` on top of the pipeline's own output.
     """
-    items, now, _alert_event_ids = _run_feed_pipeline()
+    items, now, _alert_event_ids = _run_feed_pipeline(user_id)
     return OpportunitiesResponse(items=items, generated_at=now)

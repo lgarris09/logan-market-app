@@ -480,7 +480,7 @@ class Orchestrator:
             trace,
             "memory",
             lambda: self.deps.memory_store.query(
-                entities=[e.entity_id for e in event.entities]
+                user_id=user_id, entities=[e.entity_id for e in event.entities]
             ),
             event_id=event.event_id,
         )

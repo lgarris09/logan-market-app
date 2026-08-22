@@ -7,6 +7,7 @@ isolated temp file (never the real local database).
 from uuid import uuid4
 
 from backend.app.logan_feed import _get_orchestrator, reset_pipeline_state
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 
 def test_disabled_by_default_orchestrator_has_in_memory_store(monkeypatch):
@@ -35,14 +36,25 @@ def test_interactions_survive_a_simulated_backend_restart(monkeypatch, tmp_path)
 
     event_id = uuid4()
     record_interaction(
-        event_id=event_id, entity_id="AMD", domain="stocks", interaction_type="save"
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=event_id,
+        entity_id="AMD",
+        domain="stocks",
+        interaction_type="save",
     )
     record_interaction(
-        event_id=uuid4(), entity_id="AMD", domain="stocks", interaction_type="save"
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=uuid4(),
+        entity_id="AMD",
+        domain="stocks",
+        interaction_type="save",
     )
 
     orchestrator_before = _get_orchestrator()
-    assert len(orchestrator_before.deps.memory_store.all()) == 2
+    assert (
+        len(orchestrator_before.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID))
+        == 2
+    )
 
     # Simulate a real backend restart: drop all in-process state (this is
     # exactly what reset_pipeline_state() does -- the SQLite file itself is
@@ -50,7 +62,7 @@ def test_interactions_survive_a_simulated_backend_restart(monkeypatch, tmp_path)
     reset_pipeline_state()
 
     orchestrator_after = _get_orchestrator()
-    records = orchestrator_after.deps.memory_store.all()
+    records = orchestrator_after.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
     assert len(records) == 2
     assert all(r.entities == ["AMD"] for r in records)
 
@@ -62,7 +74,6 @@ def test_matured_behavioral_relevance_survives_a_simulated_restart(
     meaningful engagements recorded, a simulated restart, and the inferred
     behavioral relevance is still present and explainable afterward."""
     from backend.app.logan_feed import record_interaction
-    from logan_core.contracts import LOCAL_FOUNDER_USER_ID
     from logan_core.user_model import UserModelBuilder
 
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
@@ -72,6 +83,7 @@ def test_matured_behavioral_relevance_survives_a_simulated_restart(
 
     for _ in range(4):
         record_interaction(
+            user_id=LOCAL_FOUNDER_USER_ID,
             event_id=uuid4(),
             entity_id="AMD",
             domain="stocks",
@@ -85,7 +97,9 @@ def test_matured_behavioral_relevance_survives_a_simulated_restart(
     base = UserModelBuilder().seed(user_id=LOCAL_FOUNDER_USER_ID)
     rebuilt = UserModelBuilder().build(
         user_id=LOCAL_FOUNDER_USER_ID,
-        memory_records=orchestrator.deps.memory_store.query(),
+        memory_records=orchestrator.deps.memory_store.query(
+            user_id=LOCAL_FOUNDER_USER_ID
+        ),
         base=base,
     )
     amd_interest = next((i for i in rebuilt.interests if i.topic == "AMD"), None)

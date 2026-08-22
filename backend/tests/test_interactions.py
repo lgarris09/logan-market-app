@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.logan_feed import _get_orchestrator, record_interaction
 from backend.app.main import app
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 client = TestClient(app)
 
@@ -25,6 +26,7 @@ client = TestClient(app)
 def test_view_interaction_reaches_memory_store():
     event_id = uuid4()
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="NVDA",
         domain="stocks",
@@ -33,7 +35,9 @@ def test_view_interaction_reaches_memory_store():
     )
 
     orchestrator = _get_orchestrator()
-    records = orchestrator.deps.memory_store.query(domain="stocks", entities=["NVDA"])
+    records = orchestrator.deps.memory_store.query(
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["NVDA"]
+    )
     assert len(records) == 1
     assert records[0].entities == ["NVDA"]
     assert records[0].domain == "stocks"
@@ -63,13 +67,14 @@ def test_click_interaction_is_distinguishable_from_view():
     rather than a new field."""
     event_id = uuid4()
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="FED",
         domain="stocks",
         interaction_type="click",
     )
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["FED"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["FED"]
     )
     assert len(records) == 1
     content = records[0].content
@@ -88,6 +93,7 @@ def test_record_interaction_routes_through_orchestrator_ownership():
         orchestrator, "run_feedback_loop", wraps=orchestrator.run_feedback_loop
     ) as spy:
         record_interaction(
+            user_id=LOCAL_FOUNDER_USER_ID,
             event_id=event_id,
             entity_id="NVDA",
             domain="stocks",
@@ -107,6 +113,7 @@ def test_record_interaction_interprets_exactly_once():
         feedback_engine, "interpret", wraps=feedback_engine.interpret
     ) as spy:
         record_interaction(
+            user_id=LOCAL_FOUNDER_USER_ID,
             event_id=event_id,
             entity_id="NVDA",
             domain="stocks",
@@ -121,13 +128,14 @@ def test_record_interaction_content_carries_real_inferred_intent_and_confidence(
     deterministically interested/0.85 per FeedbackEngine.interpret()."""
     event_id = uuid4()
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="AAPL",
         domain="stocks",
         interaction_type="watch",
     )
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["AAPL"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["AAPL"]
     )
     assert len(records) == 1
     content = records[0].content
@@ -157,7 +165,7 @@ def test_route_records_interaction_end_to_end():
     assert response.json() == {"recorded": True}
 
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["AI_SECTOR"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["AI_SECTOR"]
     )
     assert len(records) == 1
 
@@ -226,13 +234,14 @@ def test_all_domains_accepted(domain):
 def test_impression_interaction_writes_an_exposure_record_not_feedback():
     event_id = uuid4()
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="NVDA",
         domain="stocks",
         interaction_type="impression",
     )
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["NVDA"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["NVDA"]
     )
     assert len(records) == 1
     assert records[0].record_type == "exposure_record"
@@ -249,6 +258,7 @@ def test_impression_never_reaches_feedback_engine():
         wraps=orchestrator.deps.feedback_engine.interpret,
     ) as spy:
         record_interaction(
+            user_id=LOCAL_FOUNDER_USER_ID,
             event_id=event_id,
             entity_id="NVDA",
             domain="stocks",
@@ -261,13 +271,14 @@ def test_repeated_impressions_of_the_same_event_update_one_record():
     event_id = uuid4()
     for _ in range(3):
         record_interaction(
+            user_id=LOCAL_FOUNDER_USER_ID,
             event_id=event_id,
             entity_id="NVDA",
             domain="stocks",
             interaction_type="impression",
         )
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["NVDA"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["NVDA"]
     )
     assert len(records) == 1
     content = records[0].content
@@ -293,13 +304,14 @@ def test_route_accepts_impression_end_to_end():
 def test_ask_followup_is_interpreted_as_strong_interested_engagement():
     event_id = uuid4()
     record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
         event_id=event_id,
         entity_id="NVDA",
         domain="stocks",
         interaction_type="ask_followup",
     )
     records = _get_orchestrator().deps.memory_store.query(
-        domain="stocks", entities=["NVDA"]
+        user_id=LOCAL_FOUNDER_USER_ID, domain="stocks", entities=["NVDA"]
     )
     assert len(records) == 1
     content = records[0].content

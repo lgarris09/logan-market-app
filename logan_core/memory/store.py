@@ -194,9 +194,21 @@ class MemoryStore:
             self._records.pop(UUID(record_id), None)
 
     def query(
-        self, domain: Domain | None = None, entities: list[str] | None = None
+        self,
+        user_id: str,
+        domain: Domain | None = None,
+        entities: list[str] | None = None,
     ) -> list[MemoryRecord]:
-        results = list(self._records.values())
+        """`user_id` is required, not optional (Sprint 3.6.8 Block 2, ADR-057)
+        -- there is no "all users" mode. A record's isolation depends on
+        every reader filtering by user_id; making it required turns a
+        forgotten filter into a loud signature error at every call site
+        instead of a silent cross-user leak (the exact bug this decision
+        closes -- see orchestrator/pipeline.py's pre-Block-2 unfiltered
+        `query(entities=...)` call, which fed one user's MemoryRecords into
+        every other user's UserModel rebuild).
+        """
+        results = [r for r in self._records.values() if r.user_id == user_id]
         if domain is not None:
             results = [r for r in results if r.domain == domain]
         if entities is not None:
@@ -204,8 +216,9 @@ class MemoryStore:
             results = [r for r in results if entity_set.intersection(r.entities)]
         return sorted(results, key=lambda r: r.created_at)
 
-    def all(self) -> list[MemoryRecord]:
-        return list(self._records.values())
+    def all(self, user_id: str) -> list[MemoryRecord]:
+        """`user_id` is required -- see `query()`'s own docstring."""
+        return [r for r in self._records.values() if r.user_id == user_id]
 
     def close(self) -> None:
         if self._conn is not None:

@@ -15,11 +15,12 @@ from backend.app.logan_feed import (
     mark_notifications_reviewed,
     reset_pipeline_state,
 )
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 
 def test_first_load_is_notification_silent():
     reset_pipeline_state()
-    items, _now, _alert_event_ids = _run_feed_pipeline()
+    items, _now, _alert_event_ids = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert len(items) == 11
     assert all(item.is_new_for_user is False for item in items)
 
@@ -30,8 +31,8 @@ def test_repeated_request_does_not_re_notify():
     root-cause fix this feature depends on).
     """
     reset_pipeline_state()
-    first_items, _now, _alert_event_ids = _run_feed_pipeline()
-    second_items, _now, _alert_event_ids = _run_feed_pipeline()
+    first_items, _now, _alert_event_ids = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    second_items, _now, _alert_event_ids = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert {item.event_id for item in first_items} == {
         item.event_id for item in second_items
     }
@@ -47,5 +48,7 @@ def test_mark_notifications_reviewed_is_reachable_from_the_adapter_layer():
     directly at the PrioritizationEngine level instead.)
     """
     reset_pipeline_state()
-    items, _now, _alert_event_ids = _run_feed_pipeline()
-    mark_notifications_reviewed([item.event_id for item in items])
+    items, _now, _alert_event_ids = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    mark_notifications_reviewed(
+        LOCAL_FOUNDER_USER_ID, [item.event_id for item in items]
+    )

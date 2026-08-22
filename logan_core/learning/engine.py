@@ -66,9 +66,8 @@ class LearningEngine:
         cutoff = now - window if window is not None else None
         candidates = [
             r
-            for r in self._memory_store.all()
+            for r in self._memory_store.all(user_id=user_id)
             if r.record_type == record_type
-            and r.user_id == user_id
             and r.operational_ref == event_id
             and (cutoff is None or r.created_at >= cutoff)
         ]

@@ -26,6 +26,7 @@ from backend.app.notifications import (
     get_pending_push_event_ids,
     register_token,
 )
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 
 def _mock_client(handler=None):
@@ -39,39 +40,50 @@ def _mock_client(handler=None):
 
 def test_register_token_stores_and_counts():
     result = register_token(
-        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]")
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
     )
     assert result.registered is True
     assert result.token_count == 1
 
     result2 = register_token(
-        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[bbb]")
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[bbb]"),
     )
     assert result2.token_count == 2
 
 
 def test_register_same_token_twice_does_not_double_count():
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
     result = register_token(
-        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]")
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
     )
     assert result.token_count == 1
 
 
 def test_no_dispatch_without_registered_tokens():
-    assert len(get_alert_eligible_items()) > 0  # sanity: eligible items exist
+    assert (
+        len(get_alert_eligible_items(LOCAL_FOUNDER_USER_ID)) > 0
+    )  # sanity: eligible items exist
     dispatched = dispatch_eligible_notifications(client=_mock_client())
     assert dispatched == 0
 
 
 def test_dispatch_sends_to_registered_token_for_every_eligible_item():
-    # Deliberately does not pre-fetch get_alert_eligible_items() as a
+    # Deliberately does not pre-fetch get_alert_eligible_items(LOCAL_FOUNDER_USER_ID) as a
     # reference count -- that call is itself a pipeline poll, and a second
     # poll can legitimately see a different eligible set (e.g. stance
     # shifting new -> confirms lowers novelty/internal_rank_score once an
     # event has been observed once). Assert against what this single
     # dispatch call itself actually sent, not a separately-polled count.
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
 
     captured = {}
 
@@ -85,7 +97,10 @@ def test_dispatch_sends_to_registered_token_for_every_eligible_item():
 
 
 def test_push_payload_contains_event_id_display_name_and_headline():
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
 
     captured_json = {}
 
@@ -105,8 +120,14 @@ def test_push_payload_contains_event_id_display_name_and_headline():
 
 
 def test_dispatch_fans_out_to_every_registered_token():
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[bbb]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[bbb]"),
+    )
 
     captured_json = {}
 
@@ -122,7 +143,10 @@ def test_dispatch_fans_out_to_every_registered_token():
 
 
 def test_repeated_dispatch_is_deduped_not_resent():
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
     call_count = {"n": 0}
 
     def handler(request):
@@ -140,7 +164,10 @@ def test_repeated_dispatch_is_deduped_not_resent():
 
 
 def test_failed_dispatch_does_not_mark_items_as_sent():
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
 
     def failing_handler(request):
         raise httpx.ConnectError("connection refused")
@@ -186,11 +213,11 @@ def test_register_route_via_test_client():
 # test_first_load_is_notification_silent) and interruption=="alert" (push
 # eligibility, untouched by that first-load override). These tests cover
 # the fix: the badge (is_new_for_user) now also reflects
-# get_pending_push_event_ids() -- dispatched minus reviewed -- so a real
+# get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) -- dispatched minus reviewed -- so a real
 # push always has something to show for it, while items that were never
 # pushed keep the original first-load-quiet behavior unchanged.
 #
-# The exact sequence below (one _run_feed_pipeline() call representing the
+# The exact sequence below (one _run_feed_pipeline(LOCAL_FOUNDER_USER_ID) call representing the
 # app's first load, then dispatch_eligible_notifications()'s own internal
 # call representing the poller's next cycle) deterministically yields 3
 # alert-eligible items against the fixed simulated fixtures/engagement
@@ -208,18 +235,21 @@ def test_pending_push_notification_full_lifecycle():
     count. See test_engagement_fixture_timing.py for engagement timing
     coverage and the eligibility trace in docs/DECISIONS.md's Sprint
     3.6.6I ADR for what the real count is and why."""
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
 
     # This test scripts two pipeline calls in a fixed order (a first-load-
     # style call, then a dispatch call) to exercise both code paths
     # deterministically -- it is not a claim that the background poller is
     # guaranteed to run after the app's own first request in real deployment.
     # Startup/request ordering between the app's initial fetch and the
-    # poller's own first cycle can vary; get_pending_push_event_ids()'s fix
+    # poller's own first cycle can vary; get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)'s fix
     # is deliberately correct either way (see its own docstring) rather than
     # relying on one specific order. This sequence matches the on-device
     # scenario this fix was written for, not a guaranteed runtime ordering.
-    first_load_items, _now, _alert = _run_feed_pipeline()
+    first_load_items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert all(not item.is_new_for_user for item in first_load_items)
 
     # The next pipeline call in this test's own sequence -- dispatches real
@@ -227,11 +257,11 @@ def test_pending_push_notification_full_lifecycle():
     dispatched_count = dispatch_eligible_notifications(client=_mock_client())
     assert dispatched_count >= 2  # sanity: still a real, non-trivial alert set
 
-    pending = get_pending_push_event_ids()
+    pending = get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)
     assert len(pending) == dispatched_count
 
     # Badge == items whose is_new_for_user is True.
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     pushed_items = [item for item in items if item.event_id in pending]
     assert len(pushed_items) == dispatched_count
     assert all(item.is_new_for_user for item in pushed_items)
@@ -240,10 +270,12 @@ def test_pending_push_notification_full_lifecycle():
     # "Open one" -- reviewing a single event_id (what openNotificationCard
     # now does on the mobile side) clears only that one.
     first_reviewed = pushed_items[0].event_id
-    mark_notifications_reviewed([first_reviewed])
-    assert get_pending_push_event_ids() == pending - {first_reviewed}
+    mark_notifications_reviewed(LOCAL_FOUNDER_USER_ID, [first_reviewed])
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == pending - {
+        first_reviewed
+    }
 
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     reviewed_item = next(i for i in items if i.event_id == first_reviewed)
     assert reviewed_item.is_new_for_user is False
     assert sum(1 for item in items if item.is_new_for_user) == dispatched_count - 1
@@ -251,41 +283,49 @@ def test_pending_push_notification_full_lifecycle():
     # "Review remaining" -- clears the badge to zero.
     remaining = list(pending - {first_reviewed})
     assert len(remaining) == dispatched_count - 1
-    mark_notifications_reviewed(remaining)
-    assert get_pending_push_event_ids() == set()
+    mark_notifications_reviewed(LOCAL_FOUNDER_USER_ID, remaining)
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == set()
 
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert sum(1 for item in items if item.is_new_for_user) == 0
 
 
 def test_repeated_polling_does_not_change_pending_state():
     """Polling alone (no dispatch, no review) must never grow or shrink the
     pending set -- only a real dispatch or a real review changes it."""
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
-    _run_feed_pipeline()  # first load
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
+    _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)  # first load
     dispatch_eligible_notifications(client=_mock_client())
-    pending_after_dispatch = get_pending_push_event_ids()
+    pending_after_dispatch = get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)
 
     for _ in range(3):
-        _run_feed_pipeline()
+        _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
         dispatch_eligible_notifications(
             client=_mock_client()
         )  # already-dispatched, no-op
-        assert get_pending_push_event_ids() == pending_after_dispatch
+        assert (
+            get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == pending_after_dispatch
+        )
 
 
 def test_reviewing_never_pushed_event_id_is_a_harmless_no_op():
     """Reviewing an event_id that was never pushed must not raise or
     corrupt the pending set for real pushed items."""
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
-    _run_feed_pipeline()
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
+    _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     dispatch_eligible_notifications(client=_mock_client())
-    pending_before = get_pending_push_event_ids()
+    pending_before = get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)
 
     from uuid import uuid4
 
-    mark_notifications_reviewed([uuid4()])  # never pushed
-    assert get_pending_push_event_ids() == pending_before
+    mark_notifications_reviewed(LOCAL_FOUNDER_USER_ID, [uuid4()])  # never pushed
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == pending_before
 
 
 def test_first_load_quiet_behavior_preserved_for_never_pushed_items():
@@ -295,8 +335,8 @@ def test_first_load_quiet_behavior_preserved_for_never_pushed_items():
     # No token registered, so nothing is ever dispatched -- pending stays
     # empty throughout, and every item's is_new_for_user should follow the
     # pre-existing first-load rule exactly as before this sprint.
-    items, _now, _alert = _run_feed_pipeline()
-    assert get_pending_push_event_ids() == set()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == set()
     assert all(not item.is_new_for_user for item in items)
 
 
@@ -305,14 +345,17 @@ def test_mark_notifications_reviewed_clears_pending_through_the_one_endpoint():
     before this sprint must also clear pending-push state -- one review
     action, coherent effect on both mechanisms, not two separate calls the
     client would need to know about."""
-    register_token(RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"))
-    _run_feed_pipeline()
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[aaa]"),
+    )
+    _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     dispatch_eligible_notifications(client=_mock_client())
-    pending = get_pending_push_event_ids()
+    pending = get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)
     assert pending
 
-    mark_notifications_reviewed(list(pending))
-    assert get_pending_push_event_ids() == set()
+    mark_notifications_reviewed(LOCAL_FOUNDER_USER_ID, list(pending))
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == set()
 
 
 # --- Sprint 3.6.6H: notification wording -----------------------------
@@ -329,7 +372,7 @@ def test_mark_notifications_reviewed_clears_pending_through_the_one_endpoint():
 
 
 def _item_for(entity_id: str):
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     return next(i for i in items if i.entity_id == entity_id)
 
 
@@ -408,7 +451,7 @@ def test_notification_body_never_contains_raw_signal_type_phrases():
     a fixture's natural value text (BTC's "volatility spikes on ETF flow
     data" is a genuine sentence, not leaked jargon) -- this checks for the
     template's mechanical LABEL form specifically, not any word overlap."""
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     mechanical_phrases = [
         "trend emerging",
         "line move",
@@ -427,7 +470,7 @@ def test_notification_body_never_contains_raw_signal_type_phrases():
 def test_notification_body_does_not_repeat_the_title_verbatim():
     """The body must never restate item.display_name at its start -- title
     and body are shown together, so a leading repeat is always redundant."""
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     for item in items:
         body = _notification_body(item)
         assert not body.lower().startswith(
@@ -439,6 +482,6 @@ def test_notification_body_is_short_enough_to_scan():
     """Every simulated fixture's transformed body stays well under iOS's
     ~2-line preview -- not a hard contract, just a sanity bound so this
     stays 'concise' as new fixtures are added."""
-    items, _now, _alert = _run_feed_pipeline()
+    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     for item in items:
         assert len(_notification_body(item)) <= 80

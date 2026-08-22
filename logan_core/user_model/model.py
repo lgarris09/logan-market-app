@@ -96,6 +96,22 @@ class UserModelBuilder:
             interests=interests or [],
             holdings=holdings or [],
             risk_tolerance=risk_tolerance,
+            # Sprint 3.6.8 Block 2 review finding (not a behavior change):
+            # DomainPref.weight is a required contract field (contracts/
+            # user_model.py) with no established semantic meaning anywhere in
+            # the spec or codebase, and -- confirmed by inspection -- no
+            # consumer reads domain_preferences[].weight anywhere in
+            # Reasoning/OpportunityEngine/Policy/Prioritization today. This
+            # 0.5 is therefore an inert placeholder satisfying the required
+            # field, not a computed or reasoned behavioral signal (unlike
+            # model_confidence's own 0.5 below, which is a documented,
+            # evidence-scaled floor -- see build()'s formula). It is never
+            # updated again after creation (see _fold_behavioral_evidence
+            # below, which only ever flips `active`/`last_updated` for an
+            # existing DomainPref). Left as-is rather than inventing new
+            # weighting semantics here -- a real per-domain weighting design
+            # is out of this block's scope; flagged in docs/DECISIONS.md's
+            # Sprint 3.6.8 Block 2 ADR as a known pre-existing gap instead.
             domain_preferences=[
                 DomainPref(domain=d, active=True, weight=0.5, last_updated=now)
                 for d in domains
@@ -366,6 +382,9 @@ def _fold_behavioral_evidence(
                     )
             else:
                 domain_pref_index[domain] = len(domain_preferences)
+                # See seed()'s own comment above -- weight=0.5 here is the
+                # same inert contract-required placeholder, not a reasoned
+                # behavioral value; nothing downstream reads it.
                 domain_preferences.append(
                     DomainPref(domain=domain, active=True, weight=0.5, last_updated=now)
                 )

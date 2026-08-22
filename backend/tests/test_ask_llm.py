@@ -28,6 +28,7 @@ from backend.app.logan_feed import (
     run_demo_feed,
 )
 from backend.app.main import app
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 client = TestClient(app)
 
@@ -554,7 +555,7 @@ def test_ask_followup_records_exactly_once_on_llm_success():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -581,7 +582,7 @@ def test_ask_followup_records_exactly_once_on_llm_failure_fallback():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -612,7 +613,7 @@ def test_ask_followup_session_cap_still_applies_with_llm_enabled():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
@@ -637,7 +638,7 @@ def test_invalid_event_id_never_calls_llm_or_records_engagement():
     orchestrator = _get_orchestrator()
     ask_records = [
         r
-        for r in orchestrator.deps.memory_store.all()
+        for r in orchestrator.deps.memory_store.all(user_id=LOCAL_FOUNDER_USER_ID)
         if r.record_type == "feedback_record"
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"

@@ -92,19 +92,24 @@ _orchestrator: Orchestrator | None = None
 # user_ids whose very first `/v1/opportunities` request has already been
 # processed -- lets that first response stay notification-silent (nothing is
 # "new" relative to a user who's never seen anything yet) without treating
-# every subsequent, genuinely-new event the same way.
+# every subsequent, genuinely-new event the same way. Already correctly
+# per-user (a set of user_id strings) since it was introduced -- Sprint
+# 3.6.8 Block 2 only changes what values ever get inserted into it.
 _baseline_established: set[str] = set()
-# Process-lifetime UserModel persistence (behavioral-personalization pass):
-# mirrors `_orchestrator`'s singleton pattern above rather than inventing a
-# new mechanism. Same in-memory-only limitation -- a backend restart resets
-# this too, same as `_orchestrator` and `_baseline_established`.
-_user_model: UserModel | None = None
+# Sprint 3.6.8 Block 2: per-user UserModel persistence -- was a single
+# process-lifetime UserModel shared by every caller (see ADR-057). Same
+# in-memory-only limitation as before -- a backend restart resets this too,
+# same as `_orchestrator` and `_baseline_established`.
+_user_models: dict[str, UserModel] = {}
 
-# Sprint 3.6.7 Block 4: authoritative opportunity-context cache for
-# contextual Ask STRATUS -- see ask_context.py's own docstring. Refreshed
-# wholesale on every `_run_feed_pipeline()` call, same process-lifetime-only
-# limitation as everything else above.
-_opportunity_context_cache = OpportunityContextCache()
+# Sprint 3.6.8 Block 2: per-user opportunity-context cache for contextual Ask
+# STRATUS (was one process-wide cache keyed only by event_id -- see ADR-057.
+# OpportunityContext carries personalized fields, personal_relevance/
+# connection_basis/is_new_for_user included; a shared cache would let one
+# user's Ask STRATUS session read another user's personalization simply by
+# knowing an event_id). Refreshed wholesale, per user, on every
+# `_run_feed_pipeline(user_id)` call.
+_opportunity_context_caches: dict[str, OpportunityContextCache] = {}
 
 # Sprint 3.6.7 Block 4: bounded, process-lifetime Ask STRATUS session store.
 # Deliberately not persisted to SQLite -- session continuity is a short-lived
@@ -115,6 +120,13 @@ _opportunity_context_cache = OpportunityContextCache()
 # event_id this session is discussing, and which event_ids it has already
 # recorded an ASK_FOLLOWUP for) -- never raw question/answer transcript text,
 # which the deterministic ask_engine doesn't need to answer well anyway.
+#
+# Sprint 3.6.8 Block 2: keyed by (user_id, session_id), not session_id alone
+# (see ADR-057) -- a session_id is client-generated and not itself a secret,
+# so an unscoped store would let a guessed/predictable session_id from one
+# user read or extend another user's Ask STRATUS session. One shared cap
+# across all users (not per-user) -- this remains a lightweight UI
+# convenience store, not a place to spend real per-user LRU machinery on.
 _ASK_SESSION_LIMIT = 500
 
 
@@ -127,63 +139,70 @@ class _AskSession:
         self.last_active_at: datetime = datetime.now(timezone.utc)
 
 
-_ask_sessions: dict[str, _AskSession] = {}
+_ask_sessions: dict[tuple[str, str], _AskSession] = {}
 
 
-def _get_or_create_ask_session(session_id: str) -> _AskSession:
-    session = _ask_sessions.get(session_id)
+def _get_or_create_ask_session(user_id: str, session_id: str) -> _AskSession:
+    key = (user_id, session_id)
+    session = _ask_sessions.get(key)
     if session is None:
         # Bounded eviction: a simple oldest-first drop once the cap is hit --
         # this is a lightweight UI convenience store, not a place to spend
-        # real LRU machinery on. Local single-user usage makes hitting this
-        # cap at all unlikely; it exists as a hard ceiling, not a tuned limit.
+        # real LRU machinery on.
         if len(_ask_sessions) >= _ASK_SESSION_LIMIT:
-            oldest_id = min(
-                _ask_sessions, key=lambda sid: _ask_sessions[sid].last_active_at
+            oldest_key = min(
+                _ask_sessions, key=lambda k: _ask_sessions[k].last_active_at
             )
-            del _ask_sessions[oldest_id]
+            del _ask_sessions[oldest_key]
         session = _AskSession()
-        _ask_sessions[session_id] = session
+        _ask_sessions[key] = session
     session.last_active_at = datetime.now(timezone.utc)
     return session
 
 
-def get_opportunity_context(event_id: UUID) -> Optional[OpportunityContext]:
+def get_opportunity_context(
+    user_id: str, event_id: UUID
+) -> Optional[OpportunityContext]:
     """Authoritative server-side rehydration for contextual Ask STRATUS --
     the only way `/v1/ask` (see main.py) ever learns about a specific
-    opportunity's real content. Returns None when `event_id` isn't in the
-    current cache (never seen, or the backend restarted since) -- the caller
-    must treat that as "no current context," never fabricate one.
+    opportunity's real content. Returns None when `event_id` isn't in this
+    user's current cache (never seen by this user, or the backend restarted
+    since) -- the caller must treat that as "no current context," never
+    fabricate one. Scoped to `user_id`'s own cache (Sprint 3.6.8 Block 2) --
+    an event_id from a different user's cache is never visible here, even if
+    it happens to also be a real, currently-live event_id for someone else.
     """
-    return _opportunity_context_cache.get(event_id)
+    cache = _opportunity_context_caches.get(user_id)
+    return cache.get(event_id) if cache is not None else None
 
 
-def should_record_ask_followup(session_id: str, event_id: UUID) -> bool:
+def should_record_ask_followup(user_id: str, session_id: str, event_id: UUID) -> bool:
     """Sprint 3.6.7 Block 4 feedback-loop protection: at most one
     ASK_FOLLOWUP behavioral-evidence contribution per (session, opportunity)
     pair, regardless of how many follow-up questions that session asks about
     it -- "repeated questions in one session should not count as N
     independent preference confirmations." Marks the event_id as recorded on
     the same call that returns True, so this is safe to call exactly once per
-    successfully-answered contextual question.
+    successfully-answered contextual question. Sprint 3.6.8 Block 2: scoped
+    by (user_id, session_id) -- see `_ask_sessions`'s own comment.
     """
-    session = _get_or_create_ask_session(session_id)
+    session = _get_or_create_ask_session(user_id, session_id)
     if event_id in session.ask_followup_recorded_event_ids:
         return False
     session.ask_followup_recorded_event_ids.add(event_id)
     return True
 
 
-def set_ask_session_event(session_id: str, event_id: UUID) -> None:
+def set_ask_session_event(user_id: str, session_id: str, event_id: UUID) -> None:
     """Records which opportunity a session is currently discussing, so a
     later follow-up question in the same session can omit `event_id` and
     still resolve against it (see main.py's ask_logan route)."""
-    session = _get_or_create_ask_session(session_id)
+    session = _get_or_create_ask_session(user_id, session_id)
     session.event_id = event_id
 
 
-def get_ask_session_event(session_id: str) -> Optional[UUID]:
-    session = _ask_sessions.get(session_id)
+def get_ask_session_event(user_id: str, session_id: str) -> Optional[UUID]:
+    session = _ask_sessions.get((user_id, session_id))
     return session.event_id if session is not None else None
 
 
@@ -240,57 +259,69 @@ def _get_orchestrator() -> Orchestrator:
         return _orchestrator
 
 
-def _get_user_model(orchestrator: Orchestrator, now: datetime) -> UserModel:
-    """Process-lifetime UserModel persistence (behavioral-personalization
-    pass): seeded once with the founder's explicit holdings/interests, exactly
-    as `_run_feed_pipeline` always has; every later call instead rebuilds via
-    UserModelBuilder.build() against the full accumulated `feedback_record`
-    history already sitting in the shared Orchestrator's MemoryStore (written
-    by `record_interaction()` below through the normal Feedback -> Learning
-    path). This is what lets repeated card-open/dwell/notification-tap
-    evidence actually compound into established_behaviors/domain_preferences/
-    Interest(source="inferred") *across* requests, not just within one --
-    `.build()`'s folding logic already existed but had nothing calling it at
-    this top level before. `memory_store.query()` with no filters is correct
-    here (not a shortcut): this is single-user (LOCAL_FOUNDER_USER_ID) scope
-    for this pass, and MemoryStore has no user_id filter to begin with.
+def _get_user_model(
+    orchestrator: Orchestrator, user_id: str, now: datetime
+) -> UserModel:
+    """Per-user, process-lifetime UserModel persistence (Sprint 3.6.8 Block
+    2, ADR-057 -- was a single shared UserModel for every caller). Seeded
+    once per user_id, then every later call rebuilds via
+    UserModelBuilder.build() against that user's own accumulated
+    `feedback_record` history in the shared Orchestrator's MemoryStore
+    (written by `record_interaction()` below through the normal Feedback ->
+    Learning path, and now correctly filtered by `memory_store.query(user_id=...)`
+    -- see ADR-057 for the pre-Block-2 cross-user leak this closes). This is
+    what lets repeated card-open/dwell/notification-tap evidence actually
+    compound into established_behaviors/domain_preferences/
+    Interest(source="inferred") *across* requests, not just within one.
+
+    Seed data: `LOCAL_FOUNDER_USER_ID` alone gets the founder's real explicit
+    holdings/interests (NVDA holding, AI_SECTOR interest) -- unchanged from
+    every pre-Block-2 caller. Any other user_id gets UserModelBuilder.seed()'s
+    own blank/unknown defaults (no holdings, no explicit interests,
+    risk_tolerance="unknown") -- the founder's specific portfolio is
+    founder-only demo data, never copied into another user's model.
     Explicit holdings/interests/risk_tolerance are preserved unchanged by
     `.build()` itself (see user_model/model.py) -- rebuilding here never
     weakens or overwrites them.
     """
-    global _user_model
+    global _user_models
     with _state_lock:
-        if _user_model is None:
-            _user_model = UserModelBuilder().seed(
-                user_id=LOCAL_FOUNDER_USER_ID,
-                holdings=[
-                    Holding(
-                        domain="stocks",
-                        entity_id="NVDA",
-                        display_name="NVIDIA",
-                        added_at=now,
-                    )
-                ],
-                interests=[
-                    Interest(
-                        domain="social",
-                        topic="AI_SECTOR",
-                        weight=0.8,
-                        source="explicit",
-                        created_at=now,
-                        last_updated=now,
-                    )
-                ],
-                risk_tolerance="moderate",
-            )
+        existing = _user_models.get(user_id)
+        if existing is None:
+            if user_id == LOCAL_FOUNDER_USER_ID:
+                seeded = UserModelBuilder().seed(
+                    user_id=user_id,
+                    holdings=[
+                        Holding(
+                            domain="stocks",
+                            entity_id="NVDA",
+                            display_name="NVIDIA",
+                            added_at=now,
+                        )
+                    ],
+                    interests=[
+                        Interest(
+                            domain="social",
+                            topic="AI_SECTOR",
+                            weight=0.8,
+                            source="explicit",
+                            created_at=now,
+                            last_updated=now,
+                        )
+                    ],
+                    risk_tolerance="moderate",
+                )
+            else:
+                seeded = UserModelBuilder().seed(user_id=user_id)
+            _user_models[user_id] = seeded
         else:
-            memory_records = orchestrator.deps.memory_store.query()
-            _user_model = UserModelBuilder().build(
-                user_id=LOCAL_FOUNDER_USER_ID,
+            memory_records = orchestrator.deps.memory_store.query(user_id=user_id)
+            _user_models[user_id] = UserModelBuilder().build(
+                user_id=user_id,
                 memory_records=memory_records,
-                base=_user_model,
+                base=existing,
             )
-        return _user_model
+        return _user_models[user_id]
 
 
 def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
@@ -445,7 +476,7 @@ def reset_pipeline_state() -> None:
     deliberate cross-request persistence) should call this between runs -- see
     backend/tests/test_opportunities_api.py and test_logan_feed.py.
     """
-    global _orchestrator, _user_model
+    global _orchestrator
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -457,21 +488,23 @@ def reset_pipeline_state() -> None:
             _orchestrator.deps.memory_store.close()
         _orchestrator = None
         _baseline_established.clear()
-        _user_model = None
-        _opportunity_context_cache.replace_all([])
+        _user_models.clear()
+        _opportunity_context_caches.clear()
         _ask_sessions.clear()
 
 
-def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
+def mark_notifications_reviewed(user_id: str, event_ids: list[UUID]) -> None:
     """Called by the `/v1/notifications/review` route -- the only way an
     event_id's `is_new_for_user` clears (re-observing the same event again
-    does not clear it; see PrioritizationEngine.prioritize()).
+    does not clear it; see PrioritizationEngine.prioritize()). Scoped to
+    `user_id` (Sprint 3.6.8 Block 2) -- PrioritizationEngine's AttentionState
+    was already stored per-user internally (see prioritization/engine.py's
+    `_states` dict); this was simply never called with any user_id besides
+    the founder constant before this block.
     """
     orchestrator = _get_orchestrator()
     with _state_lock:
-        orchestrator.deps.prioritization_engine.mark_reviewed(
-            LOCAL_FOUNDER_USER_ID, event_ids
-        )
+        orchestrator.deps.prioritization_engine.mark_reviewed(user_id, event_ids)
     # Sprint 3.6.6G: deferred import breaks the logan_feed<->notifications
     # circular dependency (notifications.py imports FeedItem/
     # get_alert_eligible_items from this module at load time; this module
@@ -483,10 +516,11 @@ def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
     # separate review actions the client would have to know to call.
     from .notifications import mark_pushed_notifications_reviewed
 
-    mark_pushed_notifications_reviewed(event_ids)
+    mark_pushed_notifications_reviewed(user_id, event_ids)
 
 
 def record_interaction(
+    user_id: str,
     event_id: UUID,
     entity_id: str,
     domain: Domain,
@@ -515,6 +549,12 @@ def record_interaction(
     Orchestrator.run_exposure_loop() -> LearningEngine.process_exposure()
     (see that method's own docstring for why this is a separate path, not a
     special case inside run_feedback_loop()).
+
+    Sprint 3.6.8 Block 2 (ADR-057): `user_id` is now the caller's real
+    resolved identity (see user_context.resolve_user_id), not a hardcoded
+    constant -- every write this produces lands in MemoryStore under that
+    user_id, and PrioritizationEngine's AttentionState/fatigue tracking is
+    scoped to it.
     """
     orchestrator = _get_orchestrator()
 
@@ -522,7 +562,7 @@ def record_interaction(
         with _state_lock:
             orchestrator.run_exposure_loop(
                 event_id=event_id,
-                user_id=LOCAL_FOUNDER_USER_ID,
+                user_id=user_id,
                 domain=domain,
                 entity_id=entity_id,
             )
@@ -541,7 +581,7 @@ def record_interaction(
     with _state_lock:
         orchestrator.run_feedback_loop(
             event_id=event_id,
-            user_id=LOCAL_FOUNDER_USER_ID,
+            user_id=user_id,
             domain=domain,
             entities=[entity_id],
             interaction_type=interaction_type,
@@ -674,35 +714,43 @@ def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]
     ]
 
 
-def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
+def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUID]]:
     """Runs the simulated entity fixtures (Tesla, NVIDIA, Apple, Bitcoin, Federal
     Reserve, NFL, Music, Polymarket, Markets, Oil, AI) through one shared Orchestrator
-    instance and builds the ranked, connected feed shared by every route that exposes
-    this data. Sharing one Orchestrator (and therefore one World Model, Memory Store,
-    and Prioritization state) across all events lets genuinely overlapping entities
-    (e.g. Tesla's downstream ripple touching NVIDIA and the AI sector, which have
-    their own direct fixtures too) connect to each other, the same way related
-    opportunities would in a real session -- not independent runs stitched together
-    after the fact.
+    instance and builds the ranked, connected feed for `user_id`.
+
+    Sharing one Orchestrator (and therefore one World Model and one Memory
+    Store) across every caller lets genuinely overlapping entities (e.g.
+    Tesla's downstream ripple touching NVIDIA and the AI sector, which have
+    their own direct fixtures too) connect to each other, and lets two
+    different users see the identical `event_id` for the identical
+    real-world fact (World Model dedup is deliberately not user-scoped --
+    "NVIDIA beat earnings" is one shared event, not N independent copies).
+    What *is* user-scoped, per this call (Sprint 3.6.8 Block 2, ADR-057): the
+    UserModel folded into `orchestrator.run()`, PrioritizationEngine's
+    AttentionState (fatigue/cooldown/notification-review, via `user_id`
+    passed straight through to `orchestrator.run()`), and the
+    OpportunityContext cache and `is_new_for_user`/baseline bookkeeping built
+    from this run's results, below.
 
     Single source of truth for both the versioned `/v1/opportunities` API
     (`opportunities.py`) and the legacy `/v1/demo/feed` route below -- neither
     duplicates this computation.
 
-    The shared Orchestrator instance now also persists *across* calls to this
+    The shared Orchestrator instance persists *across* calls to this
     function (see `_get_orchestrator()` above), not just within one -- this
     is what lets the same underlying opportunity keep a stable `event_id` and
     correct `is_new_for_user` across repeated requests, for the life of this
-    process. The UserModel passed into every `orchestrator.run()` call below
-    is likewise process-lifetime persistent (see `_get_user_model()`), not
-    reseeded per call -- repeated card-open/dwell/notification-tap evidence
-    recorded via `record_interaction()` between requests now actually
-    compounds into the model's inferred behavioral fields.
+    process. Each user's own UserModel is likewise process-lifetime
+    persistent (see `_get_user_model()`), not reseeded per call -- repeated
+    card-open/dwell/notification-tap evidence recorded via
+    `record_interaction()` between requests now actually compounds into that
+    user's own inferred behavioral fields, never another user's.
     """
     now = datetime.now(timezone.utc)
 
     orchestrator = _get_orchestrator()
-    user_model = _get_user_model(orchestrator, now)
+    user_model = _get_user_model(orchestrator, user_id, now)
     fixtures = simulated_fixtures(now)
 
     # Sprint 3.6.6C: replaces (never adds alongside) the simulated NVDA
@@ -754,7 +802,7 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
 
             result = orchestrator.run(
                 raw_signals=raw_signals,
-                user_id=LOCAL_FOUNDER_USER_ID,
+                user_id=user_id,
                 user_model=user_model,
                 engagement_samples=_engagement_samples(entity_id, now),
                 domain=raw_signal.domain,
@@ -789,11 +837,11 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
         # (notifications_reviewed was empty going in) -- silence this specific
         # response by marking everything reviewed now, so both this response
         # and every future one reflect the same honest baseline.
-        is_first_load = LOCAL_FOUNDER_USER_ID not in _baseline_established
+        is_first_load = user_id not in _baseline_established
         if is_first_load:
-            _baseline_established.add(LOCAL_FOUNDER_USER_ID)
+            _baseline_established.add(user_id)
             orchestrator.deps.prioritization_engine.mark_reviewed(
-                LOCAL_FOUNDER_USER_ID, [r.event.event_id for _, r in results]
+                user_id, [r.event.event_id for _, r in results]
             )
 
         # Sprint 3.6.6G: deferred import, see mark_notifications_reviewed's
@@ -804,7 +852,7 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
         # pushed, not about hiding a real push the user already received.
         from .notifications import get_pending_push_event_ids
 
-        pending_push_event_ids = get_pending_push_event_ids()
+        pending_push_event_ids = get_pending_push_event_ids(user_id)
 
         items = []
         opportunity_contexts = []
@@ -847,7 +895,9 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
                     is_new_for_user=item_is_new_for_user,
                 )
             )
-        _opportunity_context_cache.replace_all(opportunity_contexts)
+        _opportunity_context_caches.setdefault(
+            user_id, OpportunityContextCache()
+        ).replace_all(opportunity_contexts)
 
         # Sprint 3.6.6F (STRATUS Watch): internal-only -- never added to the
         # public FeedItem contract (same discipline as internal_rank_score,
@@ -867,23 +917,29 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
     return items, now, alert_event_ids
 
 
-def run_demo_feed() -> DemoFeedResponse:
+def run_demo_feed(user_id: str = LOCAL_FOUNDER_USER_ID) -> DemoFeedResponse:
     """Deprecated in favor of `/v1/opportunities` (see `opportunities.py`), kept for
     existing callers during the V3.1.4 migration window -- see ADR-022 and the
     V3.1.4 BATCH-4 API work. Delegates to the same pipeline run as the versioned API;
-    the two do not compute this independently.
+    the two do not compute this independently. `user_id` defaults to the founder
+    constant (Sprint 3.6.8 Block 2) -- this legacy route was never updated to accept
+    the identity header, matching its own "kept only so existing callers don't
+    break" scope.
     """
-    items, now, _alert_event_ids = _run_feed_pipeline()
+    items, now, _alert_event_ids = _run_feed_pipeline(user_id)
     return DemoFeedResponse(items=items, generated_at=now)
 
 
-def get_alert_eligible_items() -> list[FeedItem]:
-    """Sprint 3.6.6F (STRATUS Watch): the current pipeline run's items whose
-    PrioritizedItem.interruption == "alert" -- the existing "urgent enough to
-    interrupt" bar, reused as the notification-eligibility gate. Runs the
-    same shared, process-lifetime pipeline every other caller here uses; does
-    not compute anything independently.
+def get_alert_eligible_items(user_id: str) -> list[FeedItem]:
+    """Sprint 3.6.6F (STRATUS Watch): `user_id`'s current pipeline run items
+    whose PrioritizedItem.interruption == "alert" -- the existing "urgent
+    enough to interrupt" bar, reused as the notification-eligibility gate.
+    Runs the same shared, process-lifetime pipeline every other caller here
+    uses, personalized for `user_id`; does not compute anything
+    independently. Sprint 3.6.8 Block 2: `user_id` is now a required
+    parameter -- see notifications.py's own per-user dispatch loop, which
+    calls this once per user_id with a registered push token.
     """
-    items, _now, alert_event_ids = _run_feed_pipeline()
+    items, _now, alert_event_ids = _run_feed_pipeline(user_id)
     alert_ids = set(alert_event_ids)
     return [item for item in items if item.event_id in alert_ids]
