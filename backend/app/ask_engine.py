@@ -1,21 +1,32 @@
 """Sprint 3.6.7 Block 4 -- deterministic, grounded Ask STRATUS responses for
-a specific opportunity. No LLM is used anywhere in this codebase today
-(confirmed by inspection before writing this -- the pre-existing generic
-`/v1/ask` path in main.py is itself a template/lookup, not a model call);
-adding one would be a new external dependency requiring the explicit
-confirmation CLAUDE.md's collaboration model requires for dependency
-additions, which is a separate decision this block does not make. Instead:
-real, already-computed pipeline data (DeliveredItem's narrative fields,
-ConclusionConfidence's classification/limiting_factors/alternatives, the
-entity's attached TriggerEvents, Dimensions.personal_relevance) is matched
-against the question via deterministic keyword classification and returned
-as-is or lightly composed -- never fabricated, never inferring a fact this
-codebase's own pipeline hasn't actually computed. "Deterministic intelligence
-first, LLM interpretation second" -- there is no second stage here yet; this
-*is* the first stage, exposed directly.
+a specific opportunity. Real, already-computed pipeline data (DeliveredItem's
+narrative fields, ConclusionConfidence's classification/limiting_factors/
+alternatives, the entity's attached TriggerEvents, Dimensions.
+personal_relevance) is matched against the question via deterministic
+keyword classification and returned as-is or lightly composed -- never
+fabricated, never inferring a fact this codebase's own pipeline hasn't
+actually computed. This remains the fallback path used whenever the LLM path
+below is disabled or fails.
+
+Sprint 3.6.8 Block 1 (owner-approved, see docs/DECISIONS.md's Sprint 3.6.8
+Block 1 ADR) adds `generate_grounded_answer()`: a real LLM (AnthropicAskLlmProvider,
+ask_llm_anthropic.py) may compose the answer instead, but only ever grounded
+in the exact same OpportunityContext this file's deterministic path already
+uses -- "deterministic intelligence first, LLM interpretation second." The
+model never independently computes market facts, confidence, personal
+relevance, or Watch conclusions; those remain this pipeline's own outputs
+either way. Any LLM failure (disabled, unavailable, timeout, error, empty/
+malformed response) falls straight back to `answer_question()` below,
+unchanged -- no LLM failure can break the existing opportunity experience.
 """
 
+import threading
+from typing import Optional
+
+from pydantic import BaseModel
+
 from .ask_context import OpportunityContext
+from .ask_llm_provider import AskLlmProvider, AskLlmProviderError
 
 _EARNINGS_CODES = {
     "STOCK_EARNINGS_BEAT",
@@ -256,3 +267,91 @@ def answer_question(context: OpportunityContext, message: str) -> str:
         "Ask what changed, why it matters, which signals are involved, or what would "
         "weaken this for more detail."
     )
+
+
+# --- Sprint 3.6.8 Block 1: grounded LLM orchestration ----------------------
+
+
+class GroundedAnswer(BaseModel):
+    """The result of generate_grounded_answer() -- `used_llm`/`llm_model`
+    are for internal observability/tests, never surfaced through the public
+    AskResponse contract (which stays unchanged this block: `answer`,
+    `event_id`, `session_id`, `grounded`)."""
+
+    text: str
+    used_llm: bool
+    llm_model: Optional[str] = None
+
+
+def generate_grounded_answer(
+    context: OpportunityContext,
+    message: str,
+    provider: Optional[AskLlmProvider],
+) -> GroundedAnswer:
+    """Tries a real LLM answer when `provider` is configured, falling back
+    to the existing deterministic `answer_question()` on `provider=None`
+    (disabled) or *any* `AskLlmProviderError` (unavailable, timeout, API
+    error, refusal, empty/malformed response) -- requirement: "no LLM
+    failure should break the existing opportunity experience." The
+    deterministic path is not a degraded experience; it's the same grounded,
+    real-data answer this codebase has always produced, exercised by the
+    full pre-existing test suite.
+    """
+    if provider is not None:
+        try:
+            llm_answer = provider.generate(context, message)
+        except AskLlmProviderError as exc:
+            print(f"[ask-llm] provider failed, falling back to deterministic: {exc}")
+        else:
+            return GroundedAnswer(
+                text=llm_answer.text, used_llm=True, llm_model=llm_answer.model
+            )
+    return GroundedAnswer(text=answer_question(context, message), used_llm=False)
+
+
+_provider_lock = threading.Lock()
+_ask_llm_provider: Optional[AskLlmProvider] = None
+_ask_llm_provider_initialized = False
+
+
+def get_ask_llm_provider() -> Optional[AskLlmProvider]:
+    """Process-lifetime singleton, mirroring backend/app/logan_feed.py's
+    `_get_orchestrator()`/`_get_user_model()` pattern. Returns None whenever
+    the LLM path is disabled (`config.llm_ask_enabled()`) or construction
+    fails (e.g. `ANTHROPIC_API_KEY` missing) -- both are treated identically
+    by `generate_grounded_answer()` (silent fallback to deterministic), so a
+    misconfigured or disabled LLM path can never break Ask STRATUS. Computed
+    (and any failure logged) once per process, not on every request.
+    """
+    global _ask_llm_provider, _ask_llm_provider_initialized
+    with _provider_lock:
+        if _ask_llm_provider_initialized:
+            return _ask_llm_provider
+        _ask_llm_provider_initialized = True
+
+        from .config import llm_ask_enabled
+
+        if not llm_ask_enabled():
+            return None
+
+        from .ask_llm_anthropic import AnthropicAskLlmProvider
+
+        try:
+            _ask_llm_provider = AnthropicAskLlmProvider()
+        except AskLlmProviderError as exc:
+            print(
+                f"[ask-llm] provider unavailable, Ask STRATUS will use the "
+                f"deterministic path: {exc}"
+            )
+            _ask_llm_provider = None
+        return _ask_llm_provider
+
+
+def reset_ask_llm_provider() -> None:
+    """Test-only reset hook, mirroring logan_feed.py's reset_pipeline_state()
+    -- clears the cached provider (and disabled/failed state) so the next
+    call re-evaluates config/construction from scratch."""
+    global _ask_llm_provider, _ask_llm_provider_initialized
+    with _provider_lock:
+        _ask_llm_provider = None
+        _ask_llm_provider_initialized = False

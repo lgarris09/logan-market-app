@@ -1808,3 +1808,111 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   cap, restart persistence, and a Watch-fatigue-untouched regression guard), `ask.test.ts` (6, mobile client).
   `logan_core`/`backend` test count 405 → 446 (+41). mobile test count 94 → 100 (+6). mypy/ruff/black clean;
   `tsc --noEmit`/`eslint` clean. No merge to main.
+
+## ADR-056: Sprint 3.6.8 Block 1 — grounded LLM Ask STRATUS, provider abstraction, and deterministic fallback
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: Sprint 3.6.7 Block 4 (ADR-055) gave Ask STRATUS a fully deterministic answer engine
+  (`answer_question()`) over real, already-computed `OpportunityContext` fields — explicitly the first stage of
+  "deterministic intelligence first, LLM interpretation second," with no second stage built yet. This block
+  builds that second stage: an optional, config-gated LLM composition layer over the exact same authoritative
+  context, never a replacement for it. Confirmed by inspection: no LLM call existed anywhere in this codebase
+  before this block (`backend/`, `logan_core/`, `mobile/` all searched) — this is a genuine new external
+  dependency and a genuine new secret, both requiring explicit owner confirmation under CLAUDE.md's
+  collaboration model, and both were obtained before any implementation code was written (see Decision 1
+  below).
+- Decision (by area):
+  1. **Vendor and model, owner-approved.** Official `anthropic` Python SDK (`backend/requirements.txt`,
+     `anthropic>=1.0`), not raw REST — mirrors this codebase's existing discipline of using vetted
+     provider libraries rather than hand-rolled HTTP where one exists. Model `claude-sonnet-5`, the owner's
+     explicit choice over the higher-reasoning-tier default, on cost/latency grounds appropriate to this task
+     (a short, few-sentence composition over data the pipeline already computed, not open-ended reasoning) —
+     `DEFAULT_EFFORT="low"` in `ask_llm_anthropic.py` reflects the same judgment. `ANTHROPIC_API_KEY`
+     owner-approved as a new local-dev secret (`backend/.env`, gitignored, never in source control) — not
+     populated with a real value by this block; the live LLM path stays inert (falls back to deterministic,
+     see Decision 4) until the owner adds their own key locally.
+  2. **Vendor-agnostic provider abstraction, mirroring `receptors/providers/{base,fmp,fixture}.py`'s
+     established pattern.** `AskLlmProvider` (`ask_llm_provider.py`) is a `Protocol` —
+     `generate(context: OpportunityContext, question: str) -> AskLlmAnswer` — the only surface
+     `ask_engine.py`'s orchestration ever sees. `AnthropicAskLlmProvider` (`ask_llm_anthropic.py`) is the one
+     file in this codebase that imports the `anthropic` package or knows any Anthropic-specific type
+     (`APITimeoutError`, `RateLimitError`, `stop_reason`, `stop_details.category`, response `.content` blocks)
+     — every one of those is caught/mapped to the single domain error type, `AskLlmProviderError`, at the
+     boundary. `FixtureAskLlmProvider` (`ask_llm_fixture.py`) is the deterministic test double (configured
+     with either a canned `answer` or a canned `error`, records every call for assertion) — no test in this
+     block's suite makes a real network call. Swapping vendors later means writing one new provider class, not
+     touching `ask_engine.py`, `main.py`, or any test that isn't provider-specific.
+  3. **Structured grounding: the model never sees anything but `OpportunityContext`, and is told not to invent
+     beyond it.** `build_system_prompt()` (`ask_llm_provider.py`, vendor-agnostic — used by
+     `AnthropicAskLlmProvider` but doesn't import `anthropic`) renders the same authoritative fields
+     Block 4's deterministic engine already uses (headline, what happened, why it matters / why it matters to
+     this user, why now, confidence score/label/classification, limiting factors, alternatives, real
+     `trigger_codes`, and — only when `convergence_sources` is genuinely non-empty — real convergence sources;
+     otherwise the prompt says plainly the opportunity "is not currently converging across sources," never
+     implying a convergence that didn't fire, same discipline as `answer_question()`'s own comparison-question
+     branch). The prompt explicitly instructs the model not to invent additional market facts, prices,
+     earnings values, analyst actions, or confidence values, and not to contradict the given classification —
+     STRATUS computes and scores; the model only composes prose over what STRATUS already concluded. The
+     prompt also restates the ADR-002/010 advice boundary in the model's own instructions ("do not give
+     financial or betting advice — do not tell the user to buy, sell, or bet on anything") — a second,
+     independent enforcement point, not reliance on the model happening to already behave that way.
+  4. **Deterministic fallback is the caller's responsibility, not the provider's.** `AskLlmProviderError` is
+     never caught inside a provider implementation — `generate_grounded_answer()` (`ask_engine.py`, new,
+     alongside the unchanged Block 4 `answer_question()`) is the single place that decides what happens on
+     failure: `provider is None` (disabled or unavailable) or a raised `AskLlmProviderError` (network, timeout,
+     rate limit, non-2xx, refusal, empty/malformed response) both fall through to the exact same
+     `answer_question(context, message)` call Block 4 already had — never a partial answer, never an error
+     surfaced to the user, never a broken Ask STRATUS experience. `GroundedAnswer.used_llm` records which path
+     actually produced the text (for `AskResponse.grounded`, which already existed pre-Block-1 as "did a real
+     answer get produced" — unchanged meaning, LLM vs. deterministic is an internal implementation detail the
+     public contract doesn't need to expose, so `AskRequest`/`AskResponse` in `models.py` are untouched by this
+     block).
+  5. **Config gating, matching every other capability's rollout pattern in this codebase.**
+     `config.llm_ask_enabled()` reads `STRATUS_LLM_ASK` via the existing `_env_flag()` helper — defaults to
+     disabled, same as `STRATUS_LIVE_NVDA_EARNINGS` (ADR-046-adjacent) and `STRATUS_PERSIST_MEMORY` (ADR-053).
+     `get_ask_llm_provider()` (`ask_engine.py`) is the single lazy, thread-safe (`threading.Lock`), memoized
+     construction point: disabled → `None` without ever importing `ask_llm_anthropic` or constructing a real
+     client; enabled but no API key or construction failure → catches `AskLlmProviderError` from the
+     constructor, logs once, returns `None` — same "attempt, never crash" discipline as the runtime failure
+     path. `reset_ask_llm_provider()` exists solely for test isolation (mirrors the existing
+     `reset_pipeline_state()` pattern), not called from any production path.
+  6. **Prompt-injection hygiene is structural, not instructional-only.** The user's question is never
+     concatenated into the system prompt string at all — `AnthropicAskLlmProvider.generate()` sends it as a
+     wholly separate `messages=[{"role": "user", "content": question}]` turn
+     (`test_anthropic_provider_sends_question_as_separate_user_message_not_system` asserts this directly against
+     a captured call, not just against prompt text). The system prompt additionally instructs the model that
+     the next message is untrusted end-user input, not an instruction to the model, and that it must not reveal
+     the system prompt or change its role in response to anything in it — a second layer on top of the
+     structural separation, not a substitute for it.
+  7. **Behavioral learning: `ASK_FOLLOWUP` recording is unchanged and decoupled from which path answered.**
+     `main.py`'s `ask_logan()` still calls `should_record_ask_followup()`/`record_interaction()` exactly where
+     Block 4 left it, now downstream of `generate_grounded_answer()` instead of `answer_question()` directly —
+     recording depends only on "did a real `OpportunityContext` resolve and did a real answer get produced,"
+     never on whether that answer came from the LLM or the deterministic fallback. Verified directly: an
+     LLM-failure-then-fallback question records exactly one `ask_followup` feedback record, not zero (fallback
+     still counts as a legitimate answer) and not two (there's no separate "LLM attempt" event) —
+     `test_ask_followup_records_exactly_once_on_llm_failure_fallback`. The pre-existing per-(session,
+     opportunity) cap (Block 3/4) and the `LearningEngine` short-window dedup both apply completely unmodified.
+- Consequences: `backend/app/ask_llm_provider.py` (protocol, `AskLlmAnswer`, `build_system_prompt`),
+  `ask_llm_fixture.py` (test double), `ask_llm_anthropic.py` (real provider) are new. `ask_engine.py` gains
+  `GroundedAnswer`, `generate_grounded_answer()`, `get_ask_llm_provider()`/`reset_ask_llm_provider()`
+  alongside Block 4's unchanged `answer_question()`. `config.py` gains `llm_ask_enabled()`. `main.py`'s
+  `ask_logan()` now calls `generate_grounded_answer()` instead of `answer_question()` directly; no other
+  route logic changed. `AskRequest`/`AskResponse` (`models.py`) are unchanged — no mobile contract impact,
+  no mobile UI change in this block. New tests: `test_ask_llm.py` (38 — fixture provider, system-prompt
+  grounding and injection-resistance, `generate_grounded_answer()` orchestration/fallback, config gating,
+  `AnthropicAskLlmProvider` error-mapping/refusal/empty-response/success with an injected fake client (no real
+  network call anywhere in the file), full `/v1/ask` route integration for LLM success/disabled/
+  unavailable/timeout/malformed-response, and `ASK_FOLLOWUP` idempotency under every one of those paths).
+  Every pre-existing Block 4 Ask STRATUS test (`test_ask_context.py`, `test_ask_engine.py`, `test_ask_route.py`)
+  passes unchanged. `backend` test count 141 → 179 (+38); `logan_core` unaffected (306, untouched by this
+  block). mypy/ruff/black clean on every new/changed file (two pre-existing mypy findings in
+  `test_ask_engine.py`/`test_ask_route.py`, both predating this block, are unrelated `**dict[str, object]`
+  kwargs-unpacking noise from Block 4's own test fixtures — not introduced or worsened here; this block's own
+  test fixture follows the identical pre-existing pattern for consistency with those files). No merge to main.
+- Deferred / flagged for the owner: `backend/.env` was not given a real `ANTHROPIC_API_KEY` value — this
+  block has no real key to insert. `STRATUS_LLM_ASK` defaults off regardless, so the system is fully
+  functional and behaves exactly as before this block until the owner both sets `STRATUS_LLM_ASK=true` and
+  adds a real key locally; a missing key at that point degrades gracefully to the deterministic path rather
+  than erroring (Decision 5).

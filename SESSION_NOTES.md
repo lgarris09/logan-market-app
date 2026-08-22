@@ -830,3 +830,92 @@ here, deliberately):
 Recommendation: pause new Block 5 feature work here and let this sprint's four-block arc stand as a complete,
 closed unit; pick up either candidate above as the deliberate start of the *next* sprint, with its own
 planning pass rather than a same-session continuation.
+
+---
+
+# Session Notes — 2026-08-22 (Sprint 3.6.8 Block 1 — grounded LLM Ask STRATUS)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 4 closeout commit
+`1e67120`. See ADR-056 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative.
+
+## What was asked
+
+Sprint 3.6.7's own closeout note (above) named this exact question as the natural next-sprint candidate: does
+an LLM belong in this system, and if so, add it as a second, optional stage over Block 4's deterministic Ask
+STRATUS engine — never replacing it, always falling back to it, never letting the model invent facts the
+pipeline didn't compute.
+
+## Recon before writing any code
+
+Confirmed by direct inspection (not assumed): no LLM call exists anywhere in `backend/`, `logan_core/`, or
+`mobile/` prior to this block. Adding one is a genuine new external dependency and a genuine new secret, both
+requiring explicit owner confirmation under CLAUDE.md's collaboration model before any implementation code was
+written. Stopped and asked two questions: which model tier, and whether to approve the `anthropic` SDK
+dependency plus a new `ANTHROPIC_API_KEY` secret. Owner chose `claude-sonnet-5` (over the skill's higher-tier
+default, on cost/latency grounds for a short grounded-composition task) and approved both the dependency and
+the secret.
+
+## What got built (see ADR-056 for the full per-area record)
+
+1. **Vendor-agnostic provider abstraction** (`ask_llm_provider.py`, `ask_llm_fixture.py`,
+   `ask_llm_anthropic.py`) — mirrors `receptors/providers/{base,fmp,fixture}.py`'s established pattern. Only
+   `ask_llm_anthropic.py` knows anything Anthropic-specific; everything else in the codebase sees only the
+   `AskLlmProvider` protocol and the one domain error, `AskLlmProviderError`.
+2. **Structured grounding** — `build_system_prompt()` renders the same real `OpportunityContext` fields
+   Block 4's deterministic engine already uses, explicitly instructs the model not to invent market facts or
+   contradict the given classification, and restates the ADR-002/010 advice boundary as a second, independent
+   enforcement point.
+3. **Deterministic fallback owned by the caller, not the provider** — `generate_grounded_answer()`
+   (`ask_engine.py`) is the one place that decides what happens on any failure (disabled, unavailable, network,
+   timeout, rate limit, refusal, empty/malformed response) — all of it falls through to the exact same
+   `answer_question()` Block 4 already had. No LLM failure mode can break Ask STRATUS.
+4. **Config gating** — `STRATUS_LLM_ASK`, defaults off, same rollout pattern as every other capability flag in
+   this codebase. `get_ask_llm_provider()` is a lazy, thread-safe, memoized construction point that degrades to
+   `None` (never a crash) on a missing key or any construction failure.
+5. **Prompt-injection hygiene, structural not just instructional** — the user's question is never concatenated
+   into the system prompt string; it's sent as a wholly separate `user` message. Verified directly against a
+   captured call, not just against prompt text.
+6. **`ASK_FOLLOWUP` unchanged and decoupled from which path answered** — recording depends only on "did a real
+   answer get produced," never on LLM-vs-deterministic. Verified: an LLM-failure-then-fallback question records
+   exactly one `ask_followup` event, not zero and not two.
+
+## Implementation went smoothly — the one real fix was a type annotation, not a design problem
+
+`output_config={"effort": DEFAULT_EFFORT}` failed mypy because `DEFAULT_EFFORT` was inferred as plain `str`
+where the SDK's `OutputConfigParam` TypedDict requires a `Literal`. Fixed by typing the constant explicitly
+(`DEFAULT_EFFORT: Literal["low"] = "low"`). Everything else — provider construction, the fallback branch, route
+wiring, `ASK_FOLLOWUP` idempotency — worked correctly on first manual smoke test via `TestClient` +
+`unittest.mock.patch`, later formalized into the permanent `test_ask_llm.py` suite (38 tests).
+
+## Status at the end of this session
+
+`backend` test count 141 → 179 (+38); `logan_core` unaffected (306, untouched by this block). mypy/ruff/black
+clean on every new/changed production and test file (two pre-existing `**dict[str, object]` mypy findings in
+Block 4's own `test_ask_engine.py`/`test_ask_route.py` predate this block and are unrelated — noted, not
+touched). `AskRequest`/`AskResponse` (`models.py`) unchanged, so no mobile contract impact and no mobile test
+re-run required. No merge to main.
+
+**Deferred, flagged for the owner:** `backend/.env` was not given a real `ANTHROPIC_API_KEY` — this session has
+no real key to insert. `STRATUS_LLM_ASK` defaults off, so the system behaves exactly as before this block until
+the owner both flips the flag and adds their own key locally; a missing key at that point still degrades
+gracefully to the deterministic path.
+
+## Recommended next Sprint 3.6.8 block
+
+The Block 1 spec's own scope boundary named two things explicitly out of scope here, both still open:
+
+1. **Minimal mobile surfacing of `grounded`/answer provenance**, if the owner wants the app to visually
+   distinguish an LLM-composed answer from a deterministic one — Block 1 deliberately kept `used_llm`/
+   `llm_model` internal to `GroundedAnswer` and off the public `AskResponse` contract, since no UI change was
+   required to satisfy this block's own requirements.
+2. **Production user boundaries** — the sprint's own stated direction ("Grounded LLM Ask STRATUS + Production
+   User Boundaries") named a second half this block didn't touch: `MemoryStore.query()`, `UserModel`, and every
+   session/provider singleton in this codebase are still single-user (`LOCAL_FOUNDER_USER_ID`)/process-lifetime
+   by construction — the same carried-over item Sprint 3.6.7's own closeout flagged, now explicitly named in
+   this sprint's own title rather than just a backlog candidate.
+
+Recommendation: Production User Boundaries is very likely the intended Block 2, given it's named directly in
+the sprint's own two-part title — worth confirming with the owner before starting, since it's foundational
+enough (touches `MemoryStore`, `UserModel`, every process-lifetime singleton added across Sprint 3.6.7) to
+deserve its own explicit scoping conversation rather than an assumed continuation.

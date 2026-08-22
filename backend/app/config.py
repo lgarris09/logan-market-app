@@ -71,3 +71,21 @@ def memory_store_db_path() -> Path:
     if override:
         return Path(override)
     return Path(__file__).resolve().parent.parent / "data" / "stratus_state.db"
+
+
+def llm_ask_enabled() -> bool:
+    """Sprint 3.6.8 Block 1: gates whether contextual Ask STRATUS attempts a
+    real, grounded LLM call (AnthropicAskLlmProvider, ask_llm_anthropic.py)
+    instead of going straight to the existing deterministic
+    answer_question() path. Defaults to disabled, matching every other new
+    capability's rollout pattern in this codebase (STRATUS_LIVE_NVDA_EARNINGS,
+    STRATUS_PERSIST_MEMORY) -- explicit opt-in, and critically keeps the
+    entire pre-existing Ask STRATUS test suite deterministic and isolated
+    from any real network call unless a test explicitly enables this. Even
+    when enabled, a missing ANTHROPIC_API_KEY or any provider failure falls
+    back to the deterministic path rather than erroring (see
+    ask_engine.generate_grounded_answer) -- this flag only controls whether
+    STRATUS *attempts* the LLM path, never whether Ask STRATUS keeps working
+    at all.
+    """
+    return _env_flag("STRATUS_LLM_ASK")

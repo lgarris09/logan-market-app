@@ -6,7 +6,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .ask_engine import answer_question
+from .ask_engine import generate_grounded_answer, get_ask_llm_provider
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
@@ -248,11 +248,18 @@ def ask_logan(request: AskRequest) -> AskResponse:
     to a real `OpportunityContext` via `get_opportunity_context()` -- the
     client only ever supplies the reference, never opportunity facts
     directly (ADR-029-style discipline: the client cannot inject an
-    intelligence claim into STRATUS's own response). `answer_question()`
-    (ask_engine.py) is entirely deterministic, grounded only in real,
-    already-computed pipeline data -- never an LLM call (none exists in this
-    codebase; adding one would be a new dependency requiring its own explicit
-    confirmation, not made here).
+    intelligence claim into STRATUS's own response).
+
+    Sprint 3.6.8 Block 1 (owner-approved, see docs/DECISIONS.md's Sprint
+    3.6.8 Block 1 ADR): the contextual answer may now come from a real,
+    grounded LLM call (`generate_grounded_answer()`, ask_engine.py) instead
+    of the purely deterministic `answer_question()` -- controlled entirely
+    by `get_ask_llm_provider()` (None when disabled or unconfigured, in
+    which case this is byte-for-byte the pre-Block-1 deterministic
+    behavior). `ASK_FOLLOWUP` is recorded exactly where it already was,
+    exactly once per (session, opportunity), regardless of which path
+    produced the answer -- the LLM is an interpretation layer over this
+    same grounded context, never a second source of behavioral evidence.
     """
     clean_message = request.message.strip()
     if not clean_message:
@@ -269,7 +276,10 @@ def ask_logan(request: AskRequest) -> AskResponse:
     if target_event_id is not None:
         context = get_opportunity_context(target_event_id)
         if context is not None:
-            answer = answer_question(context, clean_message)
+            grounded_answer = generate_grounded_answer(
+                context, clean_message, get_ask_llm_provider()
+            )
+            answer = grounded_answer.text
 
             if request.session_id:
                 set_ask_session_event(request.session_id, target_event_id)

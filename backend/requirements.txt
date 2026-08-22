@@ -8,6 +8,14 @@ pydantic>=2.10
 # convention (see logan_core/requirements.txt's identical ADR-043 precedent).
 httpx>=0.27
 
+# Sprint 3.6.8 Block 1 -- the first real LLM integration in this codebase
+# (see docs/DECISIONS.md's Sprint 3.6.8 Block 1 ADR). Owner-approved: official
+# Anthropic SDK (not raw REST), model claude-sonnet-5. Config-gated off by
+# default (backend/app/config.py's llm_ask_enabled()) -- disabled mode never
+# imports/constructs a real client, so this dependency being present never
+# changes behavior unless explicitly enabled.
+anthropic>=1.0
+
 # Development-only (test suite / lint / format / type-check) -- V3.1.4 BATCH-1/2, ADR-007
 pytest>=8.0
 black>=24.0
