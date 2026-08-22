@@ -50,3 +50,69 @@ class EarningsProvider(Protocol):
         provider has no data -- return None, don't invent one.
         """
         ...
+
+
+class Quote(BaseModel):
+    """STRATUS-owned shape a stock-quote provider maps its response into
+    (Sprint 3.6.7). `change_pct` is the session's price change versus the
+    prior close -- the real, provider-computed figure, not re-derived from
+    price/previous_close here (avoids a second, possibly-inconsistent
+    calculation of the same number a provider already supplies).
+    """
+
+    entity_id: str
+    price: float
+    previous_close: float
+    change_pct: float
+    quote_timestamp: datetime
+    source_id: str
+    source_name: str
+
+
+class QuoteProvider(Protocol):
+    """A source of real-time-ish stock quote data for one entity at a time
+    (Sprint 3.6.7) -- price, previous close, session change percentage. Same
+    shape/pattern as EarningsProvider: implementations terminate all
+    provider-specific structure, downstream code only ever sees `Quote`.
+    """
+
+    def fetch_quote(self, entity_id: str) -> Optional[Quote]:
+        """Returns the current/latest quote for entity_id, or None if the
+        provider has nothing for it. Must not fabricate a quote -- return
+        None, don't invent one.
+        """
+        ...
+
+
+class GradeChange(BaseModel):
+    """STRATUS-owned shape an analyst-rating-change provider maps its
+    response into (Sprint 3.6.7) -- the single most recent rating action for
+    one entity. `action` is the provider's own classification (e.g.
+    "upgrade"/"downgrade"/"maintain"/"initiate"), not re-derived from
+    `previous_rating`/`new_rating` text here -- inferring "upgrade" vs.
+    "downgrade" from rating strings ("Hold" vs. "Buy" vs. "Outperform", etc.)
+    would require inventing a rating-ordinal hierarchy this system has no
+    authoritative source for; trusting the provider's own pre-classified
+    action is more honest and deterministic than guessing one.
+    """
+
+    entity_id: str
+    grading_firm: str
+    previous_rating: Optional[str] = None
+    new_rating: Optional[str] = None
+    action: str
+    action_date: datetime
+    source_id: str
+    source_name: str
+
+
+class AnalystGradesProvider(Protocol):
+    """A source of real analyst rating-change data for one entity at a time
+    (Sprint 3.6.7). Same shape/pattern as EarningsProvider/QuoteProvider.
+    """
+
+    def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
+        """Returns the single most recent rating-change entry for entity_id,
+        or None if the provider has nothing for it. Must not fabricate one.
+        """
+        ...

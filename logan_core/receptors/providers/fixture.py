@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from .base import EarningsReport
+from .base import EarningsReport, GradeChange, Quote
 
 # Explicit, unmistakable marker for anything sourced from this provider --
 # Phase 4 instruction: "never quietly fall back to simulated data while
@@ -54,9 +54,127 @@ def nvda_earnings_beat_fixture() -> EarningsReport:
     )
 
 
+class FixtureMarketDataProvider:
+    """Sprint 3.6.7 -- deterministic, in-repo quote/grade-change data,
+    explicitly NOT live. Same role as FixtureEarningsProvider: proves the
+    trigger-detection -> pipeline integration for the new price-move/
+    analyst-grade signal types before/alongside real provider verification,
+    never mistaken for a live result (FIXTURE_SOURCE_ID/NAME below).
+    Implements the same QuoteProvider/AnalystGradesProvider Protocols a real
+    provider would.
+    """
+
+    def __init__(
+        self,
+        quotes: Optional[dict[str, Quote]] = None,
+        grade_changes: Optional[dict[str, GradeChange]] = None,
+    ) -> None:
+        self._quotes = quotes or {}
+        self._grade_changes = grade_changes or {}
+
+    def fetch_quote(self, entity_id: str) -> Optional[Quote]:
+        return self._quotes.get(entity_id)
+
+    def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
+        return self._grade_changes.get(entity_id)
+
+
+def nvda_price_move_up_fixture() -> Quote:
+    """A qualifying significant price move (change_pct well above the 5.0
+    threshold) -- see trigger_detection/stocks.py's
+    evaluate_price_move_condition()."""
+    return Quote(
+        entity_id="NVDA",
+        price=127.27,
+        previous_close=118.50,
+        change_pct=7.4,
+        quote_timestamp=datetime(2026, 8, 21, 20, 0, 0, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
+def nvda_price_move_down_fixture() -> Quote:
+    """A qualifying significant negative price move."""
+    return Quote(
+        entity_id="NVDA",
+        price=109.80,
+        previous_close=118.50,
+        change_pct=-7.34,
+        quote_timestamp=datetime(2026, 8, 21, 20, 0, 0, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
+def nvda_no_significant_move_fixture() -> Quote:
+    """An ordinary trading day -- change_pct well below the 5.0 threshold,
+    must not fire STOCK_PRICE_MOVE_SIGNIFICANT."""
+    return Quote(
+        entity_id="NVDA",
+        price=119.10,
+        previous_close=118.50,
+        change_pct=0.51,
+        quote_timestamp=datetime(2026, 8, 21, 20, 0, 0, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
+def nvda_analyst_upgrade_fixture() -> GradeChange:
+    """A qualifying analyst upgrade -- see trigger_detection/stocks.py's
+    evaluate_analyst_grade_condition()."""
+    return GradeChange(
+        entity_id="NVDA",
+        grading_firm="Fixture Capital",
+        previous_rating="Hold",
+        new_rating="Buy",
+        action="upgrade",
+        action_date=datetime(2026, 8, 21, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
+def nvda_analyst_downgrade_fixture() -> GradeChange:
+    """A qualifying analyst downgrade."""
+    return GradeChange(
+        entity_id="NVDA",
+        grading_firm="Fixture Capital",
+        previous_rating="Buy",
+        new_rating="Hold",
+        action="downgrade",
+        action_date=datetime(2026, 8, 21, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
+def nvda_analyst_maintain_fixture() -> GradeChange:
+    """A rating reaffirmation, not a change -- must not fire either analyst
+    trigger code."""
+    return GradeChange(
+        entity_id="NVDA",
+        grading_firm="Fixture Capital",
+        previous_rating="Buy",
+        new_rating="Buy",
+        action="maintain",
+        action_date=datetime(2026, 8, 21, tzinfo=timezone.utc),
+        source_id=FIXTURE_SOURCE_ID,
+        source_name=FIXTURE_SOURCE_NAME,
+    )
+
+
 __all__: list[str] = [
     "FixtureEarningsProvider",
     "nvda_earnings_beat_fixture",
+    "FixtureMarketDataProvider",
+    "nvda_price_move_up_fixture",
+    "nvda_price_move_down_fixture",
+    "nvda_no_significant_move_fixture",
+    "nvda_analyst_upgrade_fixture",
+    "nvda_analyst_downgrade_fixture",
+    "nvda_analyst_maintain_fixture",
     "FIXTURE_SOURCE_ID",
     "FIXTURE_SOURCE_NAME",
 ]

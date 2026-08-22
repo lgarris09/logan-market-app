@@ -1267,3 +1267,140 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   relevance, Exceptional-vs-Personal difficulty, route visibility in `DecisionTrace`, and
   `recommend=False` short-circuiting unchanged. mypy/ruff/black clean. No mobile files touched — not
   re-validated. No Attention Field, impression/exposure, FIELD BIAS, trigger, or Ask STRATUS work touched.
+
+## ADR-050: Personal-route rank-score authority rule — visibility/interruption decoupled in PrioritizationEngine
+
+- Date: 2026-08-21
+- Status: Accepted
+- Context: ADR-049's final report flagged an unresolved gap: a Personal-route item (`PolicyEngine`
+  `communication_mode="alert"`) could still land as `interruption="digest"` whenever
+  `internal_rank_score` fell in `[0.35, 0.6)` ("feed" visibility tier), because `PrioritizationEngine`'s
+  `prioritize()` only ever set `interruption="alert"` inside its `internal_rank_score >= 0.6` branch —
+  `communication_mode` was read only as a secondary check *within* that branch, never independently. Sprint
+  3.6.7's owner asked for an explicit, testable authority rule resolving this: strong mature Personal-route
+  relevance should be able to produce a real alert without a blanket bypass of Prioritization, and without
+  duplicating fatigue state.
+- Decision: `PrioritizationEngine`'s own docstring already states its design principle — "separates visibility
+  from interruption" — but the prior implementation nested `interruption` inside the `visibility` branching,
+  coupling them. `prioritize()` (`logan_core/prioritization/engine.py`) now computes them independently once
+  past the `not permitted`/`in_cooldown`/`domain_fatigued` vetoes (all three unchanged, still evaluated first,
+  still fully authoritative): `visibility` remains purely `internal_rank_score`-driven (unchanged thresholds,
+  0.6/0.35), governing feed prominence/ordering only; `interruption` is now `"alert"` whenever
+  `policy_result.communication_mode == "alert"` (only reachable through one of ADR-049's Personal/Exceptional
+  routes — Policy has already applied its own quality gate to reach that decision), `"digest"` for any other
+  non-`"informational"` mode, `"none"` for `"informational"`. Because `communication_mode` can only be
+  `"alert"`/`"analysis"` when `recommendation.recommend` is already `True` (Opportunity's own
+  `internal_rank_score >= RECOMMEND_THRESHOLD` gate), this can never promote a background-tier
+  (`rank < 0.35`) item — it only ever affects the previously-stuck "feed" tier (`[0.35, 0.6)`). Fatigue and
+  cooldown are evaluated before this logic runs at all and are completely unaffected — "do not simply bypass
+  prioritization everywhere" is satisfied by construction, not by a special case. No duplicate fatigue state
+  was introduced; `AttentionState` ownership is unchanged.
+- Consequences: the ADR-049 BTC live-trace case (mature inferred relevance, `internal_rank_score=0.585`) now
+  produces `interruption="alert"`, not `"digest"` — verified in `logan_core/tests/test_pipeline_market_data.py`
+  and directly in `test_prioritization.py`. 5 new tests
+  (`test_alert_communication_mode_interrupts_even_at_feed_tier_rank`,
+  `..._interrupts_at_primary_tier_rank_too`, `test_analysis_communication_mode_never_interrupts_regardless_of_rank`
+  — the converse direction: high rank alone still never forces an alert — `test_domain_fatigue_still_overrides_alert_communication_mode`,
+  `test_cooldown_still_overrides_alert_communication_mode`). All pre-existing `test_prioritization.py`/
+  `test_policy.py` tests pass unmodified (they fix `internal_rank_score` at values where the old and new logic
+  agree). `backend`/`logan_core` test count 279 → 284 within this change; see ADR-051 for the cumulative
+  Sprint 3.6.7 total. mypy/ruff/black clean.
+
+## ADR-051: Sprint 3.6.7 Block 1 — generalized multi-signal stock trigger architecture (price-move, analyst upgrade/downgrade)
+
+- Date: 2026-08-21
+- Status: Accepted
+- Context: Sprint 3.6.6 proved one real vertical slice — NVIDIA earnings → `STOCK_EARNINGS_BEAT`/`MISS`/
+  `IN_LINE` → the unmodified `logan_core` pipeline → a real opportunity (ADR-042/043/044/045). The owner asked
+  Sprint 3.6.7 to generalize that architecture so new stock signal types plug in rather than becoming one-off
+  implementations, and to implement a meaningful first expansion pack against real provider data, without
+  breaking the existing earnings path, contracts, or Watch behavior.
+- Inspection findings before writing code:
+  1. `logan_core/normalization/normalize.py`'s `SIGNAL_TYPE_REGISTRY["stocks"]` already listed `price_change`
+     and `analyst_change` (alongside `earnings_signal`) — anticipated in the original contract design but
+     never implemented. No normalization contract change was needed for either new signal type.
+  2. Live FMP endpoint recon (using the existing local `FMP_API_KEY`, same key already used for earnings)
+     found `/stable/quote` (real-time price/change/previous-close) and `/stable/grades` (real per-firm rating
+     actions with a pre-classified `action` field: upgrade/downgrade/maintain/initiate) both fully accessible
+     on the current plan. `/stable/grades-consensus`, `/stable/price-target-summary`, and
+     `/stable/analyst-estimates` were also reachable but offer only aggregated/forward-looking data, not
+     verified against any registered trigger's fire condition.
+  3. `TRIGGER_REGISTRY_STOCKS.md` already fully specifies `STOCK_PRICE_MOVE_SIGNIFICANT` (fire:
+     `abs(price_change_pct) >= 5.0`, confidence `+0.10`) and `STOCK_ANALYST_UPGRADE`/`STOCK_ANALYST_DOWNGRADE`
+     (fire: rating change in positive/negative direction, confidence `+0.08` each) — real, pre-defined
+     constants requiring no new number to be invented, directly satisfying both the `/quote` and `/grades`
+     data actually available.
+  4. `STOCK_GUIDANCE_RAISED`/`LOWERED` and `STOCK_OPTIONS_FLOW_SURGE` remain SPECIFIED — NOT IMPLEMENTED,
+     consistent with ADR-045's prior finding: FMP's stable-tier endpoints supply no forward-guidance or
+     options-flow data. "Unusual volume" and "volatility spike" were considered and explicitly rejected for
+     this pass: `/quote` carries no average-volume baseline (`volume_vs_avg` from the registry's own
+     `STOCK_PRICE_MOVE_SIGNIFICANT` context example is not computable), and — more importantly — neither has
+     its own registered trigger code with a registry-defined `confidence_contribution` at all; implementing
+     either would mean inventing an unbacked confidence number, which Sprint 3.6.6D's standing rule ("reuse
+     only registry-defined constants, never invent new ones") forbids. Not fabricated, not silently skipped —
+     documented here as deferred.
+  5. `WorldModel.process()`'s dedup key is `(entity_id, signal_type)` (`world_model/model.py`, unchanged) —
+     *different* signal_types for the *same* entity within one `Orchestrator.run(raw_signals=[...])` call are
+     **not** merged into one `EnrichedEvent`; each becomes its own event, and only the last-processed
+     `raw_signals` entry's resulting event is what that `run()` call actually returns. This means feeding,
+     say, NVDA's earnings signal *and* a live NVDA price-move signal in the same request would silently drop
+     one of the two from that entity's single-opportunity-per-request result — a real architectural gap, not
+     addressed here. See "Deferred" below and the Sprint 3.6.7 Block 2 recommendation in `SESSION_NOTES.md`.
+- Decision: generalized the existing per-signal-type architecture (Provider → Receptor → deterministic
+  Evaluator, all terminating provider-specific structure at the Provider boundary) across two new signal
+  types, reusing every existing contract unchanged:
+  - `receptors/providers/base.py` gains `Quote`/`QuoteProvider` and `GradeChange`/`AnalystGradesProvider` —
+    same shape/Protocol pattern as `EarningsReport`/`EarningsProvider`. `GradeChange.action` deliberately
+    trusts the provider's own upgrade/downgrade/maintain classification rather than re-deriving a direction
+    from rating text (`"Hold"` vs. `"Buy"` vs. `"Outperform"`, etc.) — inferring that would require inventing
+    a rating-ordinal hierarchy with no authoritative source.
+  - `receptors/providers/fmp.py` gains `FmpMarketDataProvider` (`fetch_quote`, `fetch_latest_grade_change`) —
+    a **separate** class from `FmpEarningsProvider`, not a merge, so that proven, live-verified class is
+    untouched. Unlike `EarningsReport`'s legitimately-sparse fields, a quote's price/previous-close/change_pct
+    and a grade's action are expected on every real response entry; missing ones raise `FmpProviderError`
+    loudly (malformed-shape signal) rather than degrading to `None` (an earnings-specific "no data yet"
+    convention that doesn't apply here).
+  - `receptors/providers/fixture.py` gains `FixtureMarketDataProvider` plus six deterministic fixtures
+    (price-move up/down/none, analyst upgrade/downgrade/maintain) — same non-live-data discipline as
+    `FixtureEarningsProvider` (`FIXTURE_SOURCE_ID`/`NAME`).
+  - `receptors/stocks_market_data.py` (new) maps `Quote`→`RawSignal` (`signal_type="price_change"`) and
+    `GradeChange`→`RawSignal` (`signal_type="analyst_change"`), mirroring `stocks_earnings.py`'s
+    `_truthful_summary` pattern — human-readable text built only from real supplied fields.
+  - `trigger_detection/stocks.py`: `StocksTriggerEvaluator.evaluate()` now dispatches by `normalized.signal_type`
+    to `_evaluate_earnings` (body unchanged, byte-identical, just extracted into its own method),
+    `_evaluate_price_move`, or `_evaluate_analyst_grade` — a new signal type plugs in as one more `elif`
+    branch plus a dedicated pure condition function, not a rewrite. New pure functions
+    `evaluate_price_move_condition()` and `evaluate_analyst_grade_condition()` mirror the existing
+    `evaluate_earnings_*_condition()` functions' "always return a reason, fire or not" contract.
+    `STOCK_ANALYST_UPGRADE`/`DOWNGRADE`'s `raw_magnitude` is `1.0` (a categorical rating change has no natural
+    numeric magnitude — marks "the qualifying condition fired," not an invented number).
+  - Context fields follow the same "only what the provider actually supplied" discipline as earnings:
+    `STOCK_PRICE_MOVE_SIGNIFICANT`'s context omits the registry example's `session_open`/`volume_vs_avg`
+    (not available); `STOCK_ANALYST_UPGRADE`/`DOWNGRADE`'s context omits `price_target_prior`/`_new` (a
+    different, aggregated FMP endpoint, not per-event data).
+  - Deliberately deferred, not attempted this pass: wiring either new signal type into
+    `backend/app/logan_feed.py`'s config-gated `/v1/opportunities` live path (mirroring how ADR-044 followed
+    ADR-043 as a separate, later step for earnings). Doing so correctly for an entity that could have *both*
+    a live earnings signal and a live price-move/analyst signal in the same request runs directly into
+    inspection finding 5's dedup-key gap — wiring it now would either silently drop a signal or require
+    informally half-solving signal convergence, which is Sprint 3.6.7 Block 2's own designated scope, not
+    Block 1's.
+- Consequences: full pipeline correctness proven two ways per new signal type. (1) Fixture-based integration
+  tests (`logan_core/tests/test_pipeline_market_data.py`) prove determinism and, for
+  `STOCK_PRICE_MOVE_SIGNIFICANT` specifically, a complete real alert: NVDA holding (explicit Personal-route
+  relevance) + a qualifying 7.4% fixture price move → `communication_mode="alert"`, `watch_route=personal`,
+  `interruption="alert"`, exercising ADR-049/050 end-to-end. (2) Live verification
+  (`logan_core/live_verification/nvda_market_data.py`, human-run only, never pytest-collected, mirrors
+  `nvda_earnings.py`) proves the real `FmpMarketDataProvider` → pipeline path against NVIDIA's actual current
+  quote and most recent real analyst action (2026-08-21: change_pct -0.98% — did not fire, correctly; most
+  recent grade action "maintain" from BMO Capital — did not fire, correctly) — an honest, unforced result on
+  both counts, exactly matching the earnings script's own "never force an outcome" precedent. New/updated
+  tests: `test_trigger_detection.py` (+22: pure condition functions for both new signal types plus
+  `StocksTriggerEvaluator` dispatch, including a same-entity cross-signal-type isolation check),
+  `test_stocks_market_data_receptor.py` (new, 8 tests), `test_fmp_market_data_provider.py` (new, 15 tests,
+  `httpx.MockTransport`-mocked, no real network in the normal suite), `test_pipeline_market_data.py` (new, 6
+  tests). Existing earnings tests (`test_trigger_detection.py`'s earnings cases, `test_pipeline_nvda_earnings.py`,
+  `test_fmp_provider.py`) pass unmodified — the `_evaluate_earnings` extraction is a pure refactor, not a
+  behavior change. `backend`/`logan_core` test count 284 → 330 (including ADR-050's 5). mypy/ruff/black clean.
+  No Watch threshold, contract, or existing receptor/API was broken; `/v1/opportunities` and
+  `backend/app/logan_feed.py` are completely untouched by this ADR.

@@ -44,6 +44,17 @@ def _recommendation(now):
     )
 
 
+def _recommendation_with_rank(now, internal_rank_score, event_id=None):
+    return AttentionRecommendation(
+        event_id=event_id or uuid4(),
+        recommend=True,
+        dimensions=_dimensions(),
+        internal_rank_score=internal_rank_score,
+        reasons=["test"],
+        recommended_at=now,
+    )
+
+
 def _policy_result(event_id, now, permitted=True, communication_mode="analysis"):
     return PolicyResult(
         event_id=event_id,
@@ -241,6 +252,119 @@ def test_is_new_for_user_is_independent_per_event():
         now=BASE_NOW + timedelta(minutes=1),
     )
     assert other_result.is_new_for_user is True
+
+
+# --- ADR-050: Personal-route rank-score authority rule ---
+#
+# communication_mode="alert" (only reachable through ADR-049's Personal/
+# Exceptional Watch routes) now drives interruption directly, decoupled from
+# the internal_rank_score-driven visibility tier -- fatigue/cooldown/
+# permitted still fully veto, unchanged.
+
+
+def test_alert_communication_mode_interrupts_even_at_feed_tier_rank():
+    """The ADR-049 gap this resolves: a Personal-route item with
+    internal_rank_score in [0.35, 0.6) (visibility="feed") previously could
+    never reach interruption="alert" no matter what Policy decided."""
+    engine = PrioritizationEngine()
+    event_id = uuid4()
+    policy_result = _policy_result(event_id, BASE_NOW, communication_mode="alert")
+    recommendation = _recommendation_with_rank(BASE_NOW, 0.5, event_id=event_id)
+    result = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    assert result.interruption == "alert"
+    assert result.visibility == "feed"  # visibility stays rank-driven, unchanged
+
+
+def test_alert_communication_mode_interrupts_at_primary_tier_rank_too():
+    engine = PrioritizationEngine()
+    policy_result = _policy_result(uuid4(), BASE_NOW, communication_mode="alert")
+    recommendation = _recommendation_with_rank(
+        BASE_NOW, 0.9, event_id=policy_result.event_id
+    )
+    result = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    assert result.interruption == "alert"
+    assert result.visibility == "primary"
+
+
+def test_analysis_communication_mode_never_interrupts_regardless_of_rank():
+    """High rank alone must not force an alert -- only Policy's own
+    Personal/Exceptional route decision (communication_mode=="alert") does.
+    This is the other direction of the same rule: not a blanket relaxation."""
+    engine = PrioritizationEngine()
+    policy_result = _policy_result(uuid4(), BASE_NOW, communication_mode="analysis")
+    recommendation = _recommendation_with_rank(
+        BASE_NOW, 0.95, event_id=policy_result.event_id
+    )
+    result = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    assert result.interruption == "digest"
+    assert result.visibility == "primary"
+
+
+def test_domain_fatigue_still_overrides_alert_communication_mode():
+    """Fatigue's veto is unaffected by ADR-050 -- "do not simply bypass
+    prioritization everywhere.\" """
+    engine = PrioritizationEngine()
+    for i in range(FATIGUE_LIMIT + 1):
+        _surface_once(engine, BASE_NOW + timedelta(minutes=i))
+    policy_result = _policy_result(uuid4(), BASE_NOW, communication_mode="alert")
+    recommendation = _recommendation_with_rank(
+        BASE_NOW + timedelta(minutes=FATIGUE_LIMIT + 2),
+        0.9,
+        event_id=policy_result.event_id,
+    )
+    result = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=policy_result,
+        recommendation=recommendation,
+        now=BASE_NOW + timedelta(minutes=FATIGUE_LIMIT + 2),
+    )
+    assert result.visibility == "background"
+    assert result.interruption == "none"
+
+
+def test_cooldown_still_overrides_alert_communication_mode():
+    engine = PrioritizationEngine()
+    recommendation = _recommendation(BASE_NOW)
+    first_policy = _policy_result(recommendation.event_id, BASE_NOW)
+    engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=first_policy,
+        recommendation=recommendation,
+        now=BASE_NOW,
+    )
+    alert_policy = _policy_result(
+        recommendation.event_id, BASE_NOW, communication_mode="alert"
+    )
+    second = engine.prioritize(
+        user_id="demo_user",
+        domain="stocks",
+        policy_result=alert_policy,
+        recommendation=recommendation,
+        changed_since_view=False,
+        now=BASE_NOW + timedelta(minutes=5),
+    )
+    assert second.visibility == "hidden"
+    assert second.interruption == "none"
 
 
 def test_mark_reviewed_is_idempotent():

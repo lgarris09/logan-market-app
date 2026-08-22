@@ -89,21 +89,43 @@ class PrioritizationEngine:
         elif domain_fatigued:
             visibility = "background"
             interruption = "none"
-        elif recommendation.internal_rank_score >= 0.6:
-            visibility = "primary"
-            interruption = (
-                "alert" if policy_result.communication_mode == "alert" else "digest"
-            )
-        elif recommendation.internal_rank_score >= 0.35:
-            visibility = "feed"
-            interruption = (
-                "digest"
-                if policy_result.communication_mode != "informational"
-                else "none"
-            )
         else:
-            visibility = "background"
-            interruption = "none"
+            # Visibility: feed prominence/ordering, purely a function of
+            # internal_rank_score (competition among items) -- unchanged from
+            # before ADR-050.
+            if recommendation.internal_rank_score >= 0.6:
+                visibility = "primary"
+            elif recommendation.internal_rank_score >= 0.35:
+                visibility = "feed"
+            else:
+                visibility = "background"
+
+            # Interruption (ADR-050 -- Personal-route rank-score authority
+            # rule): this class's own docstring says it "separates visibility
+            # from interruption" -- once PolicyEngine has already decided
+            # communication_mode=="alert" (only reachable through one of
+            # ADR-049's Personal/Exceptional Watch routes, a deliberate,
+            # already-quality-gated decision), Prioritization's remaining
+            # authority is competition/repetition management (fatigue/
+            # cooldown, both already applied above), not re-applying its own
+            # visibility-tier rank floor as a second, redundant "is this good
+            # enough" gate on top of a decision Policy already made. Resolves
+            # the ADR-049 Personal-route rank-score gap: a mature
+            # inferred-relevance alert previously silently downgraded to
+            # "digest" whenever internal_rank_score fell in [0.35, 0.6)
+            # (visibility="feed"), even though Policy had already determined
+            # it deserved to interrupt. communication_mode=="alert" can only
+            # occur when Opportunity's own recommend gate already passed
+            # (internal_rank_score >= RECOMMEND_THRESHOLD), so this never
+            # promotes a background-tier (rank < 0.35) item -- it only ever
+            # affects the "feed" tier, never bypasses fatigue/cooldown/
+            # bot-risk suppression above, and never changes visibility itself.
+            if policy_result.communication_mode == "alert":
+                interruption = "alert"
+            elif policy_result.communication_mode != "informational":
+                interruption = "digest"
+            else:
+                interruption = "none"
 
         if visibility in ("primary", "feed"):
             state.surfaced.append(SurfaceRecord(event_id=event_id, surfaced_at=now))

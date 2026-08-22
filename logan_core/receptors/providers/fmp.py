@@ -4,7 +4,7 @@ from typing import Optional
 
 import httpx
 
-from .base import EarningsReport
+from .base import EarningsReport, GradeChange, Quote
 
 # Sprint 3.6.6B — the first live market-data provider. Financial Modeling
 # Prep's "stable" per-symbol earnings endpoint: historical earnings reports
@@ -166,6 +166,193 @@ class FmpEarningsProvider:
             # guidance_delta_pct stay at EarningsReport's own None default,
             # never fabricated.
             report_timestamp=report_date,
+            source_id=FMP_SOURCE_ID,
+            source_name=FMP_SOURCE_NAME,
+        )
+
+
+class FmpMarketDataProvider:
+    """Sprint 3.6.7 -- generalizes FmpEarningsProvider's pattern (provider-
+    specific structure terminates entirely inside this class) across two
+    more stock signal types that share one authenticated client: real-time-ish
+    quotes (price/change) and analyst rating changes. A separate class from
+    FmpEarningsProvider, not a merge -- avoids touching that proven,
+    live-verified class at all; the two share only the module-level
+    constants (FMP_BASE_URL, FMP_SOURCE_ID/NAME, FMP_API_KEY_ENV_VAR) and
+    FmpProviderError.
+
+    Unlike EarningsReport's fields (legitimately sparse -- a company may
+    genuinely have no guidance data yet), a quote's price/previous_close/
+    change_pct and a grade change's action are expected on every valid
+    response entry for a real symbol; a response missing them indicates a
+    malformed/unexpected shape, not "no data yet" -- so those raise
+    FmpProviderError loudly here rather than silently degrading to None,
+    consistent with how this file already treats a malformed list/JSON shape
+    elsewhere (never a fabricated value, but also never a silent no-op on a
+    response that doesn't match what this adapter expects).
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: str = FMP_BASE_URL,
+        client: Optional[httpx.Client] = None,
+    ) -> None:
+        resolved_key = (
+            api_key if api_key is not None else os.environ.get(FMP_API_KEY_ENV_VAR)
+        )
+        if not resolved_key:
+            raise FmpProviderError(
+                f"{FMP_API_KEY_ENV_VAR} is not set. FmpMarketDataProvider requires a "
+                "real API key from environment configuration -- there is no "
+                "fixture/demo fallback for this provider."
+            )
+        self._api_key = resolved_key
+        self._base_url = base_url
+        self._client = client or httpx.Client(timeout=10.0)
+
+    def fetch_quote(self, entity_id: str) -> Optional[Quote]:
+        try:
+            response = self._client.get(
+                f"{self._base_url}/quote",
+                params={"symbol": entity_id, "apikey": self._api_key},
+            )
+        except httpx.RequestError as exc:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: network error ({exc})"
+            ) from exc
+
+        if response.status_code == 429:
+            raise FmpProviderError(
+                f"FMP rate limit hit fetching quote for {entity_id!r} "
+                f"(HTTP 429): {response.text[:200]}"
+            )
+        if response.status_code != 200:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
+                f"{response.text[:200]}"
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FmpProviderError(
+                f"FMP quote response for {entity_id!r} was not valid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(payload, list):
+            raise FmpProviderError(
+                f"FMP quote response for {entity_id!r} was not a list as expected "
+                f"(got {type(payload).__name__})"
+            )
+        if len(payload) == 0:
+            # A real, legitimate "no data" case -- FMP has no quote for this symbol.
+            return None
+
+        entry = payload[0]
+        if not isinstance(entry, dict):
+            raise FmpProviderError(
+                f"FMP quote response for {entity_id!r} contained a non-dict entry"
+            )
+
+        price = entry.get("price")
+        previous_close = entry.get("previousClose")
+        change_pct = entry.get("changePercentage")
+        timestamp = entry.get("timestamp")
+        if (
+            price is None
+            or previous_close is None
+            or change_pct is None
+            or timestamp is None
+        ):
+            raise FmpProviderError(
+                f"FMP quote response for {entity_id!r} was missing one of "
+                "price/previousClose/changePercentage/timestamp"
+            )
+
+        return Quote(
+            entity_id=entry.get("symbol", entity_id),
+            price=price,
+            previous_close=previous_close,
+            change_pct=change_pct,
+            quote_timestamp=datetime.fromtimestamp(timestamp, tz=timezone.utc),
+            source_id=FMP_SOURCE_ID,
+            source_name=FMP_SOURCE_NAME,
+        )
+
+    def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
+        try:
+            response = self._client.get(
+                f"{self._base_url}/grades",
+                params={"symbol": entity_id, "apikey": self._api_key},
+            )
+        except httpx.RequestError as exc:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: network error ({exc})"
+            ) from exc
+
+        if response.status_code == 429:
+            raise FmpProviderError(
+                f"FMP rate limit hit fetching grades for {entity_id!r} "
+                f"(HTTP 429): {response.text[:200]}"
+            )
+        if response.status_code != 200:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
+                f"{response.text[:200]}"
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FmpProviderError(
+                f"FMP grades response for {entity_id!r} was not valid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(payload, list):
+            raise FmpProviderError(
+                f"FMP grades response for {entity_id!r} was not a list as expected "
+                f"(got {type(payload).__name__})"
+            )
+        if len(payload) == 0:
+            return None
+
+        entries = [e for e in payload if isinstance(e, dict) and e.get("date")]
+        if not entries:
+            raise FmpProviderError(
+                f"FMP grades response for {entity_id!r} contained no usable entries"
+            )
+
+        # This endpoint's entries are already most-recent-first in practice
+        # (live-verified, 2026-08-21), but sort explicitly rather than trust
+        # response ordering -- the most recent rating action is the one that
+        # matters for a fire condition keyed to "did this just change."
+        latest = max(entries, key=lambda e: e["date"])
+        return self._parse_grade_entry(entity_id, latest)
+
+    def _parse_grade_entry(self, entity_id: str, entry: dict) -> GradeChange:
+        try:
+            action_date = datetime.strptime(entry["date"], "%Y-%m-%d").replace(
+                tzinfo=timezone.utc
+            )
+        except (KeyError, ValueError) as exc:
+            raise FmpProviderError(
+                f"FMP grades entry for {entity_id!r} had an unparseable 'date': {exc}"
+            ) from exc
+
+        action = entry.get("action")
+        if not action:
+            raise FmpProviderError(
+                f"FMP grades entry for {entity_id!r} was missing 'action'"
+            )
+
+        return GradeChange(
+            entity_id=entry.get("symbol", entity_id),
+            grading_firm=entry.get("gradingCompany", "unknown"),
+            previous_rating=entry.get("previousGrade"),
+            new_rating=entry.get("newGrade"),
+            action=action,
+            action_date=action_date,
             source_id=FMP_SOURCE_ID,
             source_name=FMP_SOURCE_NAME,
         )

@@ -11,14 +11,19 @@ from logan_core.contracts import NormalizedSignal, RawSignal
 from logan_core.normalization import Normalizer
 from logan_core.trigger_detection import (
     StocksTriggerEvaluator,
+    evaluate_analyst_grade_condition,
     evaluate_earnings_beat_condition,
     evaluate_earnings_in_line_condition,
     evaluate_earnings_miss_condition,
+    evaluate_price_move_condition,
 )
 from logan_core.trigger_detection.stocks import (
+    STOCK_ANALYST_DOWNGRADE,
+    STOCK_ANALYST_UPGRADE,
     STOCK_EARNINGS_BEAT,
     STOCK_EARNINGS_IN_LINE,
     STOCK_EARNINGS_MISS,
+    STOCK_PRICE_MOVE_SIGNIFICANT,
 )
 
 
@@ -302,3 +307,245 @@ def test_evaluator_does_not_fabricate_missing_context_fields(now):
     assert "fiscal_quarter" not in trigger.context
     assert "guidance_revised" not in trigger.context
     assert "guidance_delta_pct" not in trigger.context
+
+
+# --- Sprint 3.6.7: STOCK_PRICE_MOVE_SIGNIFICANT (pure condition) ---
+
+
+def test_price_move_up_above_threshold_fires():
+    fired, pct, reason = evaluate_price_move_condition(7.4)
+    assert fired is True
+    assert pct == 7.4
+    assert "fired" in reason
+
+
+def test_price_move_down_above_threshold_fires():
+    fired, pct, reason = evaluate_price_move_condition(-7.4)
+    assert fired is True
+    assert pct == -7.4
+    assert "fired" in reason
+
+
+def test_price_move_below_threshold_does_not_fire():
+    fired, pct, reason = evaluate_price_move_condition(0.51)
+    assert fired is False
+    assert pct == 0.51
+    assert "below the" in reason
+
+
+def test_price_move_exactly_at_threshold_fires():
+    fired, _, _ = evaluate_price_move_condition(5.0)
+    assert fired is True
+    fired, _, _ = evaluate_price_move_condition(-5.0)
+    assert fired is True
+
+
+def test_price_move_missing_change_pct_does_not_fire():
+    fired, pct, reason = evaluate_price_move_condition(None)
+    assert fired is False
+    assert pct is None
+    assert "missing" in reason
+
+
+# --- Sprint 3.6.7: STOCK_ANALYST_UPGRADE / STOCK_ANALYST_DOWNGRADE (pure condition) ---
+
+
+def test_analyst_upgrade_action_fires_upgrade_code():
+    code, reason = evaluate_analyst_grade_condition("upgrade")
+    assert code == STOCK_ANALYST_UPGRADE
+    assert "fired" in reason
+
+
+def test_analyst_downgrade_action_fires_downgrade_code():
+    code, reason = evaluate_analyst_grade_condition("downgrade")
+    assert code == STOCK_ANALYST_DOWNGRADE
+    assert "fired" in reason
+
+
+def test_analyst_maintain_action_does_not_fire():
+    code, reason = evaluate_analyst_grade_condition("maintain")
+    assert code is None
+    assert "not an upgrade/downgrade" in reason
+
+
+def test_analyst_initiate_action_does_not_fire():
+    code, reason = evaluate_analyst_grade_condition("initiate")
+    assert code is None
+
+
+def test_analyst_action_is_case_insensitive():
+    code, _ = evaluate_analyst_grade_condition("Upgrade")
+    assert code == STOCK_ANALYST_UPGRADE
+
+
+def test_analyst_missing_action_does_not_fire():
+    code, reason = evaluate_analyst_grade_condition(None)
+    assert code is None
+    assert "missing" in reason
+
+
+# --- Sprint 3.6.7: StocksTriggerEvaluator dispatch for the new signal_types ---
+
+
+def test_evaluator_fires_price_move_significant(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "price_change",
+            "value": "NVDA is up 7.40% to 127.27 (previous close 118.5)",
+            "unit": "percent",
+            "price": 127.27,
+            "previous_close": 118.50,
+            "change_pct": 7.4,
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    trigger = StocksTriggerEvaluator().evaluate(raw, normalized)
+
+    assert trigger is not None
+    assert trigger.trigger_code == STOCK_PRICE_MOVE_SIGNIFICANT
+    assert trigger.trigger_class == "catalyst"
+    assert trigger.direction == "positive"
+    assert trigger.affected_entity_id == "NVDA"
+    assert trigger.confidence_contribution == 0.10
+    assert trigger.raw_magnitude == 7.4
+    assert trigger.context["price_change_pct"] == 7.4
+    assert trigger.context["direction"] == "up"
+    assert trigger.context["price"] == 127.27
+    assert "fired" in trigger.decision_trace[0].rule
+
+
+def test_evaluator_fires_price_move_down_with_negative_direction(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "price_change",
+            "value": "NVDA is down 7.34% to 109.80 (previous close 118.5)",
+            "unit": "percent",
+            "price": 109.80,
+            "previous_close": 118.50,
+            "change_pct": -7.34,
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    trigger = StocksTriggerEvaluator().evaluate(raw, normalized)
+    assert trigger is not None
+    assert trigger.direction == "negative"
+    assert trigger.context["direction"] == "down"
+
+
+def test_evaluator_no_fire_for_ordinary_price_move(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "price_change",
+            "value": "NVDA is up 0.51% to 119.10 (previous close 118.5)",
+            "unit": "percent",
+            "price": 119.10,
+            "previous_close": 118.50,
+            "change_pct": 0.51,
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    assert StocksTriggerEvaluator().evaluate(raw, normalized) is None
+
+
+def test_evaluator_fires_analyst_upgrade(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "analyst_change",
+            "value": "Fixture Capital rated NVDA Hold to Buy (action: upgrade)",
+            "unit": None,
+            "grading_firm": "Fixture Capital",
+            "action": "upgrade",
+            "previous_rating": "Hold",
+            "new_rating": "Buy",
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    trigger = StocksTriggerEvaluator().evaluate(raw, normalized)
+
+    assert trigger is not None
+    assert trigger.trigger_code == STOCK_ANALYST_UPGRADE
+    assert trigger.trigger_class == "catalyst"
+    assert trigger.direction == "positive"
+    assert trigger.confidence_contribution == 0.08
+    assert trigger.context["analyst_firm"] == "Fixture Capital"
+    assert trigger.context["prior_rating"] == "Hold"
+    assert trigger.context["new_rating"] == "Buy"
+    assert "price_target_prior" not in trigger.context  # never fabricated
+
+
+def test_evaluator_fires_analyst_downgrade(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "analyst_change",
+            "value": "Fixture Capital rated NVDA Buy to Hold (action: downgrade)",
+            "unit": None,
+            "grading_firm": "Fixture Capital",
+            "action": "downgrade",
+            "previous_rating": "Buy",
+            "new_rating": "Hold",
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    trigger = StocksTriggerEvaluator().evaluate(raw, normalized)
+    assert trigger is not None
+    assert trigger.trigger_code == STOCK_ANALYST_DOWNGRADE
+    assert trigger.direction == "negative"
+    assert trigger.confidence_contribution == 0.08
+
+
+def test_evaluator_no_fire_for_analyst_maintain(now):
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "analyst_change",
+            "value": "Fixture Capital rated NVDA Buy to Buy (action: maintain)",
+            "unit": None,
+            "grading_firm": "Fixture Capital",
+            "action": "maintain",
+            "previous_rating": "Buy",
+            "new_rating": "Buy",
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    assert StocksTriggerEvaluator().evaluate(raw, normalized) is None
+
+
+def test_earnings_price_move_and_analyst_signal_types_do_not_cross_fire(now):
+    """Each signal_type's evaluator only ever reads its own raw_value fields
+    -- an analyst_change signal with no earnings/price fields must not
+    accidentally fall through to a different evaluator."""
+    raw = _raw_signal(
+        {
+            "entity_id": "NVDA",
+            "entity_type": "ticker",
+            "signal_type": "analyst_change",
+            "value": "Fixture Capital rated NVDA Hold to Buy (action: upgrade)",
+            "unit": None,
+            "grading_firm": "Fixture Capital",
+            "action": "upgrade",
+        },
+        now,
+    )
+    normalized = _normalized(raw, now)
+    trigger = StocksTriggerEvaluator().evaluate(raw, normalized)
+    assert trigger is not None
+    assert trigger.trigger_code == STOCK_ANALYST_UPGRADE
+    assert "actual_eps" not in trigger.context
+    assert "price_change_pct" not in trigger.context

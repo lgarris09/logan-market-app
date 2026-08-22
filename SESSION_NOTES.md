@@ -407,3 +407,91 @@ personalization actually produce a push," which is the natural next question aft
 Impression/exposure semantics (item 2) is the next-most-consequential but is a larger, more open-ended design
 question better scoped as its own follow-up once item 1's precedent (Policy-vs-Prioritization authority) is
 settled.
+
+---
+
+# Session Notes — 2026-08-21 (Sprint 3.6.7 Block 1 — stock signal expansion + Personal-route authority rule)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, cut from the clean Sprint 3.6.6 integration HEAD
+(`92acfbc`). See ADR-050 and ADR-051 (`docs/DECISIONS.md`) for the full decision records; this note covers
+the session narrative.
+
+## What was asked
+
+Two things, explicitly ordered: (1) resolve the ADR-049 Personal-route rank-score gap flagged as Sprint
+3.6.7's recommended starting objective, with an explicit, testable authority rule; (2) generalize the proven
+NVDA-earnings signal architecture so new stock signal types plug in reusably, and implement a real first
+expansion pack against live provider data — not scaffolding alone.
+
+## What became reusable
+
+The Provider → Receptor → deterministic Evaluator pattern Sprint 3.6.6 proved for earnings now has two more
+implementations sharing the same shape: `QuoteProvider`/`GradeChange` contracts
+(`receptors/providers/base.py`), `FmpMarketDataProvider` (a sibling to `FmpEarningsProvider`, not a merge —
+that class stays untouched), `FixtureMarketDataProvider`, and `StocksTriggerEvaluator.evaluate()`'s dispatch
+now routes by `signal_type` to per-signal-type evaluator methods instead of being earnings-only. A new signal
+type is now: one Provider method, one Receptor function, one pure condition function, one `elif` branch —
+not a parallel system.
+
+## Signals now implemented (real, live-verified)
+
+- `STOCK_PRICE_MOVE_SIGNIFICANT` (`TRIGGER_REGISTRY_STOCKS.md`, confidence `+0.10`) — from FMP's `/quote`
+  endpoint (real-time price/change/previous-close, no new endpoint discovery needed beyond what earnings
+  already established as reachable).
+- `STOCK_ANALYST_UPGRADE` / `STOCK_ANALYST_DOWNGRADE` (confidence `+0.08` each) — from FMP's `/grades`
+  endpoint, which supplies a pre-classified `action` field (upgrade/downgrade/maintain/initiate) — trusted
+  directly rather than inferring direction from rating text.
+
+Both live-verified against real current NVDA data (2026-08-21): neither fired today (change_pct -0.98%, most
+recent grade action "maintain") — an honest result, not forced. A **real, fixture-driven, full-pipeline alert**
+was proven deterministically in `test_pipeline_market_data.py`: NVDA holding + a qualifying price move →
+`communication_mode="alert"`, `watch_route=personal`, `interruption="alert"`, exercising ADR-049/050 together.
+
+## Signals deferred, and why
+
+- `STOCK_GUIDANCE_RAISED`/`LOWERED`, `STOCK_OPTIONS_FLOW_SURGE` — no reliable provider data on the current FMP
+  plan (guidance/options-flow), consistent with ADR-045's prior finding.
+- "Unusual volume" / "volatility spike" — not implemented at all: no registered trigger code exists for
+  either in `TRIGGER_REGISTRY_STOCKS.md`, so implementing one would mean inventing an unbacked
+  `confidence_contribution`, which the standing Sprint 3.6.6D rule forbids. `/quote` also carries no
+  average-volume baseline to compute "unusual" against. Framework is ready for either the moment a registry
+  entry and a real baseline data source exist.
+- Wiring the two new signals into `backend/app/logan_feed.py`'s live `/v1/opportunities` path — deliberately
+  not attempted. `WorldModel.process()` dedups by `(entity_id, signal_type)`; feeding NVDA's earnings signal
+  *and* a live price-move/analyst signal in the same request would silently drop one from that entity's
+  single-opportunity result. Wiring it now would mean informally half-solving signal convergence, which is
+  Block 2's own scope.
+
+## Personal-route/prioritization authority decision (ADR-050)
+
+`PrioritizationEngine` already stated its design principle in its own docstring — "separates visibility from
+interruption" — but the implementation coupled them. Now decoupled: `visibility` stays purely
+`internal_rank_score`-driven (unchanged); `interruption` is `"alert"` whenever
+`policy_result.communication_mode == "alert"`, independent of the rank-driven visibility tier. Fatigue,
+cooldown, and `permitted` are evaluated first and are completely unaffected — verified by 5 new tests proving
+each veto still fully applies even when `communication_mode=="alert"`. No duplicate fatigue state, no
+blanket bypass: this only ever changes the outcome for the previously-stuck `[0.35, 0.6)` rank band.
+
+## Status at the end of this session
+
+`backend`/`logan_core` test count 279 → 330 (51 new: 5 for ADR-050, 46 for the signal expansion). mypy/ruff/
+black clean. No merge to main. No existing receptor, contract, API, or Watch threshold was broken — the
+earnings path's own tests pass unmodified.
+
+## Recommended Sprint 3.6.7 Block 2 starting objective: signal convergence
+
+Resolve the exact gap ADR-051's inspection finding 5 identified: `WorldModel.process()`'s
+`(entity_id, signal_type)` dedup key means multiple *different* live signal types for the same entity within
+one poll are not merged — only the last-processed one survives into that request's single opportunity. This
+is also literally `TRIGGER_REGISTRY_STOCKS.md`'s own `STOCK_CONVERGENCE_MULTI_SOURCE` code (confidence
+`+0.20`, fire condition "≥3 distinct source types emit signals within 30 minutes") — a registered, currently
+SPECIFIED-NOT-IMPLEMENTED trigger this gap is a direct precondition for. Block 2 should: (1) decide how
+multiple `TriggerEvent`s for one entity within a window should combine into one `EnrichedEvent` (World
+Model's dedup/merge model needs to widen beyond one `(entity_id, signal_type)` key, or a new aggregation step
+needs to sit between trigger detection and World Model), (2) implement `STOCK_CONVERGENCE_MULTI_SOURCE`
+itself once that foundation exists, and (3) only then wire the Sprint 3.6.7 Block 1 signals (and earnings)
+into `backend/app/logan_feed.py`'s live `/v1/opportunities` path for entities that could plausibly have
+multiple simultaneous live signals — completing the "live provider data → real Watch notification" loop this
+sprint's signals were built for but deliberately didn't finish wiring. This is a real architecture decision
+(how World Model's dedup/merge model changes), not a routine implementation task — worth confirming the
+approach before building it.

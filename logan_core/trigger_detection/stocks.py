@@ -26,9 +26,22 @@ STOCK_EARNINGS_BEAT = "STOCK_EARNINGS_BEAT"
 STOCK_EARNINGS_MISS = "STOCK_EARNINGS_MISS"
 STOCK_EARNINGS_IN_LINE = "STOCK_EARNINGS_IN_LINE"
 
+# Sprint 3.6.7 -- two more registered stocks codes (TRIGGER_REGISTRY_STOCKS.md),
+# generalizing the same architecture across two more real, live-verified FMP
+# endpoints (/quote, /grades) rather than one-off implementations. Every
+# other code considered for this pass (STOCK_GUIDANCE_RAISED/LOWERED,
+# STOCK_OPTIONS_FLOW_SURGE, an "unusual volume"/"volatility spike" code with
+# no registry entry at all) was inspected and deferred for lack of reliable
+# provider data or lack of a registry-defined confidence value -- see the
+# Sprint 3.6.7 ADR for the full inspection record; not silently skipped.
+STOCK_PRICE_MOVE_SIGNIFICANT = "STOCK_PRICE_MOVE_SIGNIFICANT"
+STOCK_ANALYST_UPGRADE = "STOCK_ANALYST_UPGRADE"
+STOCK_ANALYST_DOWNGRADE = "STOCK_ANALYST_DOWNGRADE"
+
 _BEAT_PCT_THRESHOLD = 5.0
 _MISS_PCT_THRESHOLD = 5.0
 _IN_LINE_PCT_THRESHOLD = 2.0
+_PRICE_MOVE_PCT_THRESHOLD = 5.0
 
 # Registry-specified fixed constants (TRIGGER_REGISTRY_STOCKS.md) -- not
 # computed, not learned. See contracts/trigger.py's confidence_contribution
@@ -37,6 +50,9 @@ _IN_LINE_PCT_THRESHOLD = 2.0
 _BEAT_CONFIDENCE_CONTRIBUTION = 0.22
 _MISS_CONFIDENCE_CONTRIBUTION = 0.20
 _IN_LINE_CONFIDENCE_CONTRIBUTION = 0.0
+_PRICE_MOVE_CONFIDENCE_CONTRIBUTION = 0.10
+_ANALYST_UPGRADE_CONFIDENCE_CONTRIBUTION = 0.08
+_ANALYST_DOWNGRADE_CONFIDENCE_CONTRIBUTION = 0.08
 
 
 def evaluate_earnings_beat_condition(
@@ -162,6 +178,66 @@ def evaluate_earnings_in_line_condition(
     )
 
 
+def evaluate_price_move_condition(
+    change_pct: Optional[float],
+) -> tuple[bool, Optional[float], str]:
+    """Pure, directly-testable core of the STOCK_PRICE_MOVE_SIGNIFICANT fire
+    condition (TRIGGER_REGISTRY_STOCKS.md): `abs(price_change_pct) >= 5.0` in
+    a single trading session. Direction-agnostic by design (registry fire
+    condition uses abs()) -- direction is carried separately in the resulting
+    TriggerEvent.direction, not folded into this pure predicate.
+    """
+    if change_pct is None:
+        return False, None, "no fire: change_pct missing from provider data"
+    if abs(change_pct) < _PRICE_MOVE_PCT_THRESHOLD:
+        return (
+            False,
+            change_pct,
+            f"no fire: |change_pct| ({abs(change_pct):.2f}) below the "
+            f"{_PRICE_MOVE_PCT_THRESHOLD} threshold",
+        )
+    return (
+        True,
+        change_pct,
+        f"fired: |change_pct| ({abs(change_pct):.2f}) >= {_PRICE_MOVE_PCT_THRESHOLD}",
+    )
+
+
+def evaluate_analyst_grade_condition(
+    action: Optional[str],
+) -> tuple[Optional[str], str]:
+    """Pure, directly-testable core of the STOCK_ANALYST_UPGRADE/
+    STOCK_ANALYST_DOWNGRADE fire condition (TRIGGER_REGISTRY_STOCKS.md):
+    "rating changes in positive/negative direction." Trusts the provider's
+    own `action` classification rather than re-deriving a direction by
+    comparing rating text (see GradeChange's docstring, receptors/providers/
+    base.py, for why) -- no invented rating-ordinal hierarchy. Returns the
+    trigger_code that fired (or None) plus a reason -- a two-way, not
+    three-way, outcome, so the shape differs slightly from the (fired: bool,
+    magnitude, reason) tuple the earnings/price-move evaluators use, but the
+    "reason is always populated, for both the fire and no-fire paths"
+    contract is the same.
+    """
+    if not action:
+        return None, "no fire: action missing from provider data"
+    normalized_action = action.strip().lower()
+    if normalized_action == "upgrade":
+        return (
+            STOCK_ANALYST_UPGRADE,
+            f"fired: action={action!r} is a positive rating change",
+        )
+    if normalized_action == "downgrade":
+        return (
+            STOCK_ANALYST_DOWNGRADE,
+            f"fired: action={action!r} is a negative rating change",
+        )
+    return (
+        None,
+        f"no fire: action={action!r} is not an upgrade/downgrade "
+        "(e.g. maintain/initiate/reiterate)",
+    )
+
+
 class StocksTriggerEvaluator:
     """Sprint 3.6.6 (extended Sprint 3.6.6D) — deterministic trigger detection
     for the stocks domain. Sits at the signal/normalization/event-resolution
@@ -173,23 +249,40 @@ class StocksTriggerEvaluator:
     Presentation respectively, per this sprint's explicit layer-ownership
     instructions).
 
-    Only earnings-signal detection is implemented: STOCK_EARNINGS_BEAT,
-    STOCK_EARNINGS_MISS, STOCK_EARNINGS_IN_LINE -- mutually exclusive by
-    their fire conditions, checked in that order (order doesn't affect
-    correctness since the bands don't overlap, but keeps beat/miss as the
-    higher-signal checks read first). `evaluate()` returns None for every
-    other signal_type, and for the 2-5% dead zone where none of the three
-    fire -- not an error, just nothing to detect yet for this narrow slice.
+    Earnings-signal detection (STOCK_EARNINGS_BEAT, STOCK_EARNINGS_MISS,
+    STOCK_EARNINGS_IN_LINE) -- mutually exclusive by their fire conditions,
+    checked in that order (order doesn't affect correctness since the bands
+    don't overlap, but keeps beat/miss as the higher-signal checks read
+    first). Sprint 3.6.7 generalizes this same evaluator across two more
+    signal_types sharing the identical dispatch/build pattern:
+    STOCK_PRICE_MOVE_SIGNIFICANT ("price_change" signal_type) and
+    STOCK_ANALYST_UPGRADE/STOCK_ANALYST_DOWNGRADE ("analyst_change" signal_type).
+    Each signal_type's fire conditions are self-contained (never cross-check
+    another signal_type's raw_value fields) -- new signal types plug in as a
+    new `elif normalized.signal_type == ...` branch in `evaluate()` plus a
+    dedicated `_evaluate_*`/pure-condition-function pair, not a rewrite of
+    this class. `evaluate()` returns None for any signal_type without a
+    branch here, and for any signal_type's own "nothing qualifies" band --
+    not an error, just nothing to detect this poll.
     """
 
     def evaluate(
         self, raw: RawSignal, normalized: NormalizedSignal
     ) -> Optional[TriggerEvent]:
-        if normalized.signal_type != "earnings_signal":
-            return None
         if not isinstance(raw.raw_value, dict):
             return None
+        if normalized.signal_type == "earnings_signal":
+            return self._evaluate_earnings(raw, normalized)
+        if normalized.signal_type == "price_change":
+            return self._evaluate_price_move(raw, normalized)
+        if normalized.signal_type == "analyst_change":
+            return self._evaluate_analyst_grade(raw, normalized)
+        return None
 
+    def _evaluate_earnings(
+        self, raw: RawSignal, normalized: NormalizedSignal
+    ) -> Optional[TriggerEvent]:
+        assert isinstance(raw.raw_value, dict)  # evaluate() already checked this
         actual_eps = raw.raw_value.get("actual_eps")
         consensus_eps = raw.raw_value.get("consensus_eps")
 
@@ -299,6 +392,126 @@ class StocksTriggerEvaluator:
             affected_entity_id=normalized.entity_id,
             direction=direction,
             raw_magnitude=magnitude,
+            confidence_contribution=confidence_contribution,
+            context=context,
+            originating_signal_ids=[normalized.signal_id],
+            source_id=raw.source_id,
+            source_name=raw.source_name,
+            event_timestamp=raw.captured_at,
+            detected_timestamp=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="trigger_detection",
+                    rule=f"{trigger_code}: {reason}",
+                    confidence=confidence_contribution,
+                    timestamp=now,
+                )
+            ],
+        )
+
+    def _evaluate_price_move(
+        self, raw: RawSignal, normalized: NormalizedSignal
+    ) -> Optional[TriggerEvent]:
+        assert isinstance(raw.raw_value, dict)  # evaluate() already checked this
+        change_pct = raw.raw_value.get("change_pct")
+
+        fired, magnitude, reason = evaluate_price_move_condition(change_pct)
+        if not fired:
+            return None
+        assert magnitude is not None
+
+        now = datetime.now(timezone.utc)
+        # Context shape per TRIGGER_REGISTRY_STOCKS.md's STOCK_PRICE_MOVE_SIGNIFICANT
+        # entry, restricted to fields this receptor actually supplies --
+        # session_open/volume_vs_avg are in the registry's example but not
+        # available from this provider (no average-volume baseline, no
+        # separate session-open field carried through Quote), so they are
+        # omitted, never fabricated.
+        context: dict = {
+            "price_change_pct": round(magnitude, 2),
+            "direction": "up" if magnitude >= 0 else "down",
+        }
+        for optional_field, raw_key in (
+            ("price", "price"),
+            ("previous_close", "previous_close"),
+        ):
+            if raw_key in raw.raw_value:
+                context[optional_field] = raw.raw_value[raw_key]
+
+        return TriggerEvent(
+            trigger_id=uuid4(),
+            trigger_code=STOCK_PRICE_MOVE_SIGNIFICANT,
+            trigger_class="catalyst",
+            trigger_type="price_move",
+            trigger_status="confirmed",
+            domain=raw.domain,
+            affected_entity_id=normalized.entity_id,
+            direction="positive" if magnitude >= 0 else "negative",
+            raw_magnitude=magnitude,
+            confidence_contribution=_PRICE_MOVE_CONFIDENCE_CONTRIBUTION,
+            context=context,
+            originating_signal_ids=[normalized.signal_id],
+            source_id=raw.source_id,
+            source_name=raw.source_name,
+            event_timestamp=raw.captured_at,
+            detected_timestamp=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="trigger_detection",
+                    rule=f"{STOCK_PRICE_MOVE_SIGNIFICANT}: {reason}",
+                    confidence=_PRICE_MOVE_CONFIDENCE_CONTRIBUTION,
+                    timestamp=now,
+                )
+            ],
+        )
+
+    def _evaluate_analyst_grade(
+        self, raw: RawSignal, normalized: NormalizedSignal
+    ) -> Optional[TriggerEvent]:
+        assert isinstance(raw.raw_value, dict)  # evaluate() already checked this
+        action = raw.raw_value.get("action")
+
+        trigger_code, reason = evaluate_analyst_grade_condition(action)
+        if trigger_code is None:
+            return None
+
+        confidence_contribution = (
+            _ANALYST_UPGRADE_CONFIDENCE_CONTRIBUTION
+            if trigger_code == STOCK_ANALYST_UPGRADE
+            else _ANALYST_DOWNGRADE_CONFIDENCE_CONTRIBUTION
+        )
+        direction: TriggerDirection = (
+            "positive" if trigger_code == STOCK_ANALYST_UPGRADE else "negative"
+        )
+
+        now = datetime.now(timezone.utc)
+        # Context shape per TRIGGER_REGISTRY_STOCKS.md's STOCK_ANALYST_UPGRADE/
+        # STOCK_ANALYST_DOWNGRADE entries, restricted to fields this receptor
+        # actually supplies -- price_target_prior/price_target_new are in the
+        # registry's example but come from a different, aggregated FMP
+        # endpoint (not per-event), so they are omitted, never fabricated.
+        context: dict = {"analyst_firm": raw.raw_value.get("grading_firm", "unknown")}
+        for optional_field, raw_key in (
+            ("prior_rating", "previous_rating"),
+            ("new_rating", "new_rating"),
+        ):
+            if raw_key in raw.raw_value:
+                context[optional_field] = raw.raw_value[raw_key]
+
+        return TriggerEvent(
+            trigger_id=uuid4(),
+            trigger_code=trigger_code,
+            trigger_class="catalyst",
+            trigger_type="analyst_rating_change",
+            trigger_status="confirmed",
+            domain=raw.domain,
+            affected_entity_id=normalized.entity_id,
+            direction=direction,
+            # No numeric magnitude exists for a categorical rating change --
+            # 1.0 marks "the qualifying condition fired," matching this
+            # field's role for other binary/categorical fire conditions
+            # rather than leaving a numeric field without real meaning.
+            raw_magnitude=1.0,
             confidence_contribution=confidence_contribution,
             context=context,
             originating_signal_ids=[normalized.signal_id],
