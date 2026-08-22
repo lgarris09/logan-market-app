@@ -27,6 +27,7 @@ from logan_core.contracts import (  # noqa: E402
     UserModel,
 )
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
+from logan_core.memory import MemoryStore  # noqa: E402
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     earnings_report_to_raw_signal,
@@ -48,7 +49,11 @@ from logan_core.trigger_detection import (  # noqa: E402
 )
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
-from .config import live_nvda_earnings_enabled  # noqa: E402
+from .config import (  # noqa: E402
+    live_nvda_earnings_enabled,
+    memory_persistence_enabled,
+    memory_store_db_path,
+)
 from .entity_registry import resolve  # noqa: E402
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
@@ -117,13 +122,28 @@ def _get_orchestrator() -> Orchestrator:
             # is meaningless across fresh instances), exactly like world_model
             # already is via the shared Orchestrator itself. Disabled mode
             # gets no convergence_tracker at all, same as no trigger_detector.
+            #
+            # Sprint 3.6.7 Block 3: memory_store is independently gated
+            # behind memory_persistence_enabled() -- orthogonal to the live-
+            # NVDA flag above (persistence is about durability across
+            # restarts, not about live vs. simulated market data). Disabled
+            # (the default) reconstructs the exact same in-memory
+            # MemoryStore() every pre-Block-3 caller/test already gets, so
+            # the entire existing backend test suite (which never sets
+            # STRATUS_PERSIST_MEMORY) stays isolated to in-memory state.
+            memory_store = (
+                MemoryStore(db_path=memory_store_db_path())
+                if memory_persistence_enabled()
+                else MemoryStore()
+            )
             deps = (
                 PipelineDependencies(
                     trigger_detector=StocksTriggerEvaluator(),
                     convergence_tracker=StockConvergenceTracker(),
+                    memory_store=memory_store,
                 )
                 if live_nvda_earnings_enabled()
-                else PipelineDependencies()
+                else PipelineDependencies(memory_store=memory_store)
             )
             _orchestrator = Orchestrator(deps=deps)
         return _orchestrator
@@ -336,6 +356,14 @@ def reset_pipeline_state() -> None:
     """
     global _orchestrator, _user_model
     with _state_lock:
+        if _orchestrator is not None:
+            # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
+            # when persistence is enabled -- a no-op for the default
+            # in-memory MemoryStore (close() only does anything when a
+            # db_path was actually given). Without this, repeated resets
+            # (every test in a persistence-focused suite) would leak one
+            # open connection to the same file per reset.
+            _orchestrator.deps.memory_store.close()
         _orchestrator = None
         _baseline_established.clear()
         _user_model = None
@@ -387,8 +415,25 @@ def record_interaction(
     repeated behavioral evidence into the UserModel later without re-parsing
     prose or re-deriving an interpretation this layer already computed once.
     run_feedback_loop() interprets the interaction exactly once either way.
+
+    Sprint 3.6.7 Block 3: `interaction_type == "impression"` is a
+    deterministic exposure fact, not ambiguous user behavior -- it never
+    reaches FeedbackEngine.interpret() at all, routed instead through
+    Orchestrator.run_exposure_loop() -> LearningEngine.process_exposure()
+    (see that method's own docstring for why this is a separate path, not a
+    special case inside run_feedback_loop()).
     """
     orchestrator = _get_orchestrator()
+
+    if interaction_type == "impression":
+        with _state_lock:
+            orchestrator.run_exposure_loop(
+                event_id=event_id,
+                user_id=LOCAL_FOUNDER_USER_ID,
+                domain=domain,
+                entity_id=entity_id,
+            )
+        return
 
     def _build_content(feedback: FeedbackSignal) -> dict:
         return {

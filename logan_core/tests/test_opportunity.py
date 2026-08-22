@@ -197,3 +197,51 @@ def test_speculation_classification_increases_risk_dimension():
     speculative = engine.evaluate(reasoning, confidence_speculative, community)
 
     assert speculative.dimensions.risk > normal.dimensions.risk
+
+
+# --- Sprint 3.6.7 Block 3: maturity-scaled inferred relevance -----------
+
+
+def test_matured_inferred_evidence_scores_higher_than_just_qualified():
+    """A mature (higher Interest.weight) inferred connection must produce a
+    measurably higher personal_relevance than a just-qualified one, while
+    both stay strictly below the explicit tier's 0.6 bump."""
+    just_qualified = _reasoning_with_connections(connected_inferred=["NVDA"])
+    just_qualified = just_qualified.model_copy(
+        update={"inferred_relevance_strength": 0.75}
+    )
+    matured = _reasoning_with_connections(connected_inferred=["NVDA"])
+    matured = matured.model_copy(update={"inferred_relevance_strength": 0.90})
+
+    confidence = _confidence(just_qualified.event_id, score=0.5)
+    community = _community(just_qualified.event_id)
+    engine = OpportunityEngine()
+
+    low = engine.evaluate(just_qualified, confidence, community)
+    high = engine.evaluate(matured, confidence, community)
+
+    assert low.dimensions.personal_relevance == 0.5
+    assert high.dimensions.personal_relevance > low.dimensions.personal_relevance
+    assert high.dimensions.personal_relevance < 0.6
+
+
+def test_inferred_relevance_strength_default_reproduces_old_flat_floor():
+    """Every pre-Block-3 caller/test omits inferred_relevance_strength
+    (defaults to 0.0) -- must reproduce the exact old flat 0.5 floor."""
+    reasoning = _reasoning_with_connections(connected_inferred=["NVDA"])
+    assert reasoning.inferred_relevance_strength == 0.0
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance == 0.5
+
+
+def test_inferred_relevance_never_reaches_explicit_tier_even_at_max_weight():
+    reasoning = _reasoning_with_connections(connected_inferred=["NVDA"])
+    reasoning = reasoning.model_copy(update={"inferred_relevance_strength": 1.0})
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance < 0.6

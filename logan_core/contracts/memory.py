@@ -15,6 +15,16 @@ RecordType = Literal[
     "prior_analysis",
     "preference_signal",
     "correction_record",
+    # Sprint 3.6.7 Block 3: a deterministic exposure/impression fact -- "this
+    # opportunity was shown to the user" -- not ambiguous behavior needing
+    # FeedbackEngine's intent interpretation. Deliberately its own
+    # record_type, not "feedback_record": UserModelBuilder's existing
+    # behavioral-evidence folding (_fold_behavioral_evidence) filters on
+    # record_type == "feedback_record" specifically, so exposure_records are
+    # structurally excluded from ever being read as positive "interested"
+    # evidence by that function -- impressions alone can never manufacture
+    # relevance. See docs/DECISIONS.md's Sprint 3.6.7 Block 3 ADR.
+    "exposure_record",
 ]
 
 

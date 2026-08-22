@@ -218,3 +218,104 @@ def test_all_domains_accepted(domain):
         },
     )
     assert response.status_code == 200
+
+
+# --- Sprint 3.6.7 Block 3: impression / ask_followup ---------------------
+
+
+def test_impression_interaction_writes_an_exposure_record_not_feedback():
+    event_id = uuid4()
+    record_interaction(
+        event_id=event_id,
+        entity_id="NVDA",
+        domain="stocks",
+        interaction_type="impression",
+    )
+    records = _get_orchestrator().deps.memory_store.query(
+        domain="stocks", entities=["NVDA"]
+    )
+    assert len(records) == 1
+    assert records[0].record_type == "exposure_record"
+
+
+def test_impression_never_reaches_feedback_engine():
+    """Impressions are a deterministic exposure fact, not ambiguous user
+    behavior -- must never go through FeedbackEngine.interpret()."""
+    event_id = uuid4()
+    orchestrator = _get_orchestrator()
+    with patch.object(
+        orchestrator.deps.feedback_engine,
+        "interpret",
+        wraps=orchestrator.deps.feedback_engine.interpret,
+    ) as spy:
+        record_interaction(
+            event_id=event_id,
+            entity_id="NVDA",
+            domain="stocks",
+            interaction_type="impression",
+        )
+    spy.assert_not_called()
+
+
+def test_repeated_impressions_of_the_same_event_update_one_record():
+    event_id = uuid4()
+    for _ in range(3):
+        record_interaction(
+            event_id=event_id,
+            entity_id="NVDA",
+            domain="stocks",
+            interaction_type="impression",
+        )
+    records = _get_orchestrator().deps.memory_store.query(
+        domain="stocks", entities=["NVDA"]
+    )
+    assert len(records) == 1
+    content = records[0].content
+    assert isinstance(content, dict)
+    assert content["impression_count"] == 3
+
+
+def test_route_accepts_impression_end_to_end():
+    event_id = uuid4()
+    response = client.post(
+        "/v1/interactions",
+        json={
+            "event_id": str(event_id),
+            "entity_id": "NVDA",
+            "domain": "stocks",
+            "interaction_type": "impression",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"recorded": True}
+
+
+def test_ask_followup_is_interpreted_as_strong_interested_engagement():
+    event_id = uuid4()
+    record_interaction(
+        event_id=event_id,
+        entity_id="NVDA",
+        domain="stocks",
+        interaction_type="ask_followup",
+    )
+    records = _get_orchestrator().deps.memory_store.query(
+        domain="stocks", entities=["NVDA"]
+    )
+    assert len(records) == 1
+    content = records[0].content
+    assert isinstance(content, dict)
+    assert content["inferred_intent"] == "interested"
+    assert content["intent_confidence"] == 0.80
+
+
+def test_route_accepts_ask_followup_end_to_end():
+    response = client.post(
+        "/v1/interactions",
+        json={
+            "event_id": str(uuid4()),
+            "entity_id": "NVDA",
+            "domain": "stocks",
+            "interaction_type": "ask_followup",
+        },
+    )
+    assert response.status_code == 200

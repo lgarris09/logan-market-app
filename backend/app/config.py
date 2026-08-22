@@ -38,3 +38,40 @@ def live_nvda_earnings_enabled() -> bool:
         "true",
         "yes",
     )
+
+
+def memory_persistence_enabled() -> bool:
+    """Sprint 3.6.7 Block 3: gates whether the shared Orchestrator's
+    MemoryStore is backed by a durable local SQLite file (surviving a
+    backend restart) instead of the pure in-memory dict every pre-Block-3
+    caller/test already gets. Defaults to disabled, matching every other
+    new capability's rollout pattern in this codebase
+    (STRATUS_LIVE_NVDA_EARNINGS) -- explicit opt-in, not a default-on
+    infrastructure change, and critically keeps the existing backend test
+    suite's `reset_pipeline_state()` fixture isolated to in-memory state
+    (no test run reads/writes the real local database file unless it
+    explicitly enables this).
+
+    A function, not a frozen constant, for the same reason
+    live_nvda_earnings_enabled() is -- tests toggle it with
+    monkeypatch.setenv without needing to reload the module.
+    """
+    return os.environ.get("STRATUS_PERSIST_MEMORY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def memory_store_db_path() -> Path:
+    """The local SQLite file backing persistent memory when
+    memory_persistence_enabled() is true. Overridable via
+    STRATUS_STATE_DB_PATH (tests use this to point at an isolated temp file
+    rather than the real local database) -- defaults to
+    backend/data/stratus_state.db, alongside (but never touching the schema
+    of) the historical prototype's own backend/data/logan_memory.db.
+    """
+    override = os.environ.get("STRATUS_STATE_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent / "data" / "stratus_state.db"

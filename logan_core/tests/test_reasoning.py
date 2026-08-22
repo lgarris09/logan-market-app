@@ -195,9 +195,11 @@ def test_inferred_only_interest_is_a_separate_weaker_connection():
     assert result.connected_entities_inferred == ["AI_SECTOR"]
     assert result.connected_entities_explicit == []
     assert result.connected_entities == ["AI_SECTOR"]
+    assert result.inferred_relevance_strength == 0.6
     assert result.decision_trace[0].evidence == [
         "explicit_connections=[]",
         "inferred_connections=['AI_SECTOR']",
+        "inferred_relevance_strength=0.60",
     ]
 
 

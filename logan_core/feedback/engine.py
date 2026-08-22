@@ -38,6 +38,12 @@ class FeedbackEngine:
             # still explicit and high-confidence, but distinct enough from save/share
             # that it doesn't share their exact tier.
             inferred_intent, intent_confidence = "interested", 0.75
+        elif interaction_type == "ask_followup":
+            # Sprint 3.6.7 Block 3: asking STRATUS a follow-up question about
+            # this specific opportunity is a genuine, active engagement
+            # action -- stronger than a passive long dwell, but not quite
+            # the same explicit "add/keep this" tier as save/share/watch.
+            inferred_intent, intent_confidence = "interested", 0.80
         elif interaction_type == "click":
             inferred_intent, intent_confidence = "curious", 0.55
         elif interaction_type == "view":

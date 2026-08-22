@@ -1500,3 +1500,199 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   0.6` assertion as real time passes, independent of any pipeline behavior — confirmed via `git stash` against
   clean `6fe4fdd` before touching it; re-timestamped to "now" in the test, no production code involved.
   `backend`/`logan_core` test count 330 → 354. mypy/ruff/black clean. No merge to main.
+
+## ADR-053: Sprint 3.6.7 Block 3 — persistent behavioral personalization, exposure/impression semantics, and matured-relevance Watch integration
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: ADR-047/048 built real interaction capture (card-open/dwell, notification-tap) reaching `MemoryStore`
+  through the existing `Orchestrator.run_feedback_loop()` path, and process-lifetime `UserModel` persistence
+  that folds repeated `feedback_record` evidence into `established_behaviors`/`domain_preferences`/inferred
+  `Interest`. Both were explicitly scoped as foundations, not the full loop: `UserModel` reset on every backend
+  restart (in-memory only), there was no concept of exposure/impression distinct from a card actually being
+  opened, `OpportunityEngine`'s inferred-connection relevance was a flat `0.5` regardless of how much evidence
+  backed it (no way for "matured" behavioral evidence to matter more than "just qualified"), and no protection
+  existed against exposure-without-engagement inflating relevance. The owner asked for a substantial block
+  closing this loop end-to-end: real exposure/impression semantics, durable persistence surviving a restart,
+  a deterministic (non-LLM) behavioral relevance model with decay/maturity/authority rules and explicit
+  feedback-loop protections, and wiring the result through Personal relevance, Prioritization, and STRATUS
+  Watch — plus, as one acceptance item inside this block, the Block 2 live-convergence-verification carryover
+  (see ADR-054).
+- **Persistence authority decision (resolved before implementation, per explicit confirmation):** a new,
+  dedicated local SQLite store, not an extension of the historical prototype's `backend/app/memory_engine.py`/
+  `logan_memory.db` (different, unrelated schema; `backend/app/` is documented as a historical prototype not
+  meant for new pipeline logic) and not a new bespoke file format. `UserModel` itself is never persisted
+  directly — it remains derived state, rebuilt from persisted `MemoryRecord`s via the existing
+  `UserModelBuilder.build()` pattern on every call, exactly as it already was in-process. Consistent with
+  ADR-006 ("continue with SQLite + local dev for Phase 1").
+- Decision (by area):
+  1. **`MemoryStore` persistence** (`logan_core/memory/store.py`) — gains an optional `db_path` constructor
+     parameter. `None` (every pre-Block-3 caller/test) is byte-for-byte the old in-memory-only dict; a real
+     path opens a local SQLite file, creates `schema_meta` (a version-gated migration point, stamped at
+     `MEMORY_STORE_SCHEMA_VERSION=1` today) and `memory_records` tables, loads every existing row into the
+     in-memory dict at construction, and every `write()` both updates the dict and upserts into SQLite.
+     Reads (`query()`/`all()`) are unmodified either way — SQLite is a durable write-behind/reload mechanism,
+     never a second source of truth queried independently. Bounded-history compaction
+     (`MAX_PRUNABLE_RECORDS_PER_USER=2000`) prunes only `feedback_record`/`exposure_record` rows beyond the cap,
+     oldest first, per user — `user_statement`/`preference_signal`/`correction_record` are never pruned.
+  2. **Exposure/impression semantics** — a real, canonical distinction between generation/serialization
+     (already existed), actual exposure, and engagement. `InteractionType`
+     (`logan_core/contracts/feedback.py`) gains `"impression"` (a deterministic system fact — this opportunity
+     was actually shown/brought into the user's attention, not merely present in an API response — never
+     interpreted by `FeedbackEngine`, which is specifically for *ambiguous user behavior*) and `"ask_followup"`
+     (a genuine engagement action, interpreted normally at `0.80` confidence — between "remind" (0.75) and
+     "save/share/watch" (0.85)). `RecordType` (`contracts/memory.py`) gains `"exposure_record"`, structurally
+     separate from `"feedback_record"` so `UserModelBuilder`'s existing evidence-folding (which filters on
+     `record_type == "feedback_record"` specifically) can never read an impression as positive engagement
+     evidence — impressions alone cannot manufacture relevance, by construction, not by a runtime check.
+     `LearningEngine.process_exposure()` (new) writes/updates `exposure_record`s directly, skipping
+     `FeedbackEngine.interpret()` entirely (nothing ambiguous to interpret) — the single Learning-System-writes
+     rule (ADR-016/047) is preserved. `Orchestrator.run_exposure_loop()` (new) is the sole entry point, mirroring
+     `run_memory_inbox_confirm/reject`'s "skip interpretation, go straight to Learning" shape.
+     "IGNORE"/non-engagement is deliberately never inferred from a mere absence of clicks — see the
+     exposure-fatigue mechanism below, the only place exposure evidence has any negative effect at all, and
+     even then only a weak, bounded one on an *already-established* interest, never manufactured from nothing.
+     `OPEN`/`DWELL` are deliberately *not* split into separate event types — the existing `"view"` interaction
+     (ADR-047, fired once at close with the measured `duration_ms`) already atomically captures both; splitting
+     it would fragment one correctly-implemented signal the dwell-tracking hook doesn't naturally produce
+     separately anyway.
+  3. **Idempotency/duplicate protection.** `process_exposure` keeps one lifetime `exposure_record` per
+     (user, event) — every later impression updates that same record's `impression_count`/`last_seen_at`
+     rather than inserting a new row (naturally bounded storage; no "is this the same occasion" question for a
+     plain running counter). `process_feedback` gained a new short-window (`FEEDBACK_DEDUP_WINDOW=5min`)
+     duplicate check on `(user, event, interaction_type)` — a network retry or UI double-invoke within 5
+     minutes updates the existing record rather than creating a second one; a genuinely later session (the
+     actual case `MIN_REPEAT_EVIDENCE` is meant to detect) is far outside that window and still counts as new
+     evidence. Fixed a related pre-existing correctness gap while wiring this: `process_feedback` computed its
+     own `datetime.now()` a second time instead of reusing `FeedbackEngine.interpret()`'s already-computed
+     `feedback.observed_at` — now reuses it (identical behavior in production, since these run synchronously
+     back-to-back; makes the dedup window genuinely testable via `observed_at` instead of real wall-clock time).
+  4. **Behavioral relevance model** (`logan_core/user_model/model.py`) — deterministic, not LLM-driven, built
+     entirely from real evidence timestamps/counts:
+     - **Maturity scaling**: an inferred `Interest.weight`/`BehaviorPattern.confidence` is no longer the flat
+       `max(intent_confidence)` across qualifying records (pre-Block-3) — it grows by `MATURITY_STEP=0.02` per
+       qualifying record beyond `MIN_REPEAT_EVIDENCE`, capped at `MAX_MATURITY_BONUS=0.10` (5 extra events) and
+       `MAX_INFERRED_INTEREST_WEIGHT=0.90` overall. Bounded and slow-growing by design — see feedback-loop
+       protection below.
+     - **Time-based decay**: weighted against each pair's *most recent* qualifying evidence timestamp (not
+       "time since this `UserModel` was last rebuilt," which happens on every pipeline poll and would make
+       decay meaningless), half-life `BEHAVIORAL_HALF_LIFE_DAYS=14` — deliberately much slower than
+       `EvidenceTrustEngine`'s 6-hour `RECENCY_HALF_LIFE_HOURS` (that answers "how stale is this market signal,"
+       a faster-moving question than "does the user still care"). Below `DECAY_PRUNE_FLOOR=0.10`, an entry is
+       pruned entirely rather than kept as a near-zero clutter record. A pair no longer represented in
+       `memory_records` at all (e.g. compacted away) decays separately from its own `last_reinforced`/
+       `last_updated` (`_decay_orphaned_entries`).
+     - **Exposure-fatigue dampening**: an entity with an *existing* inferred interest, `>=
+       EXPOSURE_FATIGUE_THRESHOLD=5` (reusing `PrioritizationEngine.FATIGUE_LIMIT`'s existing precedent, not a
+       new number) impressions, whose most recent impression is `>= 1` day after its most recent engagement,
+       has that interest dampened by a fixed `EXPOSURE_FATIGUE_PENALTY=0.05`, pruned below the same floor.
+       Recency-gated deliberately (not a raw lifetime impression count, which — since `memory_records` is
+       always full history — would eventually punish any actively-engaged entity too); never fires for an
+       entity with no existing inferred interest at all (unobserved is not the same as ignored — "IGNORE" is
+       never inferred from non-engagement alone), never touches explicit holdings/interests.
+     - **Provenance**: `BehaviorPattern` gains `evidence_count`/`last_reinforced` (additive, defaulted);
+       `UserModel` gains `decision_trace` (additive, defaulted) recording every maturity/decay/fatigue decision
+       made on the last `build()` call, in the same `DecisionTraceEntry` shape used everywhere else in this
+       pipeline.
+     - `UserModelBuilder.build()` gained an optional `now` parameter (defaults to real time; every existing
+       caller unaffected) so decay/maturity are deterministically testable against fixture timestamps rather
+       than real wall-clock time passing between when a test is written and when it runs — the same lesson
+       Sprint 3.6.7 Block 2 already learned the hard way (`test_pipeline_market_data.py`'s flake, ADR-052).
+  5. **Feedback-loop protections**, stated explicitly since this is the block's most safety-critical property:
+     impressions alone can never create or strengthen a behavior/interest (structural: different `record_type`,
+     never read by the folding function that creates them); one burst of activity cannot dominate the profile
+     (maturity bonus capped at `+0.10`, weight capped at `0.90`, decay continuously erodes anything not
+     genuinely reinforced over time); repeated identical events are deduped, not double-counted
+     (`FEEDBACK_DEDUP_WINDOW`); negative evidence is weak and bounded, never fabricated from mere non-engagement
+     (exposure fatigue only dampens, only an existing interest, only after a real recency gap, by a small fixed
+     step); explicit evidence remains strictly stronger and is never decayed, dampened, or overwritten by
+     inferred evidence at any point in this pipeline (unchanged invariant from ADR-048, re-verified here).
+     Diversity/no-filter-bubble is a pre-existing *structural* property, not new code: personalization here is
+     purely additive relevance credit inside one of eight weighted `Dimensions` (`personal_relevance` at
+     weight `0.25` of `~0.98`) — nothing in this pipeline ever suppresses or filters an event for *not*
+     matching the user's history, so no combination of behavioral evidence can hide an objectively strong,
+     unrelated opportunity.
+  6. **Personal relevance now reflects evidence maturity, not just presence.** `ReasoningResult`
+     (`contracts/reasoning.py`) gains `inferred_relevance_strength` (additive, default `0.0`) — the strongest
+     matched inferred `Interest.weight` among `connected_entities_inferred`, computed in `ReasoningEngine.reason()`.
+     `OpportunityEngine`'s "connect" step (`opportunity/engine.py`) replaces the old flat `0.5` floor for an
+     inferred-only connection with `_scale_inferred_relevance()`: a linear map from the realistic
+     `Interest.weight` range (`[0.75, 0.90]` — `0.75` is `FeedbackEngine`'s weakest "interested" confidence
+     tier, `0.90` is `MAX_INFERRED_INTEREST_WEIGHT`, kept in lockstep with `user_model/model.py` by construction)
+     onto `[INFERRED_RELEVANCE_FLOOR=0.5, INFERRED_RELEVANCE_CEILING=0.59]` — strictly below the explicit tier's
+     `0.6` bump (ADR-048's own invariant, "deliberately less than the explicit bump, never equal"), still
+     preserved exactly. `inferred_relevance_strength<=0.75` (including the `0.0` default every pre-Block-3
+     caller/test supplies) returns exactly the old flat `0.5` — verified against the exact-value pre-existing
+     test assertions before implementing, not discovered after breaking them.
+  7. **STRATUS Watch integration is unmodified** — `PolicyEngine._watch_route()`'s Personal-route inferred tier
+     (ADR-049) already reads `dims.personal_relevance`/`connection_strength`/`urgency`/`confidence`; because
+     `personal_relevance` now genuinely varies with evidence maturity instead of being pinned at `0.5`, mature
+     behavioral evidence can now measurably move an event closer to (or, combined with sufficient urgency/
+     confidence, into) the inferred Watch tier — without any change to the route's own thresholds, and without
+     weakening any existing fatigue/cooldown/`permitted` veto (`PrioritizationEngine`, untouched).
+  8. **API/mobile wiring.** `POST /v1/interactions` (already generic over `InteractionType`) required no route
+     change; `backend/app/logan_feed.record_interaction()` now special-cases `interaction_type=="impression"` to
+     call `run_exposure_loop()` instead of `run_feedback_loop()`. Mobile: `useImpressionTracking.ts` (new)
+     fires one `"impression"` interaction whenever `AttentionField.tsx`'s existing `focusedId` state changes to
+     a new vessel — a real, honest "brought into the user's attention" signal distinct from both "present in
+     `items`" (never itself an impression) and "opened" (`disclosure===1`, already `useCardDwellTracking`'s
+     own signal) — reusing existing field-focus state rather than adding new viewport-tracking UI, per the
+     block's own "minimal hook for an already-existing action" scope. `"ask_followup"` is implemented as a full
+     backend/domain contract (interpreted, persisted, foldable into behavioral evidence) but deliberately not
+     wired to the existing `/v1/ask` route, which is a disconnected legacy chat stub unrelated to any specific
+     opportunity (predates this pass, reads from the historical `memory_engine`, has no `event_id` concept at
+     all) — wiring real Ask-STRATUS-about-this-opportunity linkage remains its own, larger, explicitly deferred
+     item (tracked since the Sprint 3.6.6 close-out), not silently done as a side effect here.
+  9. **Backend persistence gating.** `memory_persistence_enabled()`/`memory_store_db_path()`
+     (`backend/app/config.py`) — `STRATUS_PERSIST_MEMORY` (default disabled) and `STRATUS_STATE_DB_PATH`
+     (default `backend/data/stratus_state.db`), following the exact same opt-in, disabled-by-default rollout
+     pattern every other capability in this codebase's history uses (`STRATUS_LIVE_NVDA_EARNINGS`,
+     `convergence_tracker`) — critically, this keeps the entire pre-existing backend test suite
+     (`reset_pipeline_state()`, autouse) isolated to in-memory state; no test run reads or writes the real local
+     database file unless it explicitly opts in via the env var, exactly like `test_memory_persistence.py`'s own
+     tests do via `STRATUS_STATE_DB_PATH` pointed at an isolated temp file.
+- Consequences: acceptance scenario proven end-to-end and covered by an automated test
+  (`test_memory_persistence.py::test_matured_behavioral_relevance_survives_a_simulated_restart`): no explicit
+  AMD holding, 4 recorded "save" interactions, a simulated backend restart (drops all in-process state, leaves
+  the SQLite file untouched), and the inferred AMD interest is still present afterward with a weight that has
+  genuinely matured past a single save's own `0.85`. New tests: `test_memory_store_persistence.py` (10),
+  `test_learning_exposure.py` (9), `test_user_model_behavioral.py` (16), `test_opportunity.py` (+3),
+  `test_feedback_learning.py` (+3), `test_interactions.py` (+6), `test_memory_persistence.py` (4, backend),
+  `useImpressionTracking.test.ts` (6, mobile). One pre-existing test (`test_reasoning.py`) updated for the new,
+  additive `inferred_relevance_strength` evidence line in its exact-list `decision_trace.evidence` assertion —
+  additive, not a behavior regression. `logan_core`/`backend` test count 354 → 405 (mobile 88 → 94). mypy/ruff/
+  black clean; `tsc --noEmit`/`eslint` clean. No merge to main. See ADR-054 for the companion live-convergence-
+  verification result completed as one acceptance item inside this same block.
+
+## ADR-054: Live verification script for STOCK_CONVERGENCE_MULTI_SOURCE
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: Sprint 3.6.7 Block 2 (ADR-052) implemented `STOCK_CONVERGENCE_MULTI_SOURCE` and proved it
+  deterministically against fixtures, but — unlike every other stocks trigger code this sprint added — never
+  ran it against real FMP data end-to-end. Recommended as Block 2's own closeout follow-up, carried into Block
+  3 as one acceptance item.
+- Decision: `logan_core/live_verification/nvda_convergence.py` (new), mirroring `nvda_earnings.py`/
+  `nvda_market_data.py`'s established pattern exactly (never pytest-collected, human-run only, no CI
+  dependency on `FMP_API_KEY`). Fetches all three live NVDA signal types (earnings, price, analyst grade) from
+  the real `FmpEarningsProvider`/`FmpMarketDataProvider`, evaluates each through the real, unmodified
+  `StocksTriggerEvaluator`, feeds every fired trigger through a real `StockConvergenceTracker`, and reports
+  qualification honestly — a `NOT QUALIFIED` result (fewer than 3 of the fetched signals actually fired) is
+  printed as the expected, correct outcome on a quiet day, never forced, never fabricated, and the convergence
+  threshold/window is never lowered to manufacture a result. Also runs the same signals through the full,
+  unmodified `Orchestrator` pipeline (trigger_detector + convergence_tracker wired, exactly as
+  `backend/app/logan_feed.py`'s live path does) to prove the resulting coherent opportunity end-to-end
+  regardless of whether convergence itself qualifies. Deterministic mocked/fixture coverage for both the
+  qualifying and non-qualifying convergence cases already exists and is unchanged
+  (`logan_core/tests/test_pipeline_convergence.py`'s `test_three_distinct_signals_fire_convergence_end_to_end`/
+  `test_only_two_distinct_signals_does_not_fire_convergence`, Sprint 3.6.7 Block 2) — not duplicated here,
+  since this script's own purpose is specifically the *real-data* proof those fixture tests cannot provide.
+- Consequences: run live against real FMP data on 2026-08-22 — honest result: earnings fetched (EPS 1.87 vs.
+  consensus 1.76, `STOCK_EARNINGS_BEAT` fired), price fetched (change_pct -0.98%, did not fire), analyst grade
+  fetched (BMO Capital maintained Outperform, did not fire). Only 1 of 3 signal types fired, so
+  `STOCK_CONVERGENCE_MULTI_SOURCE` correctly did **not** qualify — an honest, unforced `NOT QUALIFIED` result,
+  not a failure of the mechanism. The full pipeline still produced a real, valid opportunity from the earnings
+  signal alone (`communication_mode="alert"`, `interruption="alert"`, `confidence_score=0.595`), proving the
+  Block 2 coherent-opportunity/convergence machinery is live-data-correct end to end even on a day convergence
+  itself doesn't fire. This is a script-only change; no application code was touched, and no new automated
+  test was added (the script itself is deliberately not pytest-collected — see its own docstring).

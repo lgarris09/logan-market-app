@@ -23,6 +23,16 @@ class ReasoningResult(BaseModel):
     # connected_entities are unaffected.
     connected_entities_explicit: list[str] = Field(default_factory=list)
     connected_entities_inferred: list[str] = Field(default_factory=list)
+    # Sprint 3.6.7 Block 3 -- additive, default 0.0: the strongest matched
+    # inferred Interest.weight among connected_entities_inferred (0.0 when
+    # empty). Lets the Opportunity Engine's "connect" step scale an
+    # inferred-only connection's relevance with how mature the underlying
+    # behavioral evidence actually is, instead of a flat floor regardless of
+    # evidence strength -- see OpportunityEngine's _scale_inferred_relevance
+    # and docs/DECISIONS.md's Sprint 3.6.7 Block 3 ADR. Every existing
+    # caller/test that doesn't populate this field gets exactly the same
+    # flat 0.5 floor as before (see that function's own docstring).
+    inferred_relevance_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     prior_signal_links: list[UUID] = Field(default_factory=list)
     stance: Literal["confirms", "contradicts", "complicates", "new"]
     actionability: Literal["actionable", "informational", "ambiguous"]

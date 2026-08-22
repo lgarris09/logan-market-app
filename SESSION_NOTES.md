@@ -572,4 +572,119 @@ Two reasonable candidates, in order of how directly they follow from this block:
 Recommendation: option 1 first — it's a narrow, low-risk verification task that closes out this sprint's own
 stated goal, and doesn't foreclose picking up option 2 (or any other item from the carried-over limitations
 list in `23_CURRENT_IMPLEMENTATION_STATE.md`) as Block 4 or a dedicated future sprint.
+
+---
+
+# Session Notes — 2026-08-22 (Sprint 3.6.7 Block 3 — persistent behavioral personalization + exposure semantics)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 2 closeout commit
+`ebb5079`. See ADR-053 (persistent behavioral personalization) and ADR-054 (live convergence verification) in
+`docs/DECISIONS.md` for the full decision records; this note covers the session narrative. This was, by a
+wide margin, the largest single block of this sprint.
+
+## What was asked
+
+A substantial end-to-end implementation moving STRATUS from explicit-only holdings/interests toward learning
+from repeated exposure and engagement: opportunity shown -> exposure recorded -> engagement or non-engagement
+observed -> deterministic relevance evidence -> UserModel updates persistently -> future relevance/ranking
+changes -> STRATUS Watch reflects the stronger signal without spam or runaway feedback loops. Plus, as one
+acceptance item inside this block, the Block 2 live-convergence-verification carryover.
+
+## The one architecture question that genuinely needed confirmation
+
+Before writing any persistence code: this project's `CLAUDE.md` explicitly requires stopping for confirmation
+on any database schema change, and ADR-006 flags database/hosting as an open decision (though it already
+sanctions "SQLite + local dev for Phase 1" specifically). Asked directly rather than guessing: a new, dedicated
+SQLite store scoped to this architecture (not extending the historical `memory_engine.py`/`logan_memory.db`,
+a different, unrelated schema), with `UserModel` staying derived state rebuilt from persisted records rather
+than stored directly. Confirmed before proceeding; everything else in this block proceeded without further
+stops, per the explicit instruction to only stop for a genuinely blocking architecture conflict.
+
+## Reconnaissance finding: the foundation was more mature than the request implied
+
+Before designing anything, inspected the existing personalization architecture in full: `UserModel`,
+`ReasoningEngine`/`OpportunityEngine`'s explicit-vs-inferred relevance split, `PrioritizationEngine`,
+`PolicyEngine`'s Personal/Exceptional Watch routes, and the existing `POST /v1/interactions` route (ADR-047)
+already reaching `MemoryStore` through `Orchestrator.run_feedback_loop()`, with `UserModelBuilder.build()`
+(ADR-048) already folding repeated `feedback_record` evidence into `established_behaviors`/`domain_preferences`/
+inferred `Interest` (`MIN_REPEAT_EVIDENCE=2`). Mobile already sent real `view`/dwell and `click` interactions.
+This meant Block 3 was a real extension of working infrastructure, not a green-field build -- and the actual
+gaps were narrower and more specific than the request's framing suggested: no true exposure/impression concept
+distinct from card-open, no persistence surviving a restart, and -- the most consequential finding --
+`OpportunityEngine`'s inferred-connection relevance was a flat `0.5` regardless of how much evidence backed
+it, so more mature behavioral evidence literally could not matter more than a single just-qualifying
+interaction. That last gap is what the acceptance target actually needed solved.
+
+## What got built (see ADR-053 for the full per-area decision record)
+
+1. **`MemoryStore` persistence** -- optional SQLite backing, schema-versioned, bounded-history compaction,
+   `None` (every pre-Block-3 caller/test) unchanged.
+2. **Exposure/impression semantics** -- new `InteractionType` values (`impression`, `ask_followup`), new
+   `RecordType` (`exposure_record`) structurally excluded from behavioral-evidence folding, new
+   `LearningEngine.process_exposure()`/`Orchestrator.run_exposure_loop()`, idempotent (one lifetime record per
+   event), a new 5-minute dedup window on ordinary feedback too.
+3. **Deterministic behavioral relevance model** -- maturity scaling (bounded), recency-based decay (14-day
+   half-life measured from each pair's own most recent evidence, not from "when this was last rebuilt" -- a
+   real design correction made mid-session after realizing `UserModelBuilder.build()` always receives full
+   history, so decay has to be embedded in the evidence computation itself or it's overwritten every call),
+   exposure-fatigue dampening (weak, bounded, recency-gated against the last real engagement, never fabricated
+   from mere non-engagement).
+4. **Matured relevance reaching Personal route** -- `ReasoningResult.inferred_relevance_strength` +
+   `OpportunityEngine._scale_inferred_relevance()` replace the flat `0.5` floor with a `[0.5, 0.59]` range
+   scaled to evidence maturity, verified against the exact pre-existing test assertions before implementing
+   (not discovered after breaking them) to confirm the default case reproduces the old behavior exactly.
+5. **Watch integration** -- zero changes to `PolicyEngine`/`PrioritizationEngine`; mature evidence now
+   measurably moves events within their existing, unmodified thresholds.
+6. **Mobile** -- `useImpressionTracking.ts` fires on `AttentionField`'s existing `focusedId` change, not a new
+   viewport-tracking system -- the minimal real hook the block's own scope asked for.
+7. **Live convergence verification (ADR-054)** -- ran live against real FMP data: only 1 of 3 NVDA signal types
+   fired today, so `STOCK_CONVERGENCE_MULTI_SOURCE` honestly did not qualify -- an unforced, correct result, not
+   a failure.
+
+## Bugs found and fixed while building this, not pre-planned
+
+- `LearningEngine.process_feedback()` computed its own `datetime.now()` instead of reusing
+  `FeedbackEngine.interpret()`'s already-computed `feedback.observed_at` -- identical in production (they run
+  synchronously back-to-back) but made the new dedup window untestable without real wall-clock waits. Fixed at
+  the root by reusing the existing timestamp.
+- First draft of exposure-fatigue dampening gated on "has this entity ever had qualifying engagement" -- which,
+  since `memory_records` is always full history, is trivially always true for any entity with an inferred
+  interest at all (having one requires having had qualifying engagement), making the guard permanently
+  unreachable. Caught before shipping by tracing through the actual data flow; corrected to gate on recency
+  (impressions continuing well after the last real engagement) instead of a lifetime engaged/never-engaged
+  split.
+
+## Status at the end of this session
+
+`logan_core`/`backend` test count 354 -> 405 (+51). `mobile` test count 88 -> 94 (+6). mypy/ruff/black clean;
+`tsc --noEmit`/`eslint` clean. Acceptance scenario (no explicit AMD holding, 4 recorded engagements, simulated
+backend restart, inferred relevance still present and genuinely matured) proven end-to-end and covered by an
+automated test, not just manually verified. No merge to main.
+
+## Recommended Sprint 3.6.7 Block 4 starting objective
+
+The carried-over limitations list in `23_CURRENT_IMPLEMENTATION_STATE.md` (impression/exposure exact
+UI-viewport semantics beyond the focus-based proxy this block shipped, `MemoryStore.query()` remaining
+single-user-only, Exceptional-route thresholds validated only against simulated fixtures,
+`internal_rank_score>=0.6`'s soft coupling between Policy and Prioritization) is now the natural backlog --
+none of it was resolved this block, and none of it blocks anything shipped here. Two reasonable next
+candidates:
+
+1. **Real Ask-STRATUS-about-this-opportunity linkage.** `ask_followup` now has a full, tested backend/domain
+   contract (interpreted, persisted, foldable into behavioral evidence) but is deliberately not wired to the
+   existing `/v1/ask` route, which is a disconnected legacy chat stub with no `event_id` concept at all and
+   reads from the historical `memory_engine`, not this pipeline. Wiring a real per-opportunity "ask STRATUS"
+   flow would let `ask_followup` actually fire from production UI instead of only being reachable through the
+   backend contract directly, and gives the behavioral relevance model a second, strong engagement signal type
+   with a real UI path. Flagged as deferred since the Sprint 3.6.6 close-out; this block is the first time the
+   backend half of it has actually been built.
+2. **Multi-user safety.** `MemoryStore.query()`, `UserModel`, and now the new SQLite persistence are all still
+   single-user (`LOCAL_FOUNDER_USER_ID`) by construction -- not a bug for the current single-operator
+   prototype, but a real prerequisite before ADR-006's Phase 2 (multi-user/public launch) database decision can
+   be made meaningfully. Larger and more foundational than option 1; better scoped as its own dedicated block.
+
+Recommendation: option 1 first -- it's a direct, well-scoped completion of work this block already built the
+backend half of, and gives a second real UI-driven engagement signal to validate the behavioral relevance
+model against. Option 2 is real and necessary but foundational enough to deserve its own dedicated planning
+pass rather than being picked up as a quick follow-on.
 approach before building it.

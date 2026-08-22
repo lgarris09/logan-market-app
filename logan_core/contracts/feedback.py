@@ -12,7 +12,26 @@ from .common import (
 )
 
 InteractionType = Literal[
-    "view", "click", "dismiss", "save", "act", "share", "watch", "remind"
+    "view",
+    "click",
+    "dismiss",
+    "save",
+    "act",
+    "share",
+    "watch",
+    "remind",
+    # Sprint 3.6.7 Block 3 additions:
+    # "impression" -- a deterministic exposure fact (this opportunity was
+    # actually shown/brought into the user's attention), not ambiguous user
+    # behavior. Never interpreted by FeedbackEngine (see its docstring) --
+    # routed through Orchestrator.run_exposure_loop() -> LearningEngine.
+    # process_exposure() instead, a separate path from every other
+    # InteractionType here. See docs/DECISIONS.md's Sprint 3.6.7 Block 3 ADR.
+    "impression",
+    # "ask_followup" -- the user asked STRATUS a follow-up question about
+    # this specific opportunity. A genuine, strong engagement action,
+    # interpreted by FeedbackEngine like any other explicit interaction.
+    "ask_followup",
 ]
 InferredIntent = Literal[
     "interested",

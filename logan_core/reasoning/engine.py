@@ -50,6 +50,22 @@ class ReasoningEngine:
         connected_entities = sorted(set(connected_explicit) | set(connected_inferred))
         holds_directly = bool(event_entity_ids & holding_ids)
 
+        # Sprint 3.6.7 Block 3: the strongest matched inferred Interest.weight
+        # among connected_inferred -- lets OpportunityEngine's "connect" step
+        # scale an inferred-only connection's relevance with how mature the
+        # underlying behavioral evidence actually is (see
+        # OpportunityEngine._scale_inferred_relevance), instead of a flat
+        # floor regardless of evidence strength. 0.0 when there is no inferred
+        # connection at all, matching ReasoningResult's own default.
+        inferred_relevance_strength = max(
+            (
+                i.weight
+                for i in user_model.interests
+                if i.source == "inferred" and i.topic in connected_inferred
+            ),
+            default=0.0,
+        )
+
         significance = event.summary
         if event.change_delta:
             delta = event.change_delta[0]
@@ -123,6 +139,7 @@ class ReasoningEngine:
             connected_entities=connected_entities,
             connected_entities_explicit=connected_explicit,
             connected_entities_inferred=connected_inferred,
+            inferred_relevance_strength=inferred_relevance_strength,
             stance=stance,
             actionability=actionability,
             explanation=explanation,
@@ -136,6 +153,7 @@ class ReasoningEngine:
                     evidence=[
                         f"explicit_connections={connected_explicit}",
                         f"inferred_connections={connected_inferred}",
+                        f"inferred_relevance_strength={inferred_relevance_strength:.2f}",
                     ],
                     timestamp=now,
                 )

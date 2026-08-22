@@ -16,6 +16,45 @@ _LIFECYCLE_URGENCY = {"emerging": 0.8, "peak": 0.5, "fading": 0.2, "dormant": 0.
 _STANCE_NOVELTY = {"new": 1.0, "contradicts": 0.7, "complicates": 0.6, "confirms": 0.2}
 _ACTIONABILITY_SCORE = {"actionable": 1.0, "informational": 0.5, "ambiguous": 0.2}
 
+# Sprint 3.6.7 Block 3: the achievable range for an inferred-only connection's
+# personal_relevance contribution. INFERRED_RELEVANCE_FLOOR reuses this
+# file's own pre-existing "informational" anchor (0.5, ADR-048's original
+# flat floor) as the *minimum* once inferred-connected at all -- unchanged
+# backward-compat baseline. INFERRED_RELEVANCE_CEILING is a new, deliberately
+# reasoned constant: it must stay strictly below the explicit tier's 0.6 bump
+# (ADR-048's own stated invariant, "deliberately less than the explicit bump,
+# never equal") while still leaving real headroom for mature evidence to
+# measurably outscore a just-qualified connection.
+INFERRED_RELEVANCE_FLOOR = 0.5
+INFERRED_RELEVANCE_CEILING = 0.59
+# Interest.weight range a matched inferred connection can realistically carry
+# -- UserModelBuilder.MIN_REPEAT_EVIDENCE-qualifying evidence requires
+# FeedbackEngine's inferred_intent=="interested" specifically, whose weakest
+# confidence tier ("remind") is 0.75; UserModelBuilder.
+# MAX_INFERRED_INTEREST_WEIGHT (user_model/model.py) caps the strongest,
+# most-matured case at 0.90. Reused here, not re-derived, so the two files'
+# constants stay in lockstep by construction rather than by convention.
+_INFERRED_WEIGHT_FLOOR = 0.75
+_INFERRED_WEIGHT_CEILING = 0.90
+
+
+def _scale_inferred_relevance(inferred_relevance_strength: float) -> float:
+    """Maps a matched inferred Interest.weight onto the bounded
+    [INFERRED_RELEVANCE_FLOOR, INFERRED_RELEVANCE_CEILING] personal_relevance
+    range -- linear within the realistic weight range, clamped at both ends.
+    `inferred_relevance_strength <= _INFERRED_WEIGHT_FLOOR` (including the
+    0.0 default every pre-Block-3 caller/test supplies) returns exactly
+    INFERRED_RELEVANCE_FLOOR -- the identical flat 0.5 this returned before
+    Block 3, so nothing that doesn't populate the new field changes.
+    """
+    if inferred_relevance_strength <= _INFERRED_WEIGHT_FLOOR:
+        return INFERRED_RELEVANCE_FLOOR
+    span = _INFERRED_WEIGHT_CEILING - _INFERRED_WEIGHT_FLOOR
+    fraction = min((inferred_relevance_strength - _INFERRED_WEIGHT_FLOOR) / span, 1.0)
+    return INFERRED_RELEVANCE_FLOOR + fraction * (
+        INFERRED_RELEVANCE_CEILING - INFERRED_RELEVANCE_FLOOR
+    )
+
 
 class OpportunityEngine:
     """Layer 10 — determines what deserves this user's attention now. Recommends
@@ -57,10 +96,14 @@ class OpportunityEngine:
         # an explicit connection keeps the original 0.6 bump unchanged.
         # A connection that exists *only* through an inferred interest
         # (reasoning.connected_entities_explicit is empty for that entity)
-        # is bounded below that: it reuses this file's own existing
-        # "informational" actionability level (0.5) as the natural smaller
-        # relevance anchor already defined here, rather than inventing a new
-        # constant -- deliberately less than the explicit bump, never equal.
+        # is bounded below that -- deliberately less than the explicit bump,
+        # never equal (ADR-048). Sprint 3.6.7 Block 3: within that bounded
+        # range, an inferred connection's contribution now scales with how
+        # mature the underlying behavioral evidence actually is (see
+        # _scale_inferred_relevance), instead of a flat 0.5 floor regardless
+        # of evidence strength. reasoning.inferred_relevance_strength==0.0
+        # (every pre-Block-3 caller/test) reproduces the exact old flat 0.5
+        # floor -- see that function's own docstring.
         personal_relevance = _ACTIONABILITY_SCORE.get(reasoning.actionability, 0.2)
         connect_basis = "none"
         if reasoning.actionability != "actionable":
@@ -69,7 +112,8 @@ class OpportunityEngine:
                 connect_basis = "explicit"
             elif reasoning.connected_entities_inferred:
                 personal_relevance = max(
-                    personal_relevance, _ACTIONABILITY_SCORE["informational"]
+                    personal_relevance,
+                    _scale_inferred_relevance(reasoning.inferred_relevance_strength),
                 )
                 connect_basis = "inferred"
         trace.append(

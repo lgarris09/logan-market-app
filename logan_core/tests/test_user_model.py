@@ -123,18 +123,25 @@ def test_build_folds_repeated_interested_evidence():
     """Two independent interested-intent records for the same (domain,
     entity_id) pair -- the minimal definition of "repeated" -- must produce
     an established_behaviors entry, an active DomainPref, and an
-    Interest(source="inferred"), using the max intent_confidence among the
-    qualifying records verbatim (not a new/invented number)."""
+    Interest(source="inferred"). Sprint 3.6.7 Block 3: confidence/weight are
+    no longer the max intent_confidence verbatim -- they're maturity- and
+    recency-scaled (see _weight_for_evidence) -- so `now` is passed as the
+    same instant as the fixture records (no real elapsed time -> no decay),
+    and with exactly MIN_REPEAT_EVIDENCE records there's no maturity bonus
+    either, isolating this test to the recency/maturity-neutral case."""
     builder = UserModelBuilder()
     base = builder.seed(user_id="demo_user")
     records = [
         _feedback_record(intent_confidence=0.65),
         _feedback_record(intent_confidence=0.85),
     ]
-    updated = builder.build(user_id="demo_user", memory_records=records, base=base)
+    updated = builder.build(
+        user_id="demo_user", memory_records=records, base=base, now=NOW
+    )
 
     assert [b.label for b in updated.established_behaviors] == ["engaged_with_TSLA"]
     assert updated.established_behaviors[0].confidence == 0.85
+    assert updated.established_behaviors[0].evidence_count == 2
 
     stocks_pref = next(p for p in updated.domain_preferences if p.domain == "stocks")
     assert stocks_pref.active is True

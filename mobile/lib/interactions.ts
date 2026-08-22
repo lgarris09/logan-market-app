@@ -11,7 +11,19 @@ import { fetchJson } from "./apiClient";
 // backend/app/models.py's RecordInteractionRequest. Not the full literal
 // union (the backend still validates), just the values mobile code
 // currently has a real reason to send.
-export type InteractionType = "view" | "click" | "dismiss" | "save" | "share";
+//
+// Sprint 3.6.7 Block 3: "impression" added -- a deterministic exposure fact
+// (this vessel actually became the field's focused card, not just present
+// in the API response), sent once per focus change by useImpressionTracking
+// below. Never interpreted the way the other types are (see
+// logan_core/learning/engine.py's process_exposure).
+export type InteractionType =
+  | "view"
+  | "click"
+  | "dismiss"
+  | "save"
+  | "share"
+  | "impression";
 
 // Mirrors logan_core/contracts/common.py's Domain literal.
 export type InteractionDomain =

@@ -24,6 +24,7 @@ from logan_core.contracts import (
     ExecutionTrace,
     FeedbackSignal,
     InteractionType,
+    MemoryWrite,
     MentalModel,
     NormalizedSignal,
     PolicyResult,
@@ -606,6 +607,28 @@ class Orchestrator:
             feedback, user_id, domain, entities, resolved_content
         )
         return feedback, write
+
+    def run_exposure_loop(
+        self,
+        event_id: UUID,
+        user_id: str,
+        domain: Domain,
+        entity_id: str,
+    ) -> MemoryWrite:
+        """Sprint 3.6.7 Block 3 — records a real exposure/impression fact:
+        this opportunity was actually shown to the user. A separate entry
+        point from run_feedback_loop(), not a special case inside it --
+        there is no ambiguous user behavior for FeedbackEngine to interpret
+        here (see LearningEngine.process_exposure's own docstring), so this
+        skips straight to LearningEngine, mirroring run_memory_inbox_confirm/
+        reject's own "skip interpretation, go straight to Learning" shape for
+        a deterministic signal. Orchestrator remains the sole caller of
+        LearningEngine from outside logan_core, exactly as run_feedback_loop
+        already established.
+        """
+        return self.deps.learning_engine.process_exposure(
+            event_id, user_id, domain, entity_id
+        )
 
     def run_memory_inbox_confirm(
         self,

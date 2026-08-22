@@ -224,3 +224,88 @@ def test_memory_inbox_confirm_stamps_user_id(
 
     stored = orchestrator.deps.memory_store.all()
     assert stored[0].user_id == "demo_user"
+
+
+# --- Sprint 3.6.7 Block 3: Orchestrator.run_exposure_loop() -------------
+
+
+def test_run_exposure_loop_writes_an_exposure_record(
+    orchestrator, user_model, engagement_samples, now
+):
+    from logan_core.receptors import tesla_ai_partnership_signal
+
+    result = orchestrator.run(
+        raw_signals=[tesla_ai_partnership_signal(now)],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+    )
+
+    write = orchestrator.run_exposure_loop(
+        event_id=result.event.event_id,
+        user_id="demo_user",
+        domain="stocks",
+        entity_id="TSLA",
+    )
+
+    assert write.write_type == "new_record"
+    records = orchestrator.deps.memory_store.all()
+    assert any(r.record_type == "exposure_record" for r in records)
+
+
+def test_run_exposure_loop_never_writes_a_feedback_record(
+    orchestrator, user_model, engagement_samples, now
+):
+    """Impressions must never be interpretable as behavioral engagement
+    evidence -- structurally guaranteed by writing a different record_type
+    (exposure_record), not feedback_record."""
+    from logan_core.receptors import tesla_ai_partnership_signal
+
+    result = orchestrator.run(
+        raw_signals=[tesla_ai_partnership_signal(now)],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+    )
+
+    orchestrator.run_exposure_loop(
+        event_id=result.event.event_id,
+        user_id="demo_user",
+        domain="stocks",
+        entity_id="TSLA",
+    )
+
+    records = orchestrator.deps.memory_store.all()
+    assert not any(r.record_type == "feedback_record" for r in records)
+
+
+def test_run_exposure_loop_is_idempotent_across_repeated_calls(
+    orchestrator, user_model, engagement_samples, now
+):
+    from logan_core.receptors import tesla_ai_partnership_signal
+
+    result = orchestrator.run(
+        raw_signals=[tesla_ai_partnership_signal(now)],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+    )
+
+    for _ in range(5):
+        orchestrator.run_exposure_loop(
+            event_id=result.event.event_id,
+            user_id="demo_user",
+            domain="stocks",
+            entity_id="TSLA",
+        )
+
+    exposure_records = [
+        r
+        for r in orchestrator.deps.memory_store.all()
+        if r.record_type == "exposure_record"
+    ]
+    assert len(exposure_records) == 1
+    assert exposure_records[0].content["impression_count"] == 5

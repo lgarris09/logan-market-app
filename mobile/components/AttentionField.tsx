@@ -18,6 +18,7 @@ import {
 import { biasStateFor, FieldBias } from "../lib/fieldBias";
 import { InteractionDomain } from "../lib/interactions";
 import { useCardDwellTracking } from "../lib/useCardDwellTracking";
+import { useImpressionTracking } from "../lib/useImpressionTracking";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
 import { CARD_BOTTOM_MARGIN, CARD_HEIGHT, CARD_SAFE_MARGIN, Vessel } from "./Vessel";
@@ -127,6 +128,23 @@ export function AttentionField({
           eventId: openItem.event_id,
           entityId: openItem.entity_id,
           domain: openItem.domain as InteractionDomain,
+        }
+      : null
+  );
+
+  // Sprint 3.6.7 Block 3: a real exposure/impression fires whenever a vessel
+  // becomes the focused card, independent of disclosure -- see
+  // lib/useImpressionTracking.ts for why this (not disclosure===1, and not
+  // "present in `items`") is the honest "shown to the user" signal.
+  const focusedItem = focusedId
+    ? items.find((item) => item.event_id === focusedId) ?? null
+    : null;
+  useImpressionTracking(
+    focusedItem
+      ? {
+          eventId: focusedItem.event_id,
+          entityId: focusedItem.entity_id,
+          domain: focusedItem.domain as InteractionDomain,
         }
       : null
   );

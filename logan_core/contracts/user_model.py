@@ -41,6 +41,15 @@ class BehaviorPattern(BaseModel):
     label: str
     description: str
     confidence: float = Field(ge=0.0, le=1.0)
+    # Sprint 3.6.7 Block 3 -- additive, defaults preserve every existing
+    # caller/test that constructs a BehaviorPattern without these fields.
+    # Provenance for explainability (Block 3 requirement #8): how many
+    # independent qualifying "interested"-intent records fed this pattern,
+    # and when it was last reinforced -- lets a future UI/audit surface
+    # "4 meaningful engagements in the last 14 days" rather than only a bare
+    # confidence number.
+    evidence_count: int = Field(default=1, ge=0)
+    last_reinforced: Optional[datetime] = None
 
 
 class UserModel(BaseModel):
@@ -58,3 +67,8 @@ class UserModel(BaseModel):
     model_confidence: float = Field(ge=0.0, le=1.0)
     last_updated: datetime
     version: int = Field(ge=1, default=1)
+    # Sprint 3.6.7 Block 3 -- additive, default empty: auditability for how
+    # the behavioral portions of this build were derived (maturity scaling,
+    # decay, exposure-fatigue dampening). Every existing caller/test is
+    # unaffected.
+    decision_trace: list = Field(default_factory=list)
