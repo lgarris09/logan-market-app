@@ -1156,3 +1156,114 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   `intent_confidence`), `backend/tests/test_logan_feed.py` (`UserModel` persists and accumulates across
   repeated live pipeline requests, one isolated interaction does not create a preference). mypy/ruff/black
   clean. Mobile untouched by this pass (no mobile files changed) — not re-validated.
+
+## ADR-049: STRATUS Watch eligibility — Personal and Exceptional routes replace the single generic-urgency alert gate
+- Date: 2026-08-21
+- Status: Accepted
+- Context: With ADR-048's behavioral-learning foundation in place (source-aware, persistent, auditable
+  personal-relevance signal), the actual Watch alert gate (`PolicyEngine.evaluate()`) still used none of it —
+  `communication_mode="alert"` was decided by a single `recommendation.dimensions.urgency >= 0.7` check,
+  ignoring `personal_relevance`, `confidence`, `actionability`, and `novelty` entirely. This is the exact
+  behavior ADR-046 had already flagged as an open question: "FED still qualifies with `personal_relevance=0.50`
+  — the fully generic, unconnected default — confirming personalization is still not required for alert
+  eligibility." This ADR closes that question: the owner asked for two explicit eligibility routes answering
+  "should STRATUS interrupt this user about this event right now" — Personal (meaningfully relevant to this
+  user) and Exceptional (important enough regardless of personalization) — deliberately as route logic, not a
+  third blended score, so the reason an alert qualifies stays legible in `DecisionTrace`.
+- Inspection findings (verified against the live repo, not assumed from prior traces):
+  1. Live path confirmed unchanged: Opportunity → Policy → Prioritization → Presentation
+     (`orchestrator/pipeline.py`). `PolicyEngine.evaluate()` receives the full `AttentionRecommendation`
+     (all of `Dimensions` plus `internal_rank_score`) already — no input-contract change was needed to
+     implement either route inside Policy, which remains the sole communication gate.
+  2. Fatigue re-verified still owned entirely by `PrioritizationEngine.AttentionState`, still evaluated after
+     Policy runs, exactly as previously found. Re-verifying the *consequence*, not just the ownership: because
+     `prioritize()`'s `domain_fatigued` check is evaluated before the `communication_mode == "alert"` check and
+     unconditionally forces `interruption="none"` when true, a fatigued domain already vetoes an alert
+     regardless of what Policy decided — Prioritization's existing execution order already gives it final,
+     correct veto power over interruption fatigue with no reordering, ownership move, or new shared-state
+     contract required. The Personal/Exceptional routes were implemented entirely inside Policy without
+     touching `prioritization/engine.py` at all.
+  3. A second, previously-unnoted instance of the same pattern: `interruption == "alert"` is *also* only
+     reachable when `recommendation.internal_rank_score >= 0.6` (Prioritization's own pre-existing "primary
+     visibility" bar) — the `internal_rank_score` in `[0.35, 0.6)` "feed" branch only ever produces `"digest"`
+     or `"none"`, never `"alert"`, regardless of `communication_mode`. This was already true before this ADR
+     (the old single urgency-gate had the identical relationship to it) and is unchanged by this pass; it
+     means `communication_mode="alert"` has always been necessary but not sufficient for a real push, and
+     still is. See Consequences below for a live example this produces.
+  4. A design hazard caught before finalizing thresholds, not merely assumed away: `OpportunityEngine`'s
+     "nothing connected, informational" default and its "connected via an inferred interest" bound are the
+     *same numeric value* (`personal_relevance = 0.5`, ADR-048) — FED's ADR-046 example is exactly this
+     default, not an inferred connection. A naive `personal_relevance >= 0.5` check for an "inferred relevance"
+     route condition would therefore have silently let FED-shaped generic-urgency events back in through a
+     new door. Fixed by additionally requiring `dims.connection_strength > 0` (already an existing `Dimensions`
+     field, `len(reasoning.connected_entities) / 3`) — non-zero only when `reasoning.connected_entities` is
+     genuinely non-empty — to distinguish a real inferred connection from the coincidentally-identical generic
+     default. Verified against the live simulated fixtures (see Consequences) rather than assumed correct from
+     the numbers alone.
+- Decision: `logan_core/policy/engine.py` gains a `_watch_route()` helper, called from `evaluate()` only when
+  `recommendation.recommend` is already `True` (Opportunity's own bar, unchanged), returning
+  `"personal" | "exceptional" | "none"`. `communication_mode = "alert"` iff the route is not `"none"`;
+  otherwise `"analysis"` (`"informational"`/`"suppressed"` paths are entirely unchanged). Every threshold
+  reuses a value/semantic already established elsewhere in this codebase — no new numeric policy was invented:
+  - **Personal, explicit tier**: `personal_relevance >= 0.6` (OpportunityEngine's own "explicit relevance
+    bump," ADR-048) **and** `internal_rank_score >= 0.6` (Prioritization's own existing "primary visibility"
+    bar, reused here as Policy's "is this actually good enough" signal since it already blends
+    urgency/confidence/actionability/novelty/personal_relevance/opportunity_magnitude/connection_strength in
+    one number). Verified against live fixtures: `personal_relevance=0.6` alone is not sufficient — MARKETS
+    (explicit-tier relevance, but only "peak"-non-actionable urgency=0.5) lands at `internal_rank_score=0.598`,
+    just under the bar, and correctly stays `digest`, not `alert`.
+  - **Personal, inferred tier**: `personal_relevance >= 0.5` **and** `connection_strength > 0` (the FED-hazard
+    guard above) **and** `urgency >= 0.7` (this file's own former single-gate alert threshold) **and**
+    `confidence >= 0.55` (`ConclusionConfidenceEngine`'s own "inference" classification bar). Deliberately does
+    *not* also require `internal_rank_score >= 0.6` — verified against a live scenario (two repeated `"watch"`
+    interactions on BTC building a real `Interest(source="inferred")`) that requiring both made this tier
+    practically unreachable even when genuinely well-evidenced, since inferred relevance never carries the
+    actionable/explicit-connect boost that makes the explicit tier's blend easy to clear. The tier's own four
+    conditions are its "meaningful combination"; explicit remains structurally stronger because it needs only
+    two conditions (relevance + the holistic rank bar) where inferred needs four independently-checked ones.
+  - **Exceptional**: `urgency >= 0.8` (`opportunity/engine.py`'s own `_LIFECYCLE_URGENCY["emerging"]`) **and**
+    `confidence >= 0.7` **and** `novelty >= 0.7` (both reusing the same "high" bar this file already uses for
+    `BOT_RISK_SUPPRESSION_THRESHOLD` and previously used for the old urgency-only gate; `novelty >= 0.7`
+    corresponds to `opportunity/engine.py`'s `_STANCE_NOVELTY` "contradicts" stance or higher) — all three
+    required simultaneously, with zero personal-relevance credit. Checked only after Personal fails to
+    qualify; if Personal already qualifies it wins outright, Exceptional is not a second, easier path.
+  - `DecisionTraceEntry.rule` now reads `communication_mode=...; watch_route=personal|exceptional|none;
+    rules_applied=[...]`, and `.evidence` carries `personal_relevance`, `urgency`, `confidence`, `novelty`,
+    `connection_strength` (all rounded to 2 decimals) for every Policy decision, permitted or not.
+    `internal_rank_score` is deliberately excluded from `.evidence` — it is ADR-029's INTERNAL-ONLY field
+    (never returned via any public API response), and `DecisionTraceEntry.evidence` is serialized as part of
+    the full pipeline result; including it broke `test_tesla_demo_response_has_no_internal_score_fields`
+    during this pass's own validation and was removed before finalizing, not shipped and fixed later.
+  - Explicitly unchanged: `PolicyEngine` remains the sole communication gate (no new scoring subsystem);
+    `PrioritizationEngine`'s fatigue/cooldown/visibility/rank-score logic is untouched; digest/background
+    behavior for non-alert items is untouched; notification dispatch still gates solely on
+    `interruption == "alert"` (`get_alert_eligible_items()`, unchanged); `_fold_behavioral_evidence()`'s
+    `MIN_REPEAT_EVIDENCE=2` and `DomainPref(weight=0.5)` (ADR-048) are untouched; no Watch Personal/Exceptional
+    "route" concept exists anywhere except this Policy-layer decision — no new UserModel field, no new
+    contract, no mobile/UI change.
+- Consequences: live deterministic trace against the real simulated fixtures (11 entities, explicit seed:
+  NVDA holding + AI_SECTOR interest), captured before/after a two-repeat "watch" interaction on BTC:
+
+  | entity | personal_relevance | urgency | confidence | novelty | conn_strength | rank | route | interruption |
+  |---|---|---|---|---|---|---|---|---|---|
+  | NVDA (direct holding) | 1.00 | 1.00 | 0.73 | 1.00 | 0.67 | 0.908 | personal | alert |
+  | AI_SECTOR (explicit interest) | 0.60 | 0.80 | 0.59 | 1.00 | 0.67 | 0.620 | personal | alert |
+  | TSLA (downstream to explicit) | 0.60 | 0.80 | 0.81 | 1.00 | 0.67 | 0.688 | personal | alert |
+  | FED (unconnected, ADR-046 case) | 0.50 | 0.80 | 0.73 | 1.00 | 0.00 | 0.624 | exceptional | alert |
+  | AAPL (unconnected) | 0.50 | 0.80 | 0.73 | 1.00 | 0.00 | 0.622 | exceptional | alert |
+  | MARKETS (explicit-tier relevance, weak urgency) | 0.60 | 0.50 | 0.73 | 1.00 | 0.33 | 0.598 | none | digest |
+  | OIL/BTC/NFL/MUSIC/POLY (unconnected, ordinary) | 0.50 | ≤0.80 | ≤0.73 | 1.00 | 0.00 | ≤0.581 | none | digest |
+  | BTC after 2× "watch" (mature inferred) | 0.50 | 0.80 | 0.59 | — | 0.33 | 0.585 | personal | digest |
+
+  The BTC row is the clearest live proof both halves of this ADR work correctly: (1) the inferred `Interest`
+  built up by ADR-048's behavioral-learning path is what flips `communication_mode` from `"analysis"` to
+  `"alert"` for an event that would otherwise have qualified for neither route — genuine evidence "inferred
+  relevance contributes" — and (2) `interruption` still stays `"digest"`, not `"alert"`, because
+  Prioritization's separate, pre-existing `internal_rank_score >= 0.6` bar (inspection finding 3 above) is not
+  met — an honest, verified limit of what this pass changes, not a bug. `backend`/`logan_core` test count
+  264 → 279 (15 new tests, `logan_core/tests/test_policy.py`): explicit/inferred tier qualification and their
+  A/B asymmetry, the FED-shaped connection_strength guard, low-confidence/low-urgency non-qualification,
+  routine-event non-qualification, Exceptional's three-way requirement and its independence from personal
+  relevance, Exceptional-vs-Personal difficulty, route visibility in `DecisionTrace`, and
+  `recommend=False` short-circuiting unchanged. mypy/ruff/black clean. No mobile files touched — not
+  re-validated. No Attention Field, impression/exposure, FIELD BIAS, trigger, or Ask STRATUS work touched.

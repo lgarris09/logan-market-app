@@ -271,5 +271,76 @@ impression/exposure semantics, FIELD BIAS learning, and Ask STRATUS linkage were
   the open, undecided ADR-006 question.
 - `MemoryStore.query()` has no `user_id` filter; this pass's single-user (`LOCAL_FOUNDER_USER_ID`) scope makes
   that safe today but it would need addressing before any real multi-user support.
+
+---
+
+# Session Notes — 2026-08-21 (STRATUS Watch: Personal / Exceptional eligibility routes)
+
+Branch: `integration/sprint-3.6.6-stratus-watch`. Prior commit: `49f5848` (ADR-048, behavioral-learning
+foundation). See ADR-049 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative and what to know before touching Watch again.
+
+## What was asked
+
+Make STRATUS Watch actually use the personalization signal ADR-048 built: two eligibility routes answering
+"should STRATUS interrupt this user about this event right now" — Personal (meaningfully relevant to this
+user) and Exceptional (important enough regardless of personalization) — replacing the old single
+`urgency >= 0.7` alert gate, without replacing `PolicyEngine`, without touching Watch thresholds elsewhere,
+and without inventing arbitrary new numeric thresholds where an existing anchor already fit.
+
+## What inspection found before writing code
+
+- The live path (Opportunity → Policy → Prioritization → Presentation) was confirmed unchanged from prior
+  understanding. `PolicyEngine.evaluate()` already receives everything needed (`Dimensions` +
+  `internal_rank_score`) — no input-contract change was needed.
+- Fatigue re-verified still Prioritization-owned, still evaluated after Policy — but re-verifying the
+  *consequence* (not just re-stating the ownership fact) showed Prioritization's fatigue check already runs
+  before the `communication_mode` check and unconditionally overrides to `interruption="none"`, meaning it
+  already has correct final veto power with no reordering needed. The routes were implemented entirely inside
+  `PolicyEngine` with zero changes to `prioritization/engine.py`.
+- A second instance of the same "Policy decides necessary-but-not-sufficient conditions" pattern was found and
+  is new to this session's record: `interruption == "alert"` also requires Prioritization's own
+  `internal_rank_score >= 0.6` ("primary visibility") separately from whatever `communication_mode` says — the
+  `[0.35, 0.6)` "feed" branch structurally never produces `"alert"`. This was already true before this ADR; it
+  is documented now because it directly explains one of the deterministic trace rows below (BTC).
+- A real correctness hazard was caught by testing against live simulated fixtures instead of trusting hand-
+  picked unit-test numbers: `OpportunityEngine`'s "nothing connected" default and its "inferred connection"
+  bound are numerically identical (`personal_relevance = 0.5`) — a naive inferred-relevance route check would
+  have silently let ADR-046's FED-shaped generic-urgency problem back in through a new door. Fixed with an
+  additional `connection_strength > 0` guard (an existing `Dimensions` field, not a new one).
+- A design flaw in the first draft of the inferred tier (requiring `internal_rank_score >= 0.6` in addition to
+  its own urgency/confidence floors) was caught the same way: verified against a live two-repeat "watch"
+  interaction on BTC, the tier was practically unreachable even when its own conditions were genuinely met.
+  Removed that redundant requirement from the inferred tier only (kept on the explicit tier, where it's the
+  tier's actual quality signal).
+
+## Status at the end of this session
+
+Implementation complete for this pass's scope. `backend`/`logan_core` test count 264 → 279 (15 new,
+`logan_core/tests/test_policy.py`). mypy/ruff/black clean — one real regression was caught and fixed during
+this session's own validation pass: embedding `internal_rank_score` as text in `DecisionTraceEntry.evidence`
+broke `test_tesla_demo_response_has_no_internal_score_fields` (ADR-029's internal-only field, serialized as
+part of the full pipeline result) — removed before finalizing. Mobile untouched, not re-validated. Watch
+thresholds elsewhere (fatigue window/limit, cooldown window, recommend threshold, bot-risk suppression),
+impression/exposure, FIELD BIAS, Ask STRATUS, and Attention Field were not touched, as scoped.
+
+## What remains before STRATUS Watch can be considered feature-complete
+
+- The routes decide `communication_mode`, not the final `interruption`. A Personal-route item can still end up
+  `digest` instead of `alert` if `internal_rank_score < 0.6` (see the BTC row in ADR-049's trace table) — this
+  is consistent with Prioritization's pre-existing, unmodified authority over final interruption, not a gap in
+  this pass, but it means "qualifies for Personal" and "will actually push" are not always the same thing.
+  Whether that's the right end-to-end behavior for a mature inferred interest is an open product question.
+- No product decision has been made about whether/how a Personal or Exceptional alert should interact
+  differently with fatigue/cooldown than an ordinary digest item (e.g. should a Personal-route alert bypass
+  domain fatigue the way an "Exceptional" event arguably should). Fatigue currently applies identically
+  regardless of which route qualified an alert.
+- The Exceptional route's thresholds (0.8 urgency / 0.7 confidence / 0.7 novelty) were validated against the
+  current 11-entity simulated fixture set, not against real live signal distributions (only NVDA's earnings
+  path is real today, gated off by default). Real-world calibration is unverified.
+- `internal_rank_score >= 0.6` doing double duty (Prioritization's own visibility bar, reused by Policy's
+  explicit tier as a quality proxy) is a soft coupling between two layers that happen to agree on the same
+  number today — not enforced by any shared contract. A future change to either threshold independently could
+  silently change the other's behavior; worth a comment/test tripwire if either value is ever revisited.
    BIAS learning, Ask STRATUS linkage) remains correctly deferred, unchanged from the prior session's report.
    need real data, not invented numbers), and whether the full 5-tab navigation is worth building next.
