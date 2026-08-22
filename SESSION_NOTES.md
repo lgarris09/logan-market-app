@@ -342,5 +342,68 @@ impression/exposure, FIELD BIAS, Ask STRATUS, and Attention Field were not touch
   explicit tier as a quality proxy) is a soft coupling between two layers that happen to agree on the same
   number today — not enforced by any shared contract. A future change to either threshold independently could
   silently change the other's behavior; worth a comment/test tripwire if either value is ever revisited.
-   BIAS learning, Ask STRATUS linkage) remains correctly deferred, unchanged from the prior session's report.
-   need real data, not invented numbers), and whether the full 5-tab navigation is worth building next.
+
+---
+
+# Session Notes — 2026-08-21 (Sprint 3.6.6 close-out)
+
+Branch: `integration/sprint-3.6.6-stratus-watch`. Latest implementation commit: `7ca1e8a` (ADR-049). This
+note closes out Sprint 3.6.6 — a docs-only pass, no application logic or Watch policy changed.
+
+## Sprint 3.6.6 final closeout
+
+Sprint 3.6.6 is functionally complete. Delivered across the sprint (see `docs/DECISIONS.md` ADR-042 through
+ADR-049 for the full per-decision record, and `docs/specs/Logan_Documentation_v3.1.4/23_CURRENT_IMPLEMENTATION_STATE.md`'s
+own "Sprint 3.6.6 close-out" section for the verified state table):
+
+- First real external intelligence path: FMP-backed NVDA earnings → deterministic `STOCK_EARNINGS_BEAT`/`MISS`/`IN_LINE`
+  trigger detection → the existing, unmodified `logan_core` pipeline → a real `/v1/opportunities` NVDA item
+  (config-gated, default off).
+- STRATUS Watch: real push notifications (Expo registration/tap-to-open), badge/push state coherence, cleaner
+  wording, and an eligibility trace/debugging pass (ADR-046) that caught and fixed a fixture-timing artifact
+  inflating `lifecycle_state` — the same trace that first surfaced the generic-urgency-alert question ADR-049
+  later resolved.
+- Behavioral-personalization foundation: card-open/dwell/notification-tap capture reaching `MemoryStore`
+  through the existing `Orchestrator`/`FeedbackEngine`/`LearningEngine` path (ADR-047); process-lifetime
+  persistent `UserModel` that actually accumulates repeated meaningful evidence into inferred interests,
+  explicit-vs-inferred relevance separation with inferred bounded weaker, and an auditable `DecisionTrace`
+  (ADR-048).
+- STRATUS Watch Personal and Exceptional eligibility routes (ADR-049) — the sprint's final Watch-policy
+  decision record — replacing the old single generic-urgency alert gate, with the existing downstream fatigue
+  veto preserved unchanged.
+
+Final state: branch `integration/sprint-3.6.6-stratus-watch`, commit `7ca1e8a`, 279 backend/logan_core tests
+passing, mypy/ruff/black clean, working tree clean, local HEAD matches origin, no merge to main.
+
+## Sprint 3.6.7 starting point
+
+The following are recorded as the deliberate starting point for the next sprint — not resolved tonight, not
+implemented, not guessed at:
+
+1. **Personal-route rank-score gap.** A Personal-route item can qualify in `PolicyEngine` but still become
+   `digest` instead of `alert`, because `PrioritizationEngine`'s existing `internal_rank_score >= 0.6` gate
+   retains final authority over the actual `interruption` value. Open decision: should mature inferred
+   Personal-route relevance be sufficient to produce a real push even when the rank bar is below 0.6?
+2. **Impression/exposure semantics remain unresolved** — server-surfaced vs. client-rendered — and behavioral
+   relevance is not yet normalized against exposure.
+3. **Route-aware interruption handling is undecided.** Personal and Exceptional routes currently share
+   identical fatigue/cooldown behavior; whether either route should interact differently with fatigue is a
+   future decision, not made this sprint.
+4. **Exceptional-route thresholds are fixture-validated only** — checked against the current
+   deterministic/simulated fixture distributions, not broad real-world signal distributions.
+5. **`UserModel` persistence is still process-lifetime only.** Durable persistence remains deferred (ADR-006
+   territory).
+6. **`MemoryStore.query()` remains single-user-safe only** — acceptable for the current single-user prototype,
+   not yet multi-user safe.
+7. **`internal_rank_score >= 0.6` is a soft coupling** between `PolicyEngine` and `PrioritizationEngine` — not
+   enforced by any shared contract. Treat carefully if either threshold changes; consider a tripwire test if
+   either is revisited.
+8. **Still deferred, unchanged from prior sprints:** FIELD BIAS learning, Ask STRATUS linkage, broader trigger
+   expansion, durable persistence, and broader ML calibration.
+
+Recommended Sprint 3.6.7 starting objective: resolve item 1 above first (the Personal-route rank-score gap) —
+it's the most direct, narrowly-scoped follow-on to ADR-049 and blocks a clean answer to "does mature
+personalization actually produce a push," which is the natural next question after this sprint's work.
+Impression/exposure semantics (item 2) is the next-most-consequential but is a larger, more open-ended design
+question better scoped as its own follow-up once item 1's precedent (Policy-vs-Prioritization authority) is
+settled.
