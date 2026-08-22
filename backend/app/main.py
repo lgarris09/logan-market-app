@@ -6,13 +6,18 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .ask_engine import answer_question
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
     DemoFeedResponse,
+    get_ask_session_event,
+    get_opportunity_context,
     mark_notifications_reviewed,
     record_interaction,
     run_demo_feed,
+    set_ask_session_event,
+    should_record_ask_followup,
 )
 from .memory_engine import MemoryEngine
 from .memory_models import (
@@ -235,11 +240,83 @@ def ask_logan(request: AskRequest) -> AskResponse:
     consumer language, never expose version/architecture/pipeline terms -- is
     intended to apply anywhere else user-facing text is generated, not just
     here.
+
+    Sprint 3.6.7 Block 4: gains a contextual path, alongside (not replacing)
+    the generic one above -- see docs/DECISIONS.md's Sprint 3.6.7 Block 4 ADR
+    for the full contract. `request.event_id` (or, for a follow-up in the
+    same conversation, a previously-recorded `request.session_id`) resolves
+    to a real `OpportunityContext` via `get_opportunity_context()` -- the
+    client only ever supplies the reference, never opportunity facts
+    directly (ADR-029-style discipline: the client cannot inject an
+    intelligence claim into STRATUS's own response). `answer_question()`
+    (ask_engine.py) is entirely deterministic, grounded only in real,
+    already-computed pipeline data -- never an LLM call (none exists in this
+    codebase; adding one would be a new dependency requiring its own explicit
+    confirmation, not made here).
     """
     clean_message = request.message.strip()
     if not clean_message:
         return AskResponse(
-            answer="Ask what changed, why it matters, or what deserves your attention."
+            answer="Ask what changed, why it matters, or what deserves your attention.",
+            event_id=request.event_id,
+            session_id=request.session_id,
+        )
+
+    target_event_id = request.event_id
+    if target_event_id is None and request.session_id:
+        target_event_id = get_ask_session_event(request.session_id)
+
+    if target_event_id is not None:
+        context = get_opportunity_context(target_event_id)
+        if context is not None:
+            answer = answer_question(context, clean_message)
+
+            if request.session_id:
+                set_ask_session_event(request.session_id, target_event_id)
+                # Feedback-loop protection: at most one ASK_FOLLOWUP
+                # behavioral-evidence contribution per (session, opportunity)
+                # pair -- see should_record_ask_followup's own docstring.
+                # Repeated follow-ups in the same session still get a real,
+                # freshly-grounded answer every time; only the *behavioral
+                # evidence* is capped.
+                if should_record_ask_followup(request.session_id, target_event_id):
+                    record_interaction(
+                        event_id=target_event_id,
+                        entity_id=context.entity_id,
+                        domain=context.domain,
+                        interaction_type="ask_followup",
+                    )
+            else:
+                # No session_id at all (e.g. a direct API caller) -- still a
+                # real, single question about a real opportunity, recorded
+                # once with no session-level cap to apply.
+                record_interaction(
+                    event_id=target_event_id,
+                    entity_id=context.entity_id,
+                    domain=context.domain,
+                    interaction_type="ask_followup",
+                )
+
+            return AskResponse(
+                answer=answer,
+                event_id=target_event_id,
+                session_id=request.session_id,
+                grounded=True,
+            )
+
+        # A real event_id was supplied (directly, or via session
+        # continuity) but doesn't resolve to current context -- honest, not
+        # fabricated. Never records ASK_FOLLOWUP for an opportunity STRATUS
+        # cannot actually ground an answer in.
+        return AskResponse(
+            answer=(
+                "I don't have current context for that opportunity -- it may be "
+                "from before a restart, or may no longer be active. Ask me "
+                "something else, or reopen the opportunity and ask again."
+            ),
+            event_id=request.event_id,
+            session_id=request.session_id,
+            grounded=False,
         )
 
     relevant = memory_engine.list_memories(category="markets")[:3]
@@ -252,4 +329,7 @@ def ask_logan(request: AskRequest) -> AskResponse:
             "why it matters, or what deserves your attention. "
         )
 
-    return AskResponse(answer=context_note + f'You asked: "{clean_message}"')
+    return AskResponse(
+        answer=context_note + f'You asked: "{clean_message}"',
+        session_id=request.session_id,
+    )

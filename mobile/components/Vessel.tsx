@@ -4,6 +4,7 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import Animated, {
   Easing,
   Extrapolation,
@@ -1065,6 +1066,37 @@ export function Vessel({
 
                       <RecommendationPanel recommendation={item.delivered_item.recommendation} />
 
+                      {/* Sprint 3.6.7 Block 4: launches Ask STRATUS with
+                          this opportunity's real event_id attached (see
+                          ask.tsx's `isContextual` handling) -- the minimal
+                          per-card entry point the block's own scope called
+                          for, styled like ask.tsx's own starterRow rather
+                          than introducing a new button treatment. */}
+                      <Pressable
+                        style={styles.askButton}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/ask",
+                            params: {
+                              eventId: item.event_id,
+                              entityId: item.entity_id,
+                              displayName: item.display_name,
+                              domain: item.domain,
+                            },
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel={`Ask STRATUS about ${item.display_name}`}
+                      >
+                        <Ionicons
+                          name="chatbubble-ellipses-outline"
+                          size={13}
+                          color={theme.textSecondary}
+                        />
+                        <Text style={styles.askButtonText}>Ask STRATUS about this</Text>
+                        <Ionicons name="chevron-forward" size={13} color={theme.textSecondary} />
+                      </Pressable>
+
                       {/* Opportunity Card redesign: footer metadata stays
                           visually quiet -- LAST UPDATED (+ RELATED SIGNALS
                           when real, non-fabricated connection data exists)
@@ -1313,6 +1345,24 @@ const styles = StyleSheet.create({
     letterSpacing: tracking.label,
   },
   sectionText: { color: theme.textSecondary, fontSize: 13, fontFamily: font.body, lineHeight: 19 },
+  askButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  askButtonText: {
+    color: theme.textSecondary,
+    fontSize: 12.5,
+    fontFamily: font.bodyMedium,
+  },
   // Opportunity Card redesign: replaces the old metaRow -- same real
   // RELATED SIGNALS/LAST UPDATED data on the left, now beside a vertical
   // divider and the standing analysis-not-advice line (see the call site's

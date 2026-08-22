@@ -687,4 +687,146 @@ Recommendation: option 1 first -- it's a direct, well-scoped completion of work 
 backend half of, and gives a second real UI-driven engagement signal to validate the behavioral relevance
 model against. Option 2 is real and necessary but foundational enough to deserve its own dedicated planning
 pass rather than being picked up as a quick follow-on.
-approach before building it.
+
+---
+
+# Session Notes — 2026-08-22 (Sprint 3.6.7 Block 4 — contextual Ask STRATUS + ASK_FOLLOWUP behavioral evidence)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 3 closeout commit
+`0d9351c`. See ADR-055 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative.
+
+## What was asked
+
+Connect Ask STRATUS directly to the opportunity intelligence system: a user asks about a specific opportunity,
+the answer is grounded in that opportunity's real data, and the interaction becomes real, appropriately-bounded
+behavioral evidence via Block 3's `ask_followup` concept -- end to end, not a placeholder.
+
+## The one real architectural finding: there is no LLM in this codebase
+
+Before designing anything, checked the existing `/v1/ask` route (`backend/app/main.py`). It predates
+`logan_core` entirely -- reads from the historical `memory_engine` SQLite prototype, has no `event_id`
+concept, and answers with a static template regardless of the question. There is no model call anywhere in
+this repository. Adding one now would be a new external dependency, which CLAUDE.md's collaboration model
+requires explicit confirmation for before adding -- a separate decision this block does not make. Built the
+entire grounded-answer path deterministically instead: real, already-computed pipeline fields
+(`DeliveredItem`'s narrative text, `ConclusionConfidence`'s `classification`/`limiting_factors`/`alternatives`,
+attached `TriggerEvent`s, `Dimensions.personal_relevance`) matched against the question via ordered keyword
+classification, never fabricated, honest ("nothing currently limits this") when a category has no real data
+to answer from.
+
+## What got built (see ADR-055 for the full per-area record)
+
+1. **Authoritative rehydration** -- the client sends only a stable `event_id`; a new `OpportunityContext`/
+   `OpportunityContextCache` (`backend/app/ask_context.py`) reconstructs real context server-side from the same
+   `PipelineResult` that already produced that request's `FeedItem`, not a second computation. An unresolvable
+   `event_id` (stale, or from before a restart) gets an honest "no current context" answer.
+2. **One route, not two** -- `AskRequest`/`AskResponse` gained additive optional `event_id`/`session_id`/
+   `grounded` fields on the *existing* `/v1/ask` route. The pre-existing generic path (which, notably, had zero
+   test coverage before this session) is unaffected and now finally tested.
+3. **`answer_question()`** (`ask_engine.py`) -- deterministic, ordered keyword classification covering what
+   changed, why now, which signals, convergence, confidence, what would weaken this, personal relevance, and
+   comparison questions, each grounded in real fields.
+4. **`ASK_FOLLOWUP` wired for real** -- a successful contextual question records real behavioral evidence
+   through the exact Block 3 path (`record_interaction()` → `FeedbackEngine`, 0.80 confidence tier, unchanged).
+   Invalid opportunity, empty message, and generic questions never record engagement.
+5. **Session continuity, structural only** -- a bounded, process-lifetime session store holds just the
+   continuity anchor (which opportunity a session is discussing, and a session-level `ASK_FOLLOWUP` cap) --
+   never raw conversation transcripts, which the deterministic engine doesn't need. Deliberately not persisted
+   to SQLite -- documented as a short-lived UI-convenience boundary, not durable preference data.
+6. **Feedback-loop protection** -- at most one `ASK_FOLLOWUP` contribution per (session, opportunity),
+   regardless of how many follow-ups that session asks. Verified this sits correctly *on top of*, not in
+   conflict with, Block 3's pre-existing session-agnostic 5-minute dedup rather than assumed.
+7. **Mobile** -- one "Ask STRATUS about this" button per opportunity card (`Vessel.tsx`); `ask.tsx` reads
+   `eventId`/`entityId`/`displayName`/`domain` via Expo Router params (a genuinely new pattern for this app --
+   no prior screen took params) and shows contextual first-state copy/starters plus an honest "Discussing
+   {entity}" chip only when real context exists.
+
+## A test-design correction made mid-session, not pre-planned
+
+The acceptance scenario as described used "AMD" as the example entity, but AMD isn't a real simulated-fixture
+entity anywhere in this codebase (the fixtures are TSLA/NVDA/AAPL/MARKETS/OIL/BTC/FED/NFL/MUSIC/POLY/AI_SECTOR)
+-- caught by the first test run actually failing on a `None` lookup rather than assumed correct from the
+description. Substituted AAPL, which satisfies the same real requirement (no explicit holding/interest in the
+seeded `UserModel`), and documented the substitution explicitly in both the test and the ADR rather than
+quietly swapping it. Separately, an early version of one test expected two different session IDs asking the
+same question moments apart to each independently record evidence -- this actually collided with Block 3's
+own pre-existing short-window dedup (which is intentionally session-agnostic), so the test's expectation was
+wrong, not the implementation; corrected the test and used a real time-gap technique (directly rewinding a
+just-written record's `created_at`, the same class of fixture-timing tool `test_user_model_behavioral.py`
+already established) to prove the acceptance scenario's four *genuinely separate* engagements each counted.
+
+## Status at the end of this session
+
+`logan_core`/`backend` test count 405 → 446 (+41). `mobile` test count 94 → 100 (+6). mypy/ruff/black clean;
+`tsc --noEmit`/`eslint` clean. Acceptance scenario (opens an opportunity with no explicit holding, asks real
+contextual follow-ups across several sessions, simulated backend restart, inferred relevance still present and
+genuinely matured) proven end-to-end and covered by an automated test. No merge to main.
+
+## Integration-hardening pass (secondary task, Blocks 1–4)
+
+Checked every item on the requested list against the actual repository, not assumed clean:
+
+- **Duplicated logic**: found one genuine, low-risk instance --
+  `live_nvda_earnings_enabled()`/`memory_persistence_enabled()` (`backend/app/config.py`) had byte-identical
+  boolean-env-var parsing. Extracted a shared `_env_flag(name)` helper; both public functions now call it,
+  behavior unchanged (140 backend tests re-verified green immediately after). Everything else inspected
+  (`StockConvergenceTracker`'s episode dedup, `LearningEngine`'s record dedup, `_ask_sessions`'s session dedup;
+  the `_orchestrator`/`_user_model`/`_opportunity_context_cache`/`_ask_sessions` process-lifetime-singleton
+  pattern) is *structurally similar* but operates on genuinely different data/lifecycles at different layers --
+  consolidating any of it would be a real, riskier refactor for cosmetic benefit, which the block's own
+  instructions explicitly excluded ("do not perform unrelated cosmetic refactors"). Left alone, documented here
+  as inspected-and-rejected rather than silently skipped.
+- **Stable IDs/schema versions**: `MemoryRecord.schema_version`, `MEMORY_STORE_SCHEMA_VERSION`,
+  `TriggerEvent`/`EnrichedEvent.schema_version`, `OPPORTUNITIES_SCHEMA_VERSION` are all unchanged and
+  consistent. New Block 4 types (`OpportunityContext`, `AskRequest`/`AskResponse`) deliberately carry no
+  `schema_version` -- ephemeral, never persisted or versioned across releases, consistent with every other
+  request/response model in `models.py`.
+- **Provenance survives the full path**: added a new, dedicated integration test
+  (`test_ask_context.py::test_convergence_provenance_survives_into_opportunity_context`) proving real
+  three-signal convergence (Block 2's `StockConvergenceTracker`) survives `Orchestrator.run()`'s
+  coherent-opportunity merge all the way into `OpportunityContext.convergence_sources` and a real, grounded
+  Ask STRATUS answer (Block 4) -- not just inspected, actually executed and green.
+- **Persistence migrations**: `MemoryStore._migrate()`'s fresh-database and reopen-existing-database paths are
+  both covered by `test_memory_store_persistence.py` (unchanged this pass); only one schema version exists
+  today so there is nothing further to exercise until a real version-2 change lands.
+- **Config defaults**: `STRATUS_LIVE_NVDA_EARNINGS` and `STRATUS_PERSIST_MEMORY` both still default off, both
+  still isolate the entire pre-existing test suite from real external state unless a test explicitly opts in.
+  No new Block 4 config flag was needed -- the contextual Ask path is inert unless a client explicitly sends a
+  real `event_id`, which nothing does until the new mobile button is actually pressed.
+- **No test-only fixtures in production paths / no live-provider fabrication**: re-inspected
+  `_live_nvda_raw_signal`/`_live_nvda_price_move_raw_signal`/`_live_nvda_analyst_grade_raw_signal`
+  (`logan_feed.py`) and confirmed via `git diff HEAD` that this session's edits touched none of them --  the
+  only changed lines in that file are the intentional `OpportunityContext`/session-store additions. Re-ran
+  every `logan_core/live_verification/*.py` script's import (all three) to confirm nothing broke silently.
+- **Full validation suite re-run after every change above**: stayed green throughout (140 → 447 backend/
+  logan_core tests across the whole hardening pass, 100 mobile tests, mypy/ruff/black/tsc/eslint clean) --
+  no regressions found requiring a fix beyond the one consolidation described above.
+
+## Recommended Sprint 3.6.7 closeout / next-sprint objective
+
+Sprint 3.6.7 is functionally complete across all four blocks: generalized live stock-signal architecture
+(Block 1), signal convergence (Block 2), persistent behavioral personalization (Block 3), and contextual Ask
+STRATUS with real behavioral evidence (Block 4) -- a complete, tested, live-data-verified loop from raw
+provider signals through to a user asking STRATUS about a specific opportunity and that shaping future
+relevance. Recommend treating this as the sprint's close-out point rather than opening a Block 5 speculatively.
+
+Two reasonable candidates for the next sprint, carried forward from this block's own findings (not resolved
+here, deliberately):
+
+1. **Real per-opportunity NLU / whether an LLM belongs in this system at all.** `answer_question()`'s
+   deterministic keyword classification is honest and grounded but has real ceilings a genuine free-text
+   question can exceed (multi-part questions, questions this classifier's keyword list doesn't anticipate,
+   genuinely comparative/analytical questions beyond "which triggers are attached"). Introducing an LLM is a
+   real, separate architectural decision (a new external dependency, cost/latency/safety-boundary
+   implications for the analysis-not-advice guardrail) that this block deliberately did not make -- worth a
+   dedicated design conversation, not a quiet addition to a future block.
+2. **Multi-user safety**, unchanged from Block 3's own recommendation -- `MemoryStore.query()`, `UserModel`,
+   the new SQLite persistence, and now the Ask STRATUS session store are all still single-user
+   (`LOCAL_FOUNDER_USER_ID`)/process-lifetime by construction. Not a bug for the current single-operator
+   prototype, but the real prerequisite before ADR-006's Phase 2 (multi-user/public launch) database decision
+   can be made meaningfully.
+
+Recommendation: pause new Block 5 feature work here and let this sprint's four-block arc stand as a complete,
+closed unit; pick up either candidate above as the deliberate start of the *next* sprint, with its own
+planning pass rather than a same-session continuation.

@@ -1696,3 +1696,115 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   Block 2 coherent-opportunity/convergence machinery is live-data-correct end to end even on a day convergence
   itself doesn't fire. This is a script-only change; no application code was touched, and no new automated
   test was added (the script itself is deliberately not pytest-collected — see its own docstring).
+
+## ADR-055: Sprint 3.6.7 Block 4 — contextual Ask STRATUS, ASK_FOLLOWUP high-intent behavioral evidence, and deterministic grounded answers
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: `ask_followup` was added as a full `InteractionType`/behavioral-evidence path in Sprint 3.6.7 Block 3
+  (ADR-053), but deliberately left unwired to any real UI action — the existing `/v1/ask` route
+  (`backend/app/main.py`) predates `logan_core` entirely: it reads from the historical `memory_engine`
+  (SQLite prototype, unrelated to the real pipeline), has no `event_id`/opportunity concept at all, and answers
+  with a static template regardless of what was asked. The owner asked for a real, end-to-end connection: a
+  user opens an opportunity, asks STRATUS a grounded contextual question, and that becomes real,
+  appropriately-weighted, appropriately-bounded behavioral evidence — without a second chat subsystem, without
+  breaking the pre-existing generic Ask STRATUS entry point, and without introducing a real-time NLU/LLM
+  dependency this block was not asked to (and, per CLAUDE.md's dependency-addition confirmation rule, could
+  not silently) add.
+- **No LLM decision (confirmed by inspection, not assumed):** this codebase has never called an LLM anywhere —
+  the pre-existing generic `/v1/ask` path is itself a static template/lookup over `memory_engine`, not a model
+  call. Adding one now would be a new external dependency requiring its own explicit confirmation (CLAUDE.md's
+  collaboration model) — a separate decision, not made here. Instead, Ask STRATUS answers are entirely
+  deterministic: real, already-computed pipeline fields (`DeliveredItem`'s narrative text,
+  `ConclusionConfidence`'s `classification`/`limiting_factors`/`alternatives`, the entity's attached
+  `TriggerEvent`s, `Dimensions.personal_relevance`) matched against the question via keyword classification
+  (`backend/app/ask_engine.py`). "Deterministic intelligence first, LLM interpretation second" — there is no
+  second stage yet; this *is* the first stage, exposed directly to the user rather than only feeding a
+  presentation template.
+- Decision (by area):
+  1. **Authoritative opportunity rehydration, not client-supplied facts.** The client sends only a stable
+     `event_id` (already has it from a real `FeedItem`) — the backend rehydrates real context server-side via
+     a new `OpportunityContext` snapshot (`backend/app/ask_context.py`), built from the exact same
+     `PipelineResult` that already produced that request's `FeedItem` (not a second, independent computation).
+     Populated wholesale into a process-lifetime `OpportunityContextCache` on every `_run_feed_pipeline()` call
+     (same singleton pattern as `_orchestrator`/`_user_model`) — same limitation as everything else in that
+     tier: a backend restart clears it, and a request for an `event_id` from before a restart gets an honest
+     "I don't have current context for that opportunity" answer, never a fabricated one. `OpportunityContext`
+     never carries `internal_rank_score` or any other internal-only field (ADR-029 discipline, checked directly
+     against the model's field set in tests, not just string-matched in serialized output).
+  2. **Contract: extends the existing `/v1/ask` route, not a second endpoint.** `AskRequest`/`AskResponse`
+     (`backend/app/models.py`) gain additive, optional fields: `event_id`, `session_id` on the request;
+     `event_id`, `session_id`, `grounded` (echoed/computed) on the response. Every existing generic caller
+     (omits both) is completely unaffected — verified by the pre-existing behavior now finally having test
+     coverage (`test_ask_route.py`; the generic path had zero automated tests before this block). One route
+     dispatches on whether `event_id` (or session-continuity-resolved `event_id`) resolves to real context,
+     rather than duplicating request/response handling across two endpoints — the "reconcile shared logic"
+     instruction, satisfied by there genuinely being very little logic the two paths share (different data
+     sources entirely) once the dispatch point is this thin.
+  3. **`answer_question()` (`ask_engine.py`)** — ordered, specific-before-generic keyword classification
+     (mirroring `policy/engine.py`'s existing `_watch_route` "explicit checked before inferred" precedent)
+     routing a question to real fields: what changed → `what_happened`; why now/timing → `why_now`; why it
+     matters (generic vs. "to me" specifically, the latter distinguishing explicit-vs-inferred connection basis
+     per ADR-048) → `why_it_matters`/`why_it_matters_to_me`; which signals / convergence → real `trigger_codes`
+     and, only when genuinely present, `STOCK_CONVERGENCE_MULTI_SOURCE`'s own `context["sources"]` (Sprint
+     3.6.7 Block 2) — never implies convergence that didn't fire; confidence / "how sure" →
+     `confidence_score`/`label`/`classification` plus real `limiting_factors`; "what would weaken this" →
+     `limiting_factors`/`alternatives` verbatim, with an honest "nothing currently limits this" when both are
+     empty rather than fabricating a caveat; a comparison question ("stronger than X") names every real
+     attached trigger rather than inventing a ranking the pipeline doesn't compute. An unrecognized question
+     falls through to a real-data overview (headline + what_happened + why_it_matters + confidence), never a
+     fabricated answer.
+  4. **ASK_FOLLOWUP wiring, and why it's a separate code path from record_interaction's other branches.**
+     `backend/app/logan_feed.record_interaction()`'s existing `interaction_type=="impression"` special case
+     (Block 3) is joined by contextual-`/v1/ask`'s own direct call into the same `record_interaction()` for
+     `ask_followup` — reusing the identical `FeedbackEngine`-interpreted path every other real `InteractionType`
+     already uses (Block 3's `0.80` confidence tier for `ask_followup`, unchanged, not re-derived here). Only
+     ever recorded after a real `OpportunityContext` resolves and a real answer is generated — an invalid
+     `event_id`, an empty message, or a generic (no-context) question never records engagement.
+  5. **Session continuity — structural anchor only, not persisted chat transcripts.** A new, bounded,
+     process-lifetime `_ask_sessions` store (`logan_feed.py`, capped at `_ASK_SESSION_LIMIT=500` with
+     oldest-first eviction) keyed by a client-generated `session_id`, holding only `event_id` (which
+     opportunity this session is discussing — lets a follow-up omit `event_id` and still resolve) and
+     `ask_followup_recorded_event_ids` (the session-level cap below) — never raw question/answer text, which
+     the deterministic `ask_engine` doesn't need to answer well anyway (each question is independently
+     classified against the same real context, not against conversation history). Deliberately **not**
+     persisted to SQLite: a single Ask STRATUS conversation is short-lived API/UI convenience state, not
+     durable behavioral preference data, and doesn't belong in the same persistence tier as real `UserModel`
+     evidence (Block 3's SQLite store) — the documented persistence-boundary fallback the block's own scope
+     explicitly allowed ("session-local contextual continuity... document the persistence boundary").
+  6. **Feedback-loop protection: at most one `ASK_FOLLOWUP` contribution per (session, opportunity).**
+     `should_record_ask_followup()` checks/marks a session's `ask_followup_recorded_event_ids` set — repeated
+     follow-up questions about the same opportunity in one session still get a real, freshly-grounded answer
+     every time, but contribute behavioral evidence only once. This sits *on top of*, not instead of,
+     `LearningEngine`'s pre-existing Block 3 short-window (`FEEDBACK_DEDUP_WINDOW=5min`) dedup, which is
+     itself session-agnostic (a genuine duplicate/retry within 5 minutes is a duplicate regardless of which
+     client session sent it) — verified as the correct, unmodified interaction between the two mechanisms, not
+     assumed (`test_close_in_time_sessions_still_share_the_pre_existing_short_window_dedup`). No new weight/cap
+     constants were invented beyond this session-scoped ceiling — `ask_followup`'s `0.80` confidence tier and
+     every maturity/decay/exposure-fatigue rule from Block 3 apply completely unmodified once evidence reaches
+     `UserModelBuilder`.
+  7. **Mobile: minimal per-card entry point, not a redesign.** `Vessel.tsx` gains one bordered pill button
+     ("Ask STRATUS about this," styled identically to `ask.tsx`'s own existing `starterRow` pattern) inside the
+     already-expanded card, navigating to `/ask` with `eventId`/`entityId`/`displayName`/`domain` as Expo
+     Router params — a new pattern for this app (no prior screen took params), but a standard, well-supported
+     one. `ask.tsx` reads them via `useLocalSearchParams`, generates one `sessionId` per screen visit
+     (`lib/ask.ts`'s `createAskSessionId`, not a real UUID — no such dependency exists in this app, just unique
+     enough to key the server-side session map), shows a small honest "Discussing {entity}" chip only when a
+     real `eventId` param was actually passed (never claims a connection the screen doesn't have), and swaps
+     the first-state headline/starter prompts for opportunity-specific ones. The pre-existing generic entry
+     point (drawer menu → `/ask` with no params) is completely unaffected — same screen, same route, contextual
+     mode is purely additive based on whether params are present.
+- Consequences: acceptance scenario proven end-to-end and covered by an automated test
+  (`test_ask_route.py::test_matured_ask_followup_evidence_survives_restart_and_raises_relevance` — AAPL stands
+  in for the task description's "AMD," since AMD isn't a real simulated-fixture entity in this codebase; AAPL
+  is, and carries no explicit holding/interest in the seeded `UserModel`, matching the scenario's actual
+  requirement): a user opens an opportunity with no explicit holding, asks real contextual follow-ups across
+  several independent sessions, a simulated backend restart occurs, and the inferred relevance is still present
+  afterward with a weight genuinely matured past a single `ask_followup`'s own `0.80`. New tests:
+  `test_ask_engine.py` (17, deterministic classification, including "never mentions internal_rank_score" across
+  every question category), `test_ask_context.py` (6, rehydration/cache), `test_ask_route.py` (18, full HTTP
+  integration — generic-path regression coverage the pre-existing route never had, contextual grounding,
+  invalid-opportunity/empty-message never recording engagement, session continuity, idempotency, the session
+  cap, restart persistence, and a Watch-fatigue-untouched regression guard), `ask.test.ts` (6, mobile client).
+  `logan_core`/`backend` test count 405 → 446 (+41). mobile test count 94 → 100 (+6). mypy/ruff/black clean;
+  `tsc --noEmit`/`eslint` clean. No merge to main.

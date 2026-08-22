@@ -13,11 +13,11 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 
 import { font, theme, spacing, tracking, type } from "../constants/theme";
 import { PressableScale } from "../components/PressableScale";
-import { fetchJson } from "../lib/apiClient";
+import { askStratus, createAskSessionId } from "../lib/ask";
 
 // Sprint 3.6 device retest: Ask STRATUS's first-run mark now renders the
 // owner-approved horizon/sun artwork directly (see
@@ -46,6 +46,16 @@ const STARTER_PROMPTS = [
   "What deserves my attention today?",
 ];
 
+// Sprint 3.6.7 Block 4: shown instead when this screen was opened from a
+// specific opportunity (see Vessel.tsx's "Ask STRATUS about this" action) --
+// real questions a grounded answer can actually address, not the generic
+// starters above.
+const CONTEXTUAL_STARTER_PROMPTS = [
+  "What changed here?",
+  "Why does this matter now?",
+  "What would make this less interesting?",
+];
+
 let messageCounter = 0;
 function nextId(): string {
   messageCounter += 1;
@@ -65,13 +75,38 @@ function timeNow(): string {
 // rather than SMS-style bubbles, so this reads as "the intelligence behind
 // STRATUS," not a generic chat app. User messages stay distinct but
 // restrained (tinted outline, not a solid color block).
+// Sprint 3.6.7 Block 4: optional opportunity context this screen was opened
+// with (see Vessel.tsx's "Ask STRATUS about this" action). All strings --
+// Expo Router search params are always strings, never coerced. `eventId`
+// alone is what actually enables the contextual path server-side;
+// `entityId`/`displayName`/`domain` are only used for this screen's own
+// display, never re-sent as claims to the backend (which already has
+// authoritative context for `eventId` server-side).
+type AskParams = {
+  eventId?: string;
+  entityId?: string;
+  displayName?: string;
+  domain?: string;
+};
+
 export default function AskScreen() {
+  const params = useLocalSearchParams<AskParams>();
+  const contextEventId = params.eventId;
+  const contextDisplayName = params.displayName;
+  const isContextual = !!contextEventId;
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
   const controllerRef = useRef<AbortController | null>(null);
   useEffect(() => () => controllerRef.current?.abort(), []);
+
+  // One session id per screen visit -- lets a follow-up question resolve
+  // against the same opportunity server-side without resending eventId
+  // every time (though this screen does resend it anyway, below, for
+  // robustness -- see askStratus's own call).
+  const sessionIdRef = useRef<string>(createAskSessionId());
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -87,14 +122,11 @@ export default function AskScreen() {
     const controller = new AbortController();
     controllerRef.current = controller;
 
-    const result = await fetchJson<{ answer: string }>("/v1/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: clean }),
+    const result = await askStratus({
+      message: clean,
+      eventId: contextEventId,
+      sessionId: sessionIdRef.current,
       signal: controller.signal,
-      // Non-idempotent request -- don't auto-retry a POST, matching
-      // fetchJson's own documented convention for this case.
-      retries: 0,
     });
 
     switch (result.status) {
@@ -156,6 +188,21 @@ export default function AskScreen() {
         <View style={styles.spacer} />
       </View>
 
+      {/* Sprint 3.6.7 Block 4: a small, honest indicator of what this
+          conversation is grounded in -- never claims a connection the
+          screen doesn't actually have (isContextual is false, and this
+          renders nothing, whenever no real eventId param was passed). */}
+      {isContextual && !!contextDisplayName && (
+        <View style={styles.contextChipRow}>
+          <View style={styles.contextChip}>
+            <Ionicons name="pricetag-outline" size={11} color={theme.accent} />
+            <Text style={styles.contextChipText} numberOfLines={1}>
+              Discussing {contextDisplayName}
+            </Text>
+          </View>
+        </View>
+      )}
+
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -179,14 +226,18 @@ export default function AskScreen() {
               />
               <Text style={styles.firstStatePoweredBy}>POWERED BY LGI</Text>
               <Text style={styles.firstStateHeadline}>
-                I&apos;m STRATUS.{"\n"}Your personal opportunity intelligence.
+                {isContextual
+                  ? `Let's talk about ${contextDisplayName ?? "this opportunity"}.`
+                  : "I'm STRATUS.\nYour personal opportunity intelligence."}
               </Text>
               <Text style={styles.firstStateSubtext}>
-                Ask what changed. Why it matters. What deserves your attention.
+                {isContextual
+                  ? "Ask what changed, why it matters now, or what would change STRATUS's read."
+                  : "Ask what changed. Why it matters. What deserves your attention."}
               </Text>
 
               <View style={styles.starterList}>
-                {STARTER_PROMPTS.map((prompt) => (
+                {(isContextual ? CONTEXTUAL_STARTER_PROMPTS : STARTER_PROMPTS).map((prompt) => (
                   <Pressable
                     key={prompt}
                     style={styles.starterRow}
@@ -298,6 +349,27 @@ const styles = StyleSheet.create({
     borderRadius: 1,
   },
   spacer: { width: 22 },
+  contextChipRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    paddingBottom: spacing.xs,
+  },
+  contextChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    maxWidth: "80%",
+  },
+  contextChipText: {
+    color: theme.textSecondary,
+    fontSize: 11,
+    fontFamily: font.bodyMedium,
+  },
   messages: { padding: 20, gap: 18, flexGrow: 1, justifyContent: "flex-end" },
   firstState: { alignItems: "center", paddingTop: spacing.xxl, paddingBottom: spacing.xl },
   horizonMark: {

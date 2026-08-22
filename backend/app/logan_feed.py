@@ -49,6 +49,11 @@ from logan_core.trigger_detection import (  # noqa: E402
 )
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
+from .ask_context import (  # noqa: E402
+    OpportunityContext,
+    OpportunityContextCache,
+    build_opportunity_context,
+)
 from .config import (  # noqa: E402
     live_nvda_earnings_enabled,
     memory_persistence_enabled,
@@ -94,6 +99,92 @@ _baseline_established: set[str] = set()
 # new mechanism. Same in-memory-only limitation -- a backend restart resets
 # this too, same as `_orchestrator` and `_baseline_established`.
 _user_model: UserModel | None = None
+
+# Sprint 3.6.7 Block 4: authoritative opportunity-context cache for
+# contextual Ask STRATUS -- see ask_context.py's own docstring. Refreshed
+# wholesale on every `_run_feed_pipeline()` call, same process-lifetime-only
+# limitation as everything else above.
+_opportunity_context_cache = OpportunityContextCache()
+
+# Sprint 3.6.7 Block 4: bounded, process-lifetime Ask STRATUS session store.
+# Deliberately not persisted to SQLite -- session continuity is a short-lived
+# API/UI convenience (one Ask STRATUS conversation), not durable behavioral
+# preference data, so it doesn't belong in the same persistence tier as
+# UserModel evidence (see docs/DECISIONS.md's Sprint 3.6.7 Block 4 ADR for
+# the full reasoning). Stores only the structured continuity anchor (which
+# event_id this session is discussing, and which event_ids it has already
+# recorded an ASK_FOLLOWUP for) -- never raw question/answer transcript text,
+# which the deterministic ask_engine doesn't need to answer well anyway.
+_ASK_SESSION_LIMIT = 500
+
+
+class _AskSession:
+    __slots__ = ("event_id", "ask_followup_recorded_event_ids", "last_active_at")
+
+    def __init__(self) -> None:
+        self.event_id: UUID | None = None
+        self.ask_followup_recorded_event_ids: set[UUID] = set()
+        self.last_active_at: datetime = datetime.now(timezone.utc)
+
+
+_ask_sessions: dict[str, _AskSession] = {}
+
+
+def _get_or_create_ask_session(session_id: str) -> _AskSession:
+    session = _ask_sessions.get(session_id)
+    if session is None:
+        # Bounded eviction: a simple oldest-first drop once the cap is hit --
+        # this is a lightweight UI convenience store, not a place to spend
+        # real LRU machinery on. Local single-user usage makes hitting this
+        # cap at all unlikely; it exists as a hard ceiling, not a tuned limit.
+        if len(_ask_sessions) >= _ASK_SESSION_LIMIT:
+            oldest_id = min(
+                _ask_sessions, key=lambda sid: _ask_sessions[sid].last_active_at
+            )
+            del _ask_sessions[oldest_id]
+        session = _AskSession()
+        _ask_sessions[session_id] = session
+    session.last_active_at = datetime.now(timezone.utc)
+    return session
+
+
+def get_opportunity_context(event_id: UUID) -> Optional[OpportunityContext]:
+    """Authoritative server-side rehydration for contextual Ask STRATUS --
+    the only way `/v1/ask` (see main.py) ever learns about a specific
+    opportunity's real content. Returns None when `event_id` isn't in the
+    current cache (never seen, or the backend restarted since) -- the caller
+    must treat that as "no current context," never fabricate one.
+    """
+    return _opportunity_context_cache.get(event_id)
+
+
+def should_record_ask_followup(session_id: str, event_id: UUID) -> bool:
+    """Sprint 3.6.7 Block 4 feedback-loop protection: at most one
+    ASK_FOLLOWUP behavioral-evidence contribution per (session, opportunity)
+    pair, regardless of how many follow-up questions that session asks about
+    it -- "repeated questions in one session should not count as N
+    independent preference confirmations." Marks the event_id as recorded on
+    the same call that returns True, so this is safe to call exactly once per
+    successfully-answered contextual question.
+    """
+    session = _get_or_create_ask_session(session_id)
+    if event_id in session.ask_followup_recorded_event_ids:
+        return False
+    session.ask_followup_recorded_event_ids.add(event_id)
+    return True
+
+
+def set_ask_session_event(session_id: str, event_id: UUID) -> None:
+    """Records which opportunity a session is currently discussing, so a
+    later follow-up question in the same session can omit `event_id` and
+    still resolve against it (see main.py's ask_logan route)."""
+    session = _get_or_create_ask_session(session_id)
+    session.event_id = event_id
+
+
+def get_ask_session_event(session_id: str) -> Optional[UUID]:
+    session = _ask_sessions.get(session_id)
+    return session.event_id if session is not None else None
 
 
 def _get_orchestrator() -> Orchestrator:
@@ -367,6 +458,8 @@ def reset_pipeline_state() -> None:
         _orchestrator = None
         _baseline_established.clear()
         _user_model = None
+        _opportunity_context_cache.replace_all([])
+        _ask_sessions.clear()
 
 
 def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
@@ -714,9 +807,13 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
         pending_push_event_ids = get_pending_push_event_ids()
 
         items = []
+        opportunity_contexts = []
         for position, (entity_id, r) in enumerate(results, start=1):
             entity = r.event.entities[0]
             canonical = resolve(entity_id, entity.display_name, r.event.domain)
+            item_is_new_for_user = (
+                False if is_first_load else r.prioritized_item.is_new_for_user
+            ) or r.event.event_id in pending_push_event_ids
             items.append(
                 FeedItem(
                     event_id=r.event.event_id,
@@ -730,10 +827,7 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
                     confidence_score=r.confidence.confidence_score,
                     confidence_label=r.delivered_item.confidence_label,
                     connected_event_ids=connections[r.event.event_id],
-                    is_new_for_user=(
-                        (False if is_first_load else r.prioritized_item.is_new_for_user)
-                        or r.event.event_id in pending_push_event_ids
-                    ),
+                    is_new_for_user=item_is_new_for_user,
                     # First signal drives the primary event for this entity
                     # (see world_model/model.py's process()) -- TSLA is the
                     # only fixture with a second, corroborating signal, and
@@ -741,6 +835,19 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
                     signal_type=r.normalized_signals[0].signal_type,
                 )
             )
+            # Sprint 3.6.7 Block 4: retains a richer slice of this same
+            # PipelineResult for contextual Ask STRATUS -- see
+            # ask_context.py's own docstring for why this isn't a second,
+            # independent computation.
+            opportunity_contexts.append(
+                build_opportunity_context(
+                    entity_id=canonical.entity_id,
+                    display_name=canonical.display_name,
+                    result=r,
+                    is_new_for_user=item_is_new_for_user,
+                )
+            )
+        _opportunity_context_cache.replace_all(opportunity_contexts)
 
         # Sprint 3.6.6F (STRATUS Watch): internal-only -- never added to the
         # public FeedItem contract (same discipline as internal_rank_score,

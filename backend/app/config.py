@@ -21,23 +21,27 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
+def _env_flag(name: str) -> bool:
+    """Shared boolean-env-var parsing for every config-gated capability in
+    this file (Sprint 3.6.7 Block 4 integration-hardening pass -- extracted
+    after `live_nvda_earnings_enabled`/`memory_persistence_enabled` were
+    found byte-identical except for the variable name). Not a frozen
+    constant anywhere it's used -- always reflects the current environment,
+    so tests toggle a flag with monkeypatch.setenv without reloading any
+    module, and the real backend only needs a clean restart (not a code
+    change) to flip one.
+    """
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
 def live_nvda_earnings_enabled() -> bool:
     """Sprint 3.6.6C: gates whether /v1/opportunities attempts to replace the
     simulated NVDA fixture with a real FMP-driven earnings opportunity.
     Defaults to disabled -- existing simulated-only behavior is the safe,
     backward-compatible default; this must be explicitly turned on via
     STRATUS_LIVE_NVDA_EARNINGS=true.
-
-    A function, not a frozen module-level constant, so it always reflects
-    the current environment -- tests toggle this with monkeypatch.setenv
-    without needing to reload the module, and the real backend only needs a
-    clean restart (not a code change) to flip it.
     """
-    return os.environ.get("STRATUS_LIVE_NVDA_EARNINGS", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    return _env_flag("STRATUS_LIVE_NVDA_EARNINGS")
 
 
 def memory_persistence_enabled() -> bool:
@@ -51,16 +55,8 @@ def memory_persistence_enabled() -> bool:
     suite's `reset_pipeline_state()` fixture isolated to in-memory state
     (no test run reads/writes the real local database file unless it
     explicitly enables this).
-
-    A function, not a frozen constant, for the same reason
-    live_nvda_earnings_enabled() is -- tests toggle it with
-    monkeypatch.setenv without needing to reload the module.
     """
-    return os.environ.get("STRATUS_PERSIST_MEMORY", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    return _env_flag("STRATUS_PERSIST_MEMORY")
 
 
 def memory_store_db_path() -> Path:

@@ -37,10 +37,32 @@ class BriefingResponse(BaseModel):
 
 class AskRequest(BaseModel):
     message: str
+    # Sprint 3.6.7 Block 4 -- both additive/optional: every existing caller
+    # (the generic Ask STRATUS entry point) omits both and is unaffected.
+    # `event_id` is a stable opportunity reference the client already has
+    # from a real FeedItem -- the backend rehydrates authoritative context
+    # from it server-side (see backend/app/ask_context.py); the client never
+    # supplies opportunity facts directly, only the reference. `session_id`
+    # (client-generated, e.g. once per Ask STRATUS screen visit) lets a
+    # follow-up question omit `event_id` and still resolve against the same
+    # opportunity the session started with -- see ask_engine.py's session
+    # continuity model.
+    event_id: Optional[UUID] = None
+    session_id: Optional[str] = None
 
 
 class AskResponse(BaseModel):
     answer: str
+    # Echoed back so the client can keep sending the same values on
+    # follow-ups without re-deriving them -- None on the generic (no
+    # opportunity context) path, unchanged from before this block.
+    event_id: Optional[UUID] = None
+    session_id: Optional[str] = None
+    # Whether this answer was actually grounded in real opportunity context
+    # (event_id resolved to a live cache entry) vs. the generic fallback --
+    # lets the client distinguish "STRATUS answered using this opportunity's
+    # real data" from "STRATUS answered generically" without parsing text.
+    grounded: bool = False
 
 
 class NotificationsReviewRequest(BaseModel):
