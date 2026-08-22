@@ -10,6 +10,7 @@ tests only prove that a real interaction reaches that existing logic
 unchanged and lands in MemoryStore via the existing single-writer gate.
 """
 
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -72,8 +73,72 @@ def test_click_interaction_is_distinguishable_from_view():
     )
     assert len(records) == 1
     content = records[0].content
-    assert isinstance(content, str)
-    assert "click" in content
+    assert isinstance(content, dict)
+    assert content["interaction_type"] == "click"
+
+
+def test_record_interaction_routes_through_orchestrator_ownership():
+    """Behavioral-personalization pass (restoring ADR-047): record_interaction()
+    must go through Orchestrator.run_feedback_loop(), never call
+    feedback_engine.interpret()/learning_engine.process_feedback() directly --
+    the Orchestrator remains the sole owner of that sequencing."""
+    event_id = uuid4()
+    orchestrator = _get_orchestrator()
+    with patch.object(
+        orchestrator, "run_feedback_loop", wraps=orchestrator.run_feedback_loop
+    ) as spy:
+        record_interaction(
+            event_id=event_id,
+            entity_id="NVDA",
+            domain="stocks",
+            interaction_type="watch",
+        )
+    spy.assert_called_once()
+
+
+def test_record_interaction_interprets_exactly_once():
+    """The content-builder callable must not cause a second interpretation of
+    the same interaction -- run_feedback_loop() calls interpret() exactly
+    once and hands the same FeedbackSignal to both the content builder and
+    LearningEngine.process_feedback()."""
+    event_id = uuid4()
+    feedback_engine = _get_orchestrator().deps.feedback_engine
+    with patch.object(
+        feedback_engine, "interpret", wraps=feedback_engine.interpret
+    ) as spy:
+        record_interaction(
+            event_id=event_id,
+            entity_id="NVDA",
+            domain="stocks",
+            interaction_type="watch",
+        )
+    spy.assert_called_once()
+
+
+def test_record_interaction_content_carries_real_inferred_intent_and_confidence():
+    """Structured Memory content must reflect FeedbackEngine's own
+    interpretation (not a re-derived or throwaway value) -- "watch" is
+    deterministically interested/0.85 per FeedbackEngine.interpret()."""
+    event_id = uuid4()
+    record_interaction(
+        event_id=event_id,
+        entity_id="AAPL",
+        domain="stocks",
+        interaction_type="watch",
+    )
+    records = _get_orchestrator().deps.memory_store.query(
+        domain="stocks", entities=["AAPL"]
+    )
+    assert len(records) == 1
+    content = records[0].content
+    assert content == {
+        "interaction_type": "watch",
+        "entity_id": "AAPL",
+        "domain": "stocks",
+        "inferred_intent": "interested",
+        "intent_confidence": 0.85,
+        "duration_ms": None,
+    }
 
 
 def test_route_records_interaction_end_to_end():

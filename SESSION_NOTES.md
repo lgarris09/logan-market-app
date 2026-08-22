@@ -208,4 +208,68 @@ changed this turn; the branch is unchanged from commit `9f1f5e3`, clean and sync
    for this pass — "expertise" isn't demonstrated by view/click/dwell signals, only attention is.
 3. Everything else from this pass's brief (impression/exposure, Watch Personal/Exceptional routes, FIELD
    BIAS learning, Ask STRATUS linkage) remains correctly deferred, unchanged from the prior session's report.
+
+---
+
+# Session Notes — 2026-08-21 (behavioral-personalization foundation, completed after interruption + recovery)
+
+Branch: `integration/sprint-3.6.6-stratus-watch`. Prior commit: `6e01819` (the stop-condition note above).
+
+## Reconciling what actually happened between 2026-08-19 and this session
+
+The commit above (`6e01819`) accurately describes its own moment — the pass really did stop at the
+`ReasoningEngine`/Watch-eligibility blocker with no code written yet. Work resumed after that commit (decision
+1 above was made: filter `connected_entities` by `Interest.source`, keeping explicit and inferred as separate
+signals rather than choosing one), and the full implementation described in step 2 above was written —
+but that work was interrupted by a session limit before validation, commit, or push, and the machine was then
+restarted before it could be revisited. `6e01819` therefore understates what had actually been built; no
+commit ever captured it. This session recovered the uncommitted working tree intact after the restart,
+inspected it file-by-file against `git diff` before touching anything, verified nothing was lost or
+corrupted, and confirmed local `HEAD` still matched `origin/integration/sprint-3.6.6-stratus-watch` exactly.
+
+Two things from the recovered code needed a real decision before proceeding, rather than assuming the
+uncommitted state was already correct:
+
+- `record_interaction()` had started calling `feedback_engine.interpret()` and
+  `learning_engine.process_feedback()` directly, bypassing `Orchestrator.run_feedback_loop()` — a regression
+  against ADR-047's own stated layer-ownership invariant. Root cause: `run_feedback_loop()`'s `content`
+  parameter had to be supplied before its internal `interpret()` call, so structured content built from
+  `interpret()`'s own output had no way to reach it. Fixed at the root (see ADR-048) rather than kept as a
+  bypass: `content` now also accepts a callable that receives the computed `FeedbackSignal`, restoring
+  Orchestrator ownership without a second interpretation.
+- `_fold_behavioral_evidence()`'s new `DomainPref(weight=0.5)` was verified against `UserModelBuilder.seed()`
+  (unmodified, pre-existing code at the top of the same file) before being kept — `weight=0.5` is exactly
+  `seed()`'s own existing default for a newly-created domain preference, not an invented number specific to
+  this pass.
+
+See ADR-048 (`docs/DECISIONS.md`) for the complete decision record: the source-aware relevance split
+(`connected_entities_explicit`/`connected_entities_inferred`), the behavioral-evidence folding into
+`UserModel`, the restored Orchestrator ownership, and the new process-lifetime `UserModel` persistence in
+`backend/app/logan_feed.py` (`_get_user_model()`, mirroring `_get_orchestrator()`) — the piece that was
+previously only inspected/scoped (step 2 above) and is now actually wired into `_run_feed_pipeline()`.
+
+## Status at the end of this session
+
+Implementation complete for this pass's scope. `backend`/`logan_core` test count 244 → 264 (20 new/updated
+tests covering repeated-vs-isolated evidence, no cross-entity/domain leakage, explicit data preservation,
+`inferred_expertise` untouched, explicit-vs-inferred relevance bounding, Orchestrator-ownership restoration,
+single-interpretation, and cross-request `UserModel` persistence). mypy/ruff/black clean. Mobile untouched by
+this pass — not re-validated. Watch alert/interruption thresholds, Personal/Exceptional Watch routes,
+impression/exposure semantics, FIELD BIAS learning, and Ask STRATUS linkage were not touched, as scoped.
+
+## What remains before Watch Personal/Exceptional policy work
+
+- The learning inputs (behavioral evidence → `UserModel`, source-aware relevance, audit trail) now exist and
+  persist, but nothing yet *changes Watch dispatch behavior* based on them — `OpportunityEngine`'s inferred-only
+  bound (0.5) only ever raises `personal_relevance` for non-actionable events; it was never wired into
+  `PolicyEngine`/`PrioritizationEngine`'s alert/interruption gating, which remains exactly as it was.
+- Whether/how an accumulated `established_behaviors`/inferred-`Interest` pattern should eventually promote an
+  entity toward Personal or Exceptional Watch eligibility is an explicit open product decision, not addressed
+  here.
+- `UserModel` persistence is process-lifetime/in-memory only (mirrors the existing `_orchestrator` limitation)
+  — a backend restart still resets accumulated behavioral learning. Real durable per-user persistence remains
+  the open, undecided ADR-006 question.
+- `MemoryStore.query()` has no `user_id` filter; this pass's single-user (`LOCAL_FOUNDER_USER_ID`) scope makes
+  that safe today but it would need addressing before any real multi-user support.
+   BIAS learning, Ask STRATUS linkage) remains correctly deferred, unchanged from the prior session's report.
    need real data, not invented numbers), and whether the full 5-tab navigation is worth building next.

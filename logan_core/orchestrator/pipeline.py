@@ -21,6 +21,7 @@ from logan_core.contracts import (
     EvidenceTrust,
     ExecutionMetrics,
     ExecutionTrace,
+    FeedbackSignal,
     InteractionType,
     MentalModel,
     NormalizedSignal,
@@ -415,19 +416,27 @@ class Orchestrator:
         domain: Domain,
         entities: list[str],
         interaction_type: InteractionType,
-        content: str,
+        content: object | Callable[[FeedbackSignal], object],
         duration_ms: Optional[int] = None,
     ):
         """Second operational test scenario: Feedback -> Learning -> MemoryWrite,
         closing the loop the primary run intentionally leaves open. For ordinary
         interactions (view/click/dismiss/save/share) — use run_memory_inbox_confirm /
         run_memory_inbox_reject for the explicit ADR-019 confirm/reject path instead.
+
+        `content` accepts either a plain value (existing callers, unchanged) or a
+        callable that receives the just-computed `FeedbackSignal` and returns the
+        content to store -- lets a caller build Memory content from
+        inferred_intent/intent_confidence without interpreting the interaction a
+        second time or reaching around this method to call feedback_engine/
+        learning_engine directly (behavioral-personalization pass).
         """
         feedback = self.deps.feedback_engine.interpret(
             event_id, interaction_type, duration_ms
         )
+        resolved_content = content(feedback) if callable(content) else content
         write = self.deps.learning_engine.process_feedback(
-            feedback, user_id, domain, entities, content
+            feedback, user_id, domain, entities, resolved_content
         )
         return feedback, write
 

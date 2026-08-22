@@ -32,7 +32,7 @@ class LearningEngine:
         user_id: str,
         domain: Domain,
         entities: list[str],
-        content: str,
+        content: object,
     ) -> MemoryWrite:
         now = datetime.now(timezone.utc)
 

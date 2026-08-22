@@ -162,3 +162,104 @@ def test_decision_trace_populated():
     result = ReasoningEngine().reason(event, trust, _user_model(), _active_context())
     assert len(result.decision_trace) == 1
     assert "stance=" in result.decision_trace[0].rule
+
+
+def test_inferred_only_interest_is_a_separate_weaker_connection():
+    """Behavioral-personalization pass: an Interest(source="inferred") that
+    isn't also explicit/held must populate connected_entities_inferred, not
+    connected_entities_explicit -- a genuinely separate, weaker signal (see
+    OpportunityEngine.evaluate()'s "connect" step), not treated identically
+    to an explicit connection."""
+    event = _event(entity_id="AI_SECTOR")
+    trust = _trust(event.event_id, trust_score=0.8)
+    user_model = UserModel(
+        user_id="demo_user",
+        holdings=[],
+        interests=[
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.6,
+                source="inferred",
+                created_at=NOW,
+                last_updated=NOW,
+            )
+        ],
+        risk_tolerance="moderate",
+        model_confidence=0.5,
+        last_updated=NOW,
+        version=1,
+    )
+
+    result = ReasoningEngine().reason(event, trust, user_model, _active_context())
+    assert result.connected_entities_inferred == ["AI_SECTOR"]
+    assert result.connected_entities_explicit == []
+    assert result.connected_entities == ["AI_SECTOR"]
+    assert result.decision_trace[0].evidence == [
+        "explicit_connections=[]",
+        "inferred_connections=['AI_SECTOR']",
+    ]
+
+
+def test_explicit_interest_is_the_stronger_connection():
+    event = _event(entity_id="AI_SECTOR")
+    trust = _trust(event.event_id, trust_score=0.8)
+    user_model = UserModel(
+        user_id="demo_user",
+        holdings=[],
+        interests=[
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.8,
+                source="explicit",
+                created_at=NOW,
+                last_updated=NOW,
+            )
+        ],
+        risk_tolerance="moderate",
+        model_confidence=0.5,
+        last_updated=NOW,
+        version=1,
+    )
+
+    result = ReasoningEngine().reason(event, trust, user_model, _active_context())
+    assert result.connected_entities_explicit == ["AI_SECTOR"]
+    assert result.connected_entities_inferred == []
+
+
+def test_entity_both_explicit_and_inferred_counts_only_as_explicit():
+    """An entity that's both an inferred and explicit interest is the
+    stronger (explicit) signal only -- not double-counted as both."""
+    event = _event(entity_id="AI_SECTOR")
+    trust = _trust(event.event_id, trust_score=0.8)
+    user_model = UserModel(
+        user_id="demo_user",
+        holdings=[],
+        interests=[
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.8,
+                source="explicit",
+                created_at=NOW,
+                last_updated=NOW,
+            ),
+            Interest(
+                domain="social",
+                topic="AI_SECTOR",
+                weight=0.6,
+                source="inferred",
+                created_at=NOW,
+                last_updated=NOW,
+            ),
+        ],
+        risk_tolerance="moderate",
+        model_confidence=0.5,
+        last_updated=NOW,
+        version=1,
+    )
+
+    result = ReasoningEngine().reason(event, trust, user_model, _active_context())
+    assert result.connected_entities_explicit == ["AI_SECTOR"]
+    assert result.connected_entities_inferred == []

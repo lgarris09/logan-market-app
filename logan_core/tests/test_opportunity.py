@@ -118,6 +118,70 @@ def test_community_momentum_has_zero_effect_on_ranking():
         ), f"dimension {key!r} was affected by momentum"
 
 
+def _reasoning_with_connections(
+    connected_explicit=None, connected_inferred=None, actionability="ambiguous"
+):
+    now = datetime.now(timezone.utc)
+    explicit = connected_explicit or []
+    inferred = connected_inferred or []
+    return ReasoningResult(
+        event_id=uuid4(),
+        significance="Test event",
+        personal_relevance_narrative="Test narrative.",
+        connected_entities=sorted(set(explicit) | set(inferred)),
+        connected_entities_explicit=explicit,
+        connected_entities_inferred=inferred,
+        stance="new",
+        actionability=actionability,
+        explanation="Test explanation.",
+        reasoned_at=now,
+    )
+
+
+def test_explicit_connection_gets_full_relevance_bump():
+    """Behavioral-personalization pass, owner decision: an explicit
+    holding/interest connection keeps the original 0.6 bump unchanged."""
+    reasoning = _reasoning_with_connections(connected_explicit=["NVDA"])
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance == 0.6
+
+
+def test_inferred_only_connection_is_bounded_below_explicit():
+    """A connection that exists only through an inferred interest must raise
+    relevance above the no-connection baseline but strictly less than an
+    explicit connection's 0.6 bump."""
+    reasoning = _reasoning_with_connections(connected_inferred=["NVDA"])
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance == 0.5
+    assert recommendation.dimensions.personal_relevance < 0.6
+
+
+def test_no_connection_leaves_relevance_at_actionability_baseline():
+    reasoning = _reasoning_with_connections()
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance == 0.2
+
+
+def test_explicit_and_inferred_connections_together_use_explicit_bump():
+    reasoning = _reasoning_with_connections(
+        connected_explicit=["NVDA"], connected_inferred=["TSLA"]
+    )
+    confidence = _confidence(reasoning.event_id, score=0.5)
+    community = _community(reasoning.event_id)
+
+    recommendation = OpportunityEngine().evaluate(reasoning, confidence, community)
+    assert recommendation.dimensions.personal_relevance == 0.6
+
+
 def test_speculation_classification_increases_risk_dimension():
     reasoning = _reasoning()
     confidence_normal = _confidence(

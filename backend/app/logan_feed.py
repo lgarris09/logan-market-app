@@ -19,10 +19,12 @@ from logan_core.contracts import (  # noqa: E402
     LOCAL_FOUNDER_USER_ID,
     DeliveredItem,
     Domain,
+    FeedbackSignal,
     Holding,
     InteractionType,
     Interest,
     RawSignal,
+    UserModel,
 )
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
@@ -76,6 +78,11 @@ _orchestrator: Orchestrator | None = None
 # "new" relative to a user who's never seen anything yet) without treating
 # every subsequent, genuinely-new event the same way.
 _baseline_established: set[str] = set()
+# Process-lifetime UserModel persistence (behavioral-personalization pass):
+# mirrors `_orchestrator`'s singleton pattern above rather than inventing a
+# new mechanism. Same in-memory-only limitation -- a backend restart resets
+# this too, same as `_orchestrator` and `_baseline_established`.
+_user_model: UserModel | None = None
 
 
 def _get_orchestrator() -> Orchestrator:
@@ -104,6 +111,59 @@ def _get_orchestrator() -> Orchestrator:
             )
             _orchestrator = Orchestrator(deps=deps)
         return _orchestrator
+
+
+def _get_user_model(orchestrator: Orchestrator, now: datetime) -> UserModel:
+    """Process-lifetime UserModel persistence (behavioral-personalization
+    pass): seeded once with the founder's explicit holdings/interests, exactly
+    as `_run_feed_pipeline` always has; every later call instead rebuilds via
+    UserModelBuilder.build() against the full accumulated `feedback_record`
+    history already sitting in the shared Orchestrator's MemoryStore (written
+    by `record_interaction()` below through the normal Feedback -> Learning
+    path). This is what lets repeated card-open/dwell/notification-tap
+    evidence actually compound into established_behaviors/domain_preferences/
+    Interest(source="inferred") *across* requests, not just within one --
+    `.build()`'s folding logic already existed but had nothing calling it at
+    this top level before. `memory_store.query()` with no filters is correct
+    here (not a shortcut): this is single-user (LOCAL_FOUNDER_USER_ID) scope
+    for this pass, and MemoryStore has no user_id filter to begin with.
+    Explicit holdings/interests/risk_tolerance are preserved unchanged by
+    `.build()` itself (see user_model/model.py) -- rebuilding here never
+    weakens or overwrites them.
+    """
+    global _user_model
+    with _state_lock:
+        if _user_model is None:
+            _user_model = UserModelBuilder().seed(
+                user_id=LOCAL_FOUNDER_USER_ID,
+                holdings=[
+                    Holding(
+                        domain="stocks",
+                        entity_id="NVDA",
+                        display_name="NVIDIA",
+                        added_at=now,
+                    )
+                ],
+                interests=[
+                    Interest(
+                        domain="social",
+                        topic="AI_SECTOR",
+                        weight=0.8,
+                        source="explicit",
+                        created_at=now,
+                        last_updated=now,
+                    )
+                ],
+                risk_tolerance="moderate",
+            )
+        else:
+            memory_records = orchestrator.deps.memory_store.query()
+            _user_model = UserModelBuilder().build(
+                user_id=LOCAL_FOUNDER_USER_ID,
+                memory_records=memory_records,
+                base=_user_model,
+            )
+        return _user_model
 
 
 def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
@@ -164,16 +224,17 @@ def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
 
 def reset_pipeline_state() -> None:
     """Test-only (and general-purpose "start over") hook: drops the persistent
-    Orchestrator and baseline tracking, so the next call behaves like a fresh
-    process start. Tests that compare two pipeline runs and expect them to be
-    independent (rather than exercising the new deliberate cross-request
-    persistence) should call this between runs -- see
+    Orchestrator, baseline tracking, and persisted UserModel, so the next call
+    behaves like a fresh process start. Tests that compare two pipeline runs
+    and expect them to be independent (rather than exercising the new
+    deliberate cross-request persistence) should call this between runs -- see
     backend/tests/test_opportunities_api.py and test_logan_feed.py.
     """
-    global _orchestrator
+    global _orchestrator, _user_model
     with _state_lock:
         _orchestrator = None
         _baseline_established.clear()
+        _user_model = None
 
 
 def mark_notifications_reviewed(event_ids: list[UUID]) -> None:
@@ -207,20 +268,34 @@ def record_interaction(
     interaction_type: InteractionType,
     duration_ms: Optional[int] = None,
 ) -> None:
-    """Behavioral-personalization foundation (Part A): the first live caller
-    of Orchestrator.run_feedback_loop(), which previously had zero real
-    callers in backend/ (only tests and live_verification/nvda_earnings.py
-    exercised it). Reuses the existing, unmodified
-    FeedbackSignal -> FeedbackEngine -> LearningEngine -> MemoryStore path in
-    full rather than building a parallel personalization system -- see
-    ADR-047.
+    """Behavioral-personalization foundation (Part A, ADR-047): reuses the
+    existing, unmodified FeedbackSignal -> FeedbackEngine -> LearningEngine ->
+    MemoryStore path, going through Orchestrator.run_feedback_loop() rather
+    than building a parallel personalization system or reaching around it to
+    call feedback_engine/learning_engine directly -- Orchestrator remains the
+    sole owner of the interpret -> process_feedback sequencing (ADR-016/
+    ADR-047's layer-ownership boundary).
 
-    `content` is built here, server-side, from already-known structured
-    fields only -- never accepted as free text from the client -- so this
-    route can't be used to inject arbitrary content into Memory.
+    Passes a content-builder callable (behavioral-personalization pass) so
+    `content` is built *after* FeedbackEngine.interpret() runs, from its own
+    inferred_intent/intent_confidence -- still no free-form client text, but
+    now enough for UserModelBuilder.build() to deterministically fold
+    repeated behavioral evidence into the UserModel later without re-parsing
+    prose or re-deriving an interpretation this layer already computed once.
+    run_feedback_loop() interprets the interaction exactly once either way.
     """
     orchestrator = _get_orchestrator()
-    content = f"{interaction_type} on {entity_id} ({domain})"
+
+    def _build_content(feedback: FeedbackSignal) -> dict:
+        return {
+            "interaction_type": feedback.interaction_type,
+            "entity_id": entity_id,
+            "domain": domain,
+            "inferred_intent": feedback.inferred_intent,
+            "intent_confidence": feedback.intent_confidence,
+            "duration_ms": feedback.duration_ms,
+        }
+
     with _state_lock:
         orchestrator.run_feedback_loop(
             event_id=event_id,
@@ -228,7 +303,7 @@ def record_interaction(
             domain=domain,
             entities=[entity_id],
             interaction_type=interaction_type,
-            content=content,
+            content=_build_content,
             duration_ms=duration_ms,
         )
 
@@ -376,31 +451,16 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
     function (see `_get_orchestrator()` above), not just within one -- this
     is what lets the same underlying opportunity keep a stable `event_id` and
     correct `is_new_for_user` across repeated requests, for the life of this
-    process.
+    process. The UserModel passed into every `orchestrator.run()` call below
+    is likewise process-lifetime persistent (see `_get_user_model()`), not
+    reseeded per call -- repeated card-open/dwell/notification-tap evidence
+    recorded via `record_interaction()` between requests now actually
+    compounds into the model's inferred behavioral fields.
     """
     now = datetime.now(timezone.utc)
 
-    user_model = UserModelBuilder().seed(
-        user_id=LOCAL_FOUNDER_USER_ID,
-        holdings=[
-            Holding(
-                domain="stocks", entity_id="NVDA", display_name="NVIDIA", added_at=now
-            )
-        ],
-        interests=[
-            Interest(
-                domain="social",
-                topic="AI_SECTOR",
-                weight=0.8,
-                source="explicit",
-                created_at=now,
-                last_updated=now,
-            )
-        ],
-        risk_tolerance="moderate",
-    )
-
     orchestrator = _get_orchestrator()
+    user_model = _get_user_model(orchestrator, now)
     fixtures = simulated_fixtures(now)
 
     # Sprint 3.6.6C: replaces (never adds alongside) the simulated NVDA

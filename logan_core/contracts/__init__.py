@@ -37,7 +37,14 @@ from .reasoning import ReasoningResult
 from .signals import NormalizedSignal, RawSignal
 from .trigger import TriggerClass, TriggerDirection, TriggerEvent, TriggerStatus
 from .trust import EvidenceTrust, SourceObservation
-from .user_model import DomainPref, Expertise, Holding, Interest, UserModel
+from .user_model import (
+    BehaviorPattern,
+    DomainPref,
+    Expertise,
+    Holding,
+    Interest,
+    UserModel,
+)
 from .world_model import EnrichedEvent
 
 __all__ = [
@@ -71,6 +78,7 @@ __all__ = [
     "Holding",
     "Expertise",
     "DomainPref",
+    "BehaviorPattern",
     "ActiveContext",
     "ActivityRecord",
     "ReasoningResult",

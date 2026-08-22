@@ -84,6 +84,49 @@ def test_low_confidence_feedback_is_flagged_not_written(
     assert write in orchestrator.deps.learning_engine.flagged_for_review
 
 
+def test_run_feedback_loop_accepts_a_content_builder(
+    orchestrator, user_model, engagement_samples, now
+):
+    """Behavioral-personalization pass: run_feedback_loop()'s `content` may be
+    a callable receiving the FeedbackSignal it just computed -- lets a caller
+    build structured content from inferred_intent/intent_confidence without
+    interpreting the interaction a second time. Static-string callers (every
+    other test in this file) remain unaffected."""
+    result = orchestrator.run(
+        raw_signals=[tesla_ai_partnership_signal(now)],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+    )
+
+    calls = []
+
+    def build_content(feedback):
+        calls.append(feedback)
+        return {
+            "inferred_intent": feedback.inferred_intent,
+            "intent_confidence": feedback.intent_confidence,
+        }
+
+    feedback, write = orchestrator.run_feedback_loop(
+        event_id=result.event.event_id,
+        user_id="demo_user",
+        domain="stocks",
+        entities=["TSLA"],
+        interaction_type="save",
+        content=build_content,
+    )
+
+    assert len(calls) == 1
+    assert calls[0] is feedback
+    stored = orchestrator.deps.memory_store.all()
+    assert stored[0].content == {
+        "inferred_intent": "interested",
+        "intent_confidence": 0.85,
+    }
+
+
 def test_only_learning_system_may_write_memory():
     from datetime import datetime, timezone
     from uuid import uuid4

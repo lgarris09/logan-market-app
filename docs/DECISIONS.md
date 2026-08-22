@@ -1069,3 +1069,90 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   `/v1/interactions` (view+dwell and click), and `/v1/notifications/review` all coexist without error on the
   same event_id. No `logan_core` layer-ownership boundary was crossed: `record_interaction()` only calls the
   existing `Orchestrator.run_feedback_loop()`, never writes to `MemoryStore` or `UserModel` directly.
+
+## ADR-048: UserModel persistence + source-aware behavioral learning — closing ADR-047's loop without touching Watch eligibility
+- Date: 2026-08-21
+- Status: Accepted
+- Context: ADR-047 got real interaction signals (card-open/dwell, notification-tap) into `MemoryStore` but
+  stopped there — nothing read them back into `UserModel`, and `UserModel` itself was rebuilt from scratch via
+  `UserModelBuilder().seed()` on every single `_run_feed_pipeline()` call, so even a completed read-back would
+  have had nothing to accumulate into. An initial inspection pass (documented in `SESSION_NOTES.md`,
+  2026-08-19) found a real blocker before writing any code: `ReasoningEngine.reason()` read
+  `user_model.interests` without filtering by `source`, so writing any `Interest(source="inferred")` would
+  silently raise `personal_relevance` and therefore STRATUS Watch alert eligibility — explicitly out of scope
+  for this pass. That inspection pass stopped there. This ADR covers the resumed pass that closes the loop,
+  the blocker included, after a process restart recovered the in-progress (uncommitted) work for review.
+- Decision:
+  1. **Source-aware relevance, closing the blocker.** `ReasoningEngine.reason()`
+     (`logan_core/reasoning/engine.py`) now splits `connected_entities` into `connected_entities_explicit`
+     (holdings + `Interest(source="explicit")`) and `connected_entities_inferred` (`Interest(source="inferred")`
+     only, minus anything already explicit — no double-counting an entity that's both).
+     `ReasoningResult` (`logan_core/contracts/reasoning.py`) gains both as new, additive, default-empty fields;
+     existing readers of `connected_entities` (unchanged, still the union of both) are unaffected.
+     `OpportunityEngine.evaluate()`'s "connect" step (`logan_core/opportunity/engine.py`) keeps the original
+     0.6 `personal_relevance` bump for an explicit connection unchanged, and bounds an inferred-only connection
+     to 0.5 — reusing this file's own existing "informational" actionability anchor rather than inventing a
+     new constant, deliberately less than the explicit bump, never equal. Both `ReasoningEngine` and
+     `OpportunityEngine` log the explicit/inferred split into their `DecisionTraceEntry.evidence`, so a future
+     Watch decision's reasoning is auditable back to which kind of connection drove it. This is the guard that
+     makes it safe to ever write `Interest(source="inferred")` at all without moving Watch eligibility as an
+     unreviewed side effect.
+  2. **Behavioral evidence folded into `UserModel`.** `UserModelBuilder.build()` (`logan_core/user_model/model.py`)
+     now also groups `feedback_record` memory records by `(domain, entity_id)` and, only for pairs with at
+     least `MIN_REPEAT_EVIDENCE = 2` independent `inferred_intent == "interested"` records (the strongest
+     positive signal `FeedbackEngine` produces — one occurrence is by definition not a pattern), writes an
+     `established_behaviors` entry, an active `DomainPref` (new entries use `weight=0.5`, the same
+     neutral/default value `UserModelBuilder.seed()` has always used for a domain preference — not a new or
+     invented number), and an `Interest(source="inferred")`. `BehaviorPattern.confidence` and the inferred
+     `Interest.weight` both reuse the max `intent_confidence` `FeedbackEngine.interpret()` already computed for
+     that pair's qualifying records — no separate confidence model. An entity already covered by an explicit
+     holding or explicit interest never gets a competing inferred `Interest` (though it still accrues an
+     `established_behaviors` entry — the behavior-pattern record and the interest-priority decision are
+     separate). `inferred_expertise` is deliberately left untouched: view/click/dwell evidences attention, not
+     demonstrated expertise. Explicit `holdings`/`interests`/`risk_tolerance` are unchanged from `base` either
+     way — `.build()` already had this property before this pass; behavioral folding only ever adds to the
+     inferred/behavioral portions of the model.
+  3. **Orchestrator ownership restored, `run_feedback_loop()` extended.** The interrupted pass had had
+     `record_interaction()` (`backend/app/logan_feed.py`) call `feedback_engine.interpret()` and
+     `learning_engine.process_feedback()` directly, bypassing `Orchestrator.run_feedback_loop()` — a real
+     regression against ADR-047's own stated invariant ("`record_interaction()` only calls the existing
+     `Orchestrator.run_feedback_loop()`, never writes to `MemoryStore` or `UserModel` directly"), done because
+     `run_feedback_loop()`'s `content: str` parameter had to be supplied before the method's internal
+     `interpret()` call, so a caller couldn't build content from `interpret()`'s own `inferred_intent`/
+     `intent_confidence` output without interpreting the interaction a second time. Fixed at the root instead
+     of routing around it: `run_feedback_loop()`'s `content` parameter (`logan_core/orchestrator/pipeline.py`)
+     now accepts either a plain value (every existing caller, unchanged) or a callable receiving the
+     just-computed `FeedbackSignal`, resolved after `interpret()` runs and before `process_feedback()` is
+     called — Orchestrator remains the sole owner of that sequencing, and the interaction is still interpreted
+     exactly once. `LearningEngine.process_feedback()`'s `content` parameter type was widened from `str` to
+     `object` to match `MemoryRecord.content`/`MemoryWrite.content`, which were already untyped `object` — a
+     type-correctness fix, not a behavior change. `record_interaction()` now passes a small closure that builds
+     `{interaction_type, entity_id, domain, inferred_intent, intent_confidence, duration_ms}` from the
+     `FeedbackSignal`, through `Orchestrator.run_feedback_loop()`.
+  4. **Process-lifetime `UserModel` persistence.** `backend/app/logan_feed.py` gains `_get_user_model()`,
+     mirroring the existing `_get_orchestrator()` singleton pattern (same in-memory-only, single-process
+     limitation — a backend restart resets it, same as the Orchestrator and baseline tracking). Seeded once
+     with the founder's explicit holdings/interests exactly as before; every later `_run_feed_pipeline()` call
+     instead rebuilds it via `UserModelBuilder.build()` against the full accumulated `feedback_record` history
+     in the shared Orchestrator's `MemoryStore` (`memory_store.query()` with no filters — correct for this
+     pass's single-user `LOCAL_FOUNDER_USER_ID` scope; `MemoryStore` has no `user_id` filter to begin with).
+     This is the piece that makes repeated card-open/dwell/notification-tap evidence recorded between requests
+     actually compound instead of being discarded on the next request's reseed. `reset_pipeline_state()`
+     clears the persisted model alongside the Orchestrator and baseline tracking, for test isolation.
+     `Orchestrator.run()`'s own pre-existing internal `user_model_builder.build()` call (narrow, per-entity,
+     scoped to that entity's own `memory_store.query(entities=[...])` records) is unrelated and untouched —
+     its result was already discarded by `_run_feed_pipeline()` before this pass and still is.
+  5. Explicitly out of scope, unchanged: Watch alert/interruption thresholds, Personal/Exceptional Watch
+     routes, impression/exposure semantics, FIELD BIAS learning, Ask STRATUS linkage, any new ML, trigger/signal
+     expansion, Attention Field work. This pass makes the learning *inputs* to a future Watch-personalization
+     decision truthful, persistent, source-aware, and auditable — it does not make that decision itself.
+- Consequences: `backend`/`logan_core` test count 244 → 264. New/updated coverage: `logan_core/tests/test_user_model.py`
+  (repeated-vs-isolated evidence, `inferred_intent` specificity, no cross-entity/domain leakage, explicit
+  holdings/interests preserved, `inferred_expertise` untouched), `logan_core/tests/test_reasoning.py` and
+  `logan_core/tests/test_opportunity.py` (explicit connections keep the 0.6 bump, inferred-only connections are
+  bounded to 0.5, an entity that's both counts only as explicit), `logan_core/tests/test_feedback_learning.py`
+  (`run_feedback_loop()`'s content-builder path), `backend/tests/test_interactions.py` (orchestrator-ownership
+  restored, interpretation happens exactly once, structured content carries real `inferred_intent`/
+  `intent_confidence`), `backend/tests/test_logan_feed.py` (`UserModel` persists and accumulates across
+  repeated live pipeline requests, one isolated interaction does not create a preference). mypy/ruff/black
+  clean. Mobile untouched by this pass (no mobile files changed) — not re-validated.

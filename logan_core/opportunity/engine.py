@@ -52,15 +52,36 @@ class OpportunityEngine:
             )
         )
 
-        # 3. Connect
+        # 3. Connect. Owner decision (behavioral-personalization pass):
+        # explicit interests/holdings remain the stronger source of truth --
+        # an explicit connection keeps the original 0.6 bump unchanged.
+        # A connection that exists *only* through an inferred interest
+        # (reasoning.connected_entities_explicit is empty for that entity)
+        # is bounded below that: it reuses this file's own existing
+        # "informational" actionability level (0.5) as the natural smaller
+        # relevance anchor already defined here, rather than inventing a new
+        # constant -- deliberately less than the explicit bump, never equal.
         personal_relevance = _ACTIONABILITY_SCORE.get(reasoning.actionability, 0.2)
-        if reasoning.actionability != "actionable" and reasoning.connected_entities:
-            personal_relevance = max(personal_relevance, 0.6)
+        connect_basis = "none"
+        if reasoning.actionability != "actionable":
+            if reasoning.connected_entities_explicit:
+                personal_relevance = max(personal_relevance, 0.6)
+                connect_basis = "explicit"
+            elif reasoning.connected_entities_inferred:
+                personal_relevance = max(
+                    personal_relevance, _ACTIONABILITY_SCORE["informational"]
+                )
+                connect_basis = "inferred"
         trace.append(
             DecisionTraceEntry(
                 layer="opportunity_engine",
-                rule=f"connect: personal_relevance={personal_relevance:.2f}",
+                rule=f"connect: personal_relevance={personal_relevance:.2f} "
+                f"(basis={connect_basis})",
                 confidence=personal_relevance,
+                evidence=[
+                    f"connected_entities_explicit={reasoning.connected_entities_explicit}",
+                    f"connected_entities_inferred={reasoning.connected_entities_inferred}",
+                ],
                 timestamp=now,
             )
         )

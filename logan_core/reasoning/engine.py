@@ -25,11 +25,29 @@ class ReasoningEngine:
         active_context: ActiveContext,
     ) -> ReasoningResult:
         holding_ids = {h.entity_id for h in user_model.holdings}
-        interest_topics = {i.topic for i in user_model.interests}
+        explicit_interest_topics = {
+            i.topic for i in user_model.interests if i.source == "explicit"
+        }
+        inferred_interest_topics = {
+            i.topic for i in user_model.interests if i.source == "inferred"
+        }
         event_entity_ids = {e.entity_id for e in event.entities}
         touched_ids = event_entity_ids | set(event.downstream)
 
-        connected_entities = sorted(touched_ids & (holding_ids | interest_topics))
+        # Explicit interests remain the stronger source of truth (owner
+        # decision, behavioral-personalization pass): an entity connected via
+        # holdings or an explicit interest keeps the existing full connection
+        # signal below; an entity connected *only* via an inferred interest
+        # (never also explicit/held) is a separate, weaker signal -- see
+        # OpportunityEngine.evaluate()'s "connect" step, which bounds it
+        # below the explicit bump rather than treating the two identically.
+        connected_explicit = sorted(
+            touched_ids & (holding_ids | explicit_interest_topics)
+        )
+        connected_inferred = sorted(
+            (touched_ids & inferred_interest_topics) - set(connected_explicit)
+        )
+        connected_entities = sorted(set(connected_explicit) | set(connected_inferred))
         holds_directly = bool(event_entity_ids & holding_ids)
 
         significance = event.summary
@@ -103,6 +121,8 @@ class ReasoningEngine:
             significance=significance,
             personal_relevance_narrative=personal_relevance_narrative,
             connected_entities=connected_entities,
+            connected_entities_explicit=connected_explicit,
+            connected_entities_inferred=connected_inferred,
             stance=stance,
             actionability=actionability,
             explanation=explanation,
@@ -113,6 +133,10 @@ class ReasoningEngine:
                     rule=f"stance={stance}, actionability={actionability} "
                     f"(holds_directly={holds_directly}, trust_score={trust.trust_score:.2f})",
                     confidence=trust.trust_score,
+                    evidence=[
+                        f"explicit_connections={connected_explicit}",
+                        f"inferred_connections={connected_inferred}",
+                    ],
                     timestamp=now,
                 )
             ],

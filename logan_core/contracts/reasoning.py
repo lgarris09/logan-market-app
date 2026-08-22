@@ -15,6 +15,14 @@ class ReasoningResult(BaseModel):
     # float-typed Dimensions.personal_relevance used by the Opportunity Engine.
     personal_relevance_narrative: str
     connected_entities: list[str] = Field(default_factory=list)
+    # Explicit/inferred split of connected_entities above (union of the two,
+    # unchanged) -- lets the Opportunity Engine bound an inferred-only
+    # connection's relevance contribution below an explicit one (holdings or
+    # Interest(source="explicit")) rather than treating them identically.
+    # Additive fields, both default empty -- existing callers that only read
+    # connected_entities are unaffected.
+    connected_entities_explicit: list[str] = Field(default_factory=list)
+    connected_entities_inferred: list[str] = Field(default_factory=list)
     prior_signal_links: list[UUID] = Field(default_factory=list)
     stance: Literal["confirms", "contradicts", "complicates", "new"]
     actionability: Literal["actionable", "informational", "ambiguous"]
