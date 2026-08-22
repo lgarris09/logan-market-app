@@ -11,13 +11,35 @@ wiring around it.
 """
 
 import httpx
+import pytest
 
 from backend.app.logan_feed import (
     _get_orchestrator,
     reset_pipeline_state,
     run_demo_feed,
 )
-from logan_core.receptors.providers import FmpEarningsProvider
+from logan_core.receptors.providers import FmpEarningsProvider, FmpProviderError
+
+
+@pytest.fixture(autouse=True)
+def _no_live_market_data_by_default(monkeypatch):
+    """Sprint 3.6.7 Block 2 wires two more live signal types (price move,
+    analyst grade) into the same live-NVDA path this file's tests already
+    exercise for earnings alone (see backend/app/logan_feed.py's
+    _live_nvda_price_move_raw_signal/_live_nvda_analyst_grade_raw_signal).
+    None of the tests in this file are about those two signal types -- keep
+    them deterministic and isolated from real network calls regardless of
+    whether a real FMP_API_KEY happens to be present in this machine's
+    environment, exactly like the "no API key" fallback path this file
+    already covers for earnings. Dedicated coverage for the price-move/
+    analyst-grade/convergence wiring itself lives in
+    test_live_nvda_market_data.py.
+    """
+
+    def _unavailable(*args, **kwargs):
+        raise FmpProviderError("no live market data configured for this test")
+
+    monkeypatch.setattr("backend.app.logan_feed.FmpMarketDataProvider", _unavailable)
 
 
 def _mock_fmp_provider(handler) -> FmpEarningsProvider:

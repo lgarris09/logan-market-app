@@ -15,6 +15,7 @@ from logan_core.contracts import (
     AttentionRecommendation,
     CommunitySignal,
     ConclusionConfidence,
+    DecisionTraceEntry,
     DeliveredItem,
     Domain,
     EnrichedEvent,
@@ -29,8 +30,10 @@ from logan_core.contracts import (
     PrioritizedItem,
     RawSignal,
     ReasoningResult,
+    TriggerEvent,
     UserModel,
 )
+from logan_core.convergence import StockConvergenceTracker
 from logan_core.evidence_trust import EvidenceTrustEngine
 from logan_core.feedback import FeedbackEngine
 from logan_core.learning import LearningEngine
@@ -98,6 +101,14 @@ class PipelineDependencies:
     # domain's one trigger code; building a registry/dispatch system for
     # domains that don't have an evaluator yet would be speculative.
     trigger_detector: Optional[StocksTriggerEvaluator] = None
+    # Sprint 3.6.7 Block 2 -- None by default, same opt-in discipline as
+    # trigger_detector above: every existing caller/test that doesn't wire
+    # one in gets identical behavior (no "convergence_tracker" trace layer,
+    # no STOCK_CONVERGENCE_MULTI_SOURCE ever attached). Must be constructed
+    # once and reused across calls (like world_model) for its 30-minute
+    # window to observe anything real -- see StockConvergenceTracker's own
+    # docstring and backend/app/logan_feed.py's process-lifetime Orchestrator.
+    convergence_tracker: Optional[StockConvergenceTracker] = None
 
     def __post_init__(self) -> None:
         self.learning_engine = LearningEngine(self.memory_store)
@@ -120,6 +131,126 @@ class PipelineResult:
     prioritized_item: PrioritizedItem
     delivered_item: DeliveredItem
     trace: ExecutionTrace
+
+
+def _collapse_duplicate_event_ids(events: list[EnrichedEvent]) -> list[EnrichedEvent]:
+    """Collapses repeated `world_model.process()` results that resolved to the
+    same underlying `event_id` (e.g. two same-signal_type raw_signals in one
+    `run()` call, like TSLA's corroborating second signal -- World Model's own
+    `(entity_id, signal_type)` dedup already merged those into one event, see
+    world_model/model.py, unchanged by this) down to the single most
+    up-to-date version of that event. This is exactly the value the old
+    single-`event` loop variable always held whenever every raw_signal shared
+    one signal_type -- preserved here byte-for-byte, not a new behavior.
+    Preserves first-seen order, so the earliest-detected signal_type stays
+    "primary" if a genuine cross-signal_type merge follows.
+    """
+    latest_by_id: dict[UUID, EnrichedEvent] = {}
+    order: list[UUID] = []
+    for event in events:
+        if event.event_id not in latest_by_id:
+            order.append(event.event_id)
+        latest_by_id[event.event_id] = event
+    return [latest_by_id[event_id] for event_id in order]
+
+
+def _merge_entity_events(events: list[EnrichedEvent]) -> EnrichedEvent:
+    """Sprint 3.6.7 Block 2 fix: combines multiple genuinely distinct
+    per-signal_type EnrichedEvents for one entity (produced because World
+    Model's `(entity_id, signal_type)` dedup key -- deliberately left
+    unchanged -- gives each distinct signal_type its own event) into one
+    coherent opportunity, instead of letting only the last-processed
+    raw_signal's event silently survive (ADR-051 finding 5).
+
+    Unions rather than replaces: every contributing signal's entities/
+    signal_ids/supporting/downstream/trigger_events remain visible on the
+    result -- convergence (or any multi-signal entity) enriches the entity's
+    opportunity, it never displaces the individual signals that fed it. A
+    no-op returning `events[0]` unchanged whenever there's only one distinct
+    event, so every existing single-signal-type caller/test is byte-for-byte
+    unaffected.
+
+    `is_new`/`occurred_at`/`summary`/`event_id` are deliberately taken only
+    from the primary (first-processed) event, not combined -- these describe
+    "is this specific signal new," which stays well-defined per signal_type;
+    OR-ing `is_new` across siblings would wrongly mark an entity's whole
+    opportunity as new merely because one of several signal_types happened to
+    be new this poll while others were pure corroboration.
+    """
+    if len(events) == 1:
+        return events[0]
+
+    primary = events[0]
+    entities = list(primary.entities)
+    entity_ids = {e.entity_id for e in entities}
+    signal_ids = list(primary.signal_ids)
+    supporting = list(primary.supporting)
+    downstream = list(primary.downstream)
+    trigger_events = list(primary.trigger_events)
+    trigger_codes = {t.trigger_code for t in trigger_events}
+    decision_trace = list(primary.decision_trace)
+    enriched_at = primary.enriched_at
+
+    for other in events[1:]:
+        for entity in other.entities:
+            if entity.entity_id not in entity_ids:
+                entities.append(entity)
+                entity_ids.add(entity.entity_id)
+        signal_ids.extend(sid for sid in other.signal_ids if sid not in signal_ids)
+        supporting.extend(sid for sid in other.supporting if sid not in supporting)
+        for downstream_id in other.downstream:
+            if downstream_id not in downstream:
+                downstream.append(downstream_id)
+        for trigger in other.trigger_events:
+            if trigger.trigger_code not in trigger_codes:
+                trigger_events.append(trigger)
+                trigger_codes.add(trigger.trigger_code)
+        decision_trace.append(
+            DecisionTraceEntry(
+                layer="orchestrator",
+                rule=(
+                    f"merged sibling event {other.event_id} "
+                    f"(signal_ids={[str(s) for s in other.signal_ids]}) into "
+                    "this entity's coherent opportunity"
+                ),
+                timestamp=other.enriched_at,
+            )
+        )
+        if other.enriched_at > enriched_at:
+            enriched_at = other.enriched_at
+
+    return primary.model_copy(
+        update={
+            "entities": entities,
+            "signal_ids": signal_ids,
+            "supporting": supporting,
+            "downstream": downstream,
+            "trigger_events": trigger_events,
+            "decision_trace": decision_trace,
+            "enriched_at": enriched_at,
+        }
+    )
+
+
+def _attach_trigger(event: EnrichedEvent, trigger: TriggerEvent) -> EnrichedEvent:
+    """Attaches (replace-by-trigger_code, not append/stack) a synthetically
+    computed TriggerEvent -- currently only StockConvergenceTracker's
+    STOCK_CONVERGENCE_MULTI_SOURCE -- onto an already-resolved coherent
+    event. Mirrors WorldModel.process()'s own replace-by-trigger_code
+    discipline (world_model/model.py) so a still-active convergence episode
+    re-describing itself on a later poll replaces its own prior entry rather
+    than accumulating duplicates.
+    """
+    return event.model_copy(
+        update={
+            "trigger_events": [
+                t
+                for t in event.trigger_events
+                if t.trigger_code != trigger.trigger_code
+            ]
+            + [trigger]
+        }
+    )
 
 
 class Orchestrator:
@@ -227,7 +358,13 @@ class Orchestrator:
         )
 
         normalized_signals: list[NormalizedSignal] = []
-        event: Optional[EnrichedEvent] = None
+        # Sprint 3.6.7 Block 2: every raw_signal's own resulting EnrichedEvent
+        # is now kept (not just the last one) so multiple distinct
+        # signal_types for the same entity can be combined into one coherent
+        # opportunity after the loop -- see _collapse_duplicate_event_ids/
+        # _merge_entity_events below and ADR-051 finding 5.
+        entity_events: list[EnrichedEvent] = []
+        convergence_trigger: Optional[TriggerEvent] = None
 
         # NOTE (applies to the three `# type: ignore[misc]` lambdas below): mypy
         # can't infer T through a default-arg-capture closure (`lambda r=raw: ...`),
@@ -273,15 +410,45 @@ class Orchestrator:
                     ),
                 )
 
-            event = self._execute(
+            signal_event = self._execute(
                 trace,
                 "world_model",
                 lambda n=normalized, t=trigger_event: self.deps.world_model.process(  # type: ignore[misc]
                     n, trigger_event=t
                 ),
             )
+            entity_events.append(signal_event)
 
-        assert event is not None, "at least one raw_signal is required"
+            # Sprint 3.6.7 Block 2: observes the same trigger_event World
+            # Model was just handed, independently of it -- see
+            # StockConvergenceTracker's own docstring for why this doesn't
+            # touch World Model's dedup semantics at all. Only runs when both
+            # a trigger fired this round and a caller explicitly wired a
+            # tracker in, mirroring trigger_detector's own opt-in gating
+            # immediately above.
+            if trigger_event is not None and self.deps.convergence_tracker is not None:
+                observed = self._execute(
+                    trace,
+                    "convergence_tracker",
+                    lambda t=trigger_event, n=normalized: self.deps.convergence_tracker.observe(  # type: ignore[misc]
+                        t, n.signal_type
+                    ),
+                )
+                if observed is not None:
+                    convergence_trigger = observed
+
+        assert entity_events, "at least one raw_signal is required"
+
+        # Sprint 3.6.7 Block 2: collapse same-signal_type repeats (World
+        # Model already merged those into one event_id) down to the single
+        # up-to-date version each represents, then merge genuinely distinct
+        # signal_type events for this entity into one coherent opportunity
+        # instead of letting only the last-processed one survive
+        # (ADR-051 finding 5). A no-op whenever every raw_signal shared one
+        # signal_type -- see both helpers' own docstrings.
+        event = _merge_entity_events(_collapse_duplicate_event_ids(entity_events))
+        if convergence_trigger is not None:
+            event = _attach_trigger(event, convergence_trigger)
 
         self._execute(
             trace,

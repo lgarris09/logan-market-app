@@ -13,6 +13,8 @@ receptors/providers/fixture.py). Proving this same path against the real FMP
 provider is logan_core/live_verification/nvda_market_data.py.
 """
 
+from datetime import datetime, timezone
+
 from logan_core.orchestrator import Orchestrator, PipelineDependencies
 from logan_core.receptors import grade_change_to_raw_signal, quote_to_raw_signal
 from logan_core.receptors.providers import (
@@ -53,6 +55,16 @@ def test_nvda_significant_price_move_produces_delivered_opportunity(
     quote = provider.fetch_quote("NVDA")
     assert quote is not None
     raw = quote_to_raw_signal(quote)
+    # Pre-existing flake fix (unrelated to Sprint 3.6.7 Block 2, found while
+    # running the full suite for that sprint): the fixture's quote_timestamp
+    # is a fixed calendar date, and EvidenceTrustEngine's recency decay is
+    # evaluated against real wall-clock "now" -- as real time passes further
+    # from that fixed date, recency_score (and therefore internal_rank_score)
+    # decays below this test's own >= 0.6 assertion, independent of any
+    # pipeline behavior. Re-timestamped to "now" so this test's outcome
+    # depends only on the real signal it's proving, not on how much
+    # real-world time has elapsed since the fixture was authored.
+    raw = raw.model_copy(update={"captured_at": datetime.now(timezone.utc)})
 
     orchestrator = _orchestrator()
     result = orchestrator.run(

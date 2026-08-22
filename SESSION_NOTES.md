@@ -495,3 +495,81 @@ multiple simultaneous live signals — completing the "live provider data → re
 sprint's signals were built for but deliberately didn't finish wiring. This is a real architecture decision
 (how World Model's dedup/merge model changes), not a routine implementation task — worth confirming the
 approach before building it.
+
+---
+
+# Session Notes — 2026-08-22 (Sprint 3.6.7 Block 2 — signal convergence)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, resumed after a PC crash cut off the first Block 2 attempt
+almost immediately (reconnaissance/architecture-discussion stage only — no partial edits existed). Post-reboot
+crash-recovery verification confirmed: HEAD `6fe4fdd`, working tree clean, synced to origin, stash empty. See
+ADR-052 (`docs/DECISIONS.md`) for the full decision record; this note covers the session narrative.
+
+## What was asked
+
+Resolve the gap ADR-051's inspection finding 5 identified and this file's own prior recommendation scoped:
+implement `STOCK_CONVERGENCE_MULTI_SOURCE` (registered, SPECIFIED — NOT IMPLEMENTED), fix the real
+"multiple `EnrichedEvent`s for one entity, only the last survives" bug, and only then wire Block 1's live
+price-move/analyst-grade signals into `/v1/opportunities` alongside earnings — completing the "live provider
+data → real Watch notification" loop across Blocks 1 and 2.
+
+## The architecture decision (carried over from the interrupted attempt, re-verified before building)
+
+`WorldModel`'s `(entity_id, signal_type)` dedup key stays completely unmodified — widening it to merge
+*different* signal_types for one entity into one event was explicitly rejected. It would erase real, already-
+depended-upon behavior (duplicate-poll suppression, corroboration counting, per-`trigger_code` replace-not-
+stack) and conflate two different concerns: what World Model considers one underlying fact per signal source,
+versus what makes multiple *independent* sources newsworthy together. Chosen instead: **Option 1 — a parallel
+convergence tracker**, sitting beside World Model, not inside it.
+
+## What got built
+
+1. **`StockConvergenceTracker`** (`logan_core/convergence/tracker.py`, new) — persistent, process-lifetime,
+   watches the same `TriggerEvent`s trigger detection already produces. Fires `STOCK_CONVERGENCE_MULTI_SOURCE`
+   when ≥3 distinct `signal_type`s are active for one entity within a 30-minute window. The one real design
+   correction made mid-session: the window is based on `detected_timestamp` (real evaluation-time "now"), not
+   `event_timestamp`/`captured_at` — an earnings report's date, a quote's real-time timestamp, and an
+   analyst's action date are independently sourced and routinely diverge by far more than 30 minutes even when
+   all three are detected as live opportunities in the same poll; a first pass windowed on `event_timestamp`
+   and a manual pipeline test proved it would essentially never fire on real data. An active episode reuses its
+   `trigger_id`/`event_timestamp` across repeated polls (no fresh "alert" every request); distinct types are
+   tracked as a set, so repeated polling of one already-observed type can never manufacture a false third
+   source.
+2. **Coherent-opportunity merge** (`orchestrator/pipeline.py`) — the actual root-cause fix for "only the last
+   raw_signal's event survives": every signal's `EnrichedEvent` is kept during `Orchestrator.run()`'s loop,
+   same-`event_id` repeats collapse to the up-to-date version (reproducing old behavior exactly), and genuinely
+   distinct signal_type events are unioned into one coherent per-entity opportunity afterward. A no-op for the
+   single-signal case, verified byte-for-byte against the full pre-existing suite.
+3. **Live wiring** (`backend/app/logan_feed.py`) — Block 1's price-move/analyst-grade signals now feed into
+   the live NVDA path alongside earnings, each independently gated on its own trigger actually firing, additive
+   rather than a fixture replacement.
+
+## Status at the end of this session
+
+`logan_core` test count 248 → 265 (+17). `backend` test count 82 → 89 (+7). mypy/ruff/black clean. One
+unrelated pre-existing flake found and fixed while running the full suite (`test_pipeline_market_data.py`'s
+price-move test decaying below its own rank-score assertion purely from real-world time passing since its
+fixture's fixed timestamp) — confirmed via `git stash` against clean `6fe4fdd` before touching it, so it's not
+attributable to this session's changes. No merge to main.
+
+## Recommended Sprint 3.6.7 Block 3 starting objective
+
+Two reasonable candidates, in order of how directly they follow from this block:
+
+1. **Live-verify `STOCK_CONVERGENCE_MULTI_SOURCE` end-to-end against real FMP data.** Blocks 1–2 together
+   completed the "live provider data → real Watch notification" loop this sprint was built for, but no session
+   has yet observed real NVDA data actually qualify all three signal types in the same poll (ADR-051's
+   live-verification found neither price move nor analyst grade fired on 2026-08-21). A
+   `logan_core/live_verification/nvda_convergence.py` script, mirroring the existing `nvda_earnings.py`/
+   `nvda_market_data.py` pattern, would let a future session confirm this the moment real market conditions
+   qualify — closing the loop with an honest, unforced live result rather than fixture-only proof.
+2. **Impression/exposure semantics** — flagged as "next-most-consequential" as far back as the Sprint 3.6.6
+   close-out note and still untouched: server-surfaced vs. client-rendered exposure is unresolved, and
+   behavioral relevance is not yet normalized against it. Larger and more open-ended than option 1; better
+   scoped as its own dedicated block once a session has time to work through the design question properly
+   rather than picked up as a quick follow-on.
+
+Recommendation: option 1 first — it's a narrow, low-risk verification task that closes out this sprint's own
+stated goal, and doesn't foreclose picking up option 2 (or any other item from the carried-over limitations
+list in `23_CURRENT_IMPLEMENTATION_STATE.md`) as Block 4 or a dedicated future sprint.
+approach before building it.

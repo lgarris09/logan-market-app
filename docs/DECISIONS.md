@@ -1404,3 +1404,99 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   behavior change. `backend`/`logan_core` test count 284 → 330 (including ADR-050's 5). mypy/ruff/black clean.
   No Watch threshold, contract, or existing receptor/API was broken; `/v1/opportunities` and
   `backend/app/logan_feed.py` are completely untouched by this ADR.
+
+## ADR-052: Sprint 3.6.7 Block 2 — signal convergence (STOCK_CONVERGENCE_MULTI_SOURCE) and coherent multi-signal opportunities
+
+- Date: 2026-08-22
+- Status: Accepted
+- Context: ADR-051 finding 5 identified a real architectural gap: `WorldModel.process()`'s `(entity_id,
+  signal_type)` dedup key means multiple *different* live signal types for the same entity within one
+  `Orchestrator.run(raw_signals=[...])` call are not merged — each becomes its own `EnrichedEvent`, and only
+  the last-processed `raw_signals` entry's resulting event survives into that call's single `PipelineResult`.
+  This blocked two things: (1) `TRIGGER_REGISTRY_STOCKS.md`'s own registered `STOCK_CONVERGENCE_MULTI_SOURCE`
+  code (confidence `+0.20`, fire condition "≥3 distinct source types emit signals within 30 minutes"), which
+  was SPECIFIED — NOT IMPLEMENTED; and (2) wiring Block 1's price-move/analyst-grade live signals into
+  `backend/app/logan_feed.py`'s live `/v1/opportunities` path alongside earnings, which ADR-051 deliberately
+  deferred rather than half-solve. A PC crash interrupted the first Block 2 attempt at the reconnaissance
+  stage; this session restarted clean from `6fe4fdd` and re-derived the same architecture question before
+  building anything. Owner decision on approach: **Option 1 — a parallel convergence tracker**, not a widened
+  World Model dedup key. Widening World Model's merge key to associate different `signal_type`s for one
+  entity into one event was explicitly rejected — it would erase the per-signal-type dedup/corroboration
+  semantics `world_model/model.py` already depends on (duplicate-poll suppression, corroboration counting,
+  per-trigger_code replace-not-stack) and conflate two unrelated concerns (what the entity graph considers one
+  underlying fact per signal source vs. what makes multiple independent sources newsworthy together).
+- Decision: World Model's `(entity_id, signal_type)` dedup/corroboration semantics are **left completely
+  unmodified** — same file, same behavior, same tests, verified unchanged by running `test_world_model.py`
+  unmodified. Two new, additive pieces sit around it instead:
+  1. **`StockConvergenceTracker`** (`logan_core/convergence/tracker.py`, new) — a persistent, process-lifetime
+     component (constructed once and reused across polls, exactly like `WorldModel`/`Orchestrator` already
+     are) that watches the same `TriggerEvent`s trigger detection already produces and independently tracks,
+     per entity, which distinct `signal_type`s have fired a qualifying trigger within a 30-minute window
+     (windowed on `detected_timestamp` — real evaluation-time "now" — not `event_timestamp`/`captured_at`,
+     since an earnings report's date, a quote's real-time timestamp, and an analyst action's date are
+     independently sourced and routinely diverge by far more than 30 minutes even when all three are detected
+     as live opportunities in the same poll; "fire ... within a 30-minute window" is read as "detected
+     together," matching a live-polling system). When ≥3 distinct signal_types are active, it returns a
+     `STOCK_CONVERGENCE_MULTI_SOURCE` `TriggerEvent` carrying real, computed provenance (`source_count`,
+     `sources`, `contributing_trigger_codes`, and the union of every contributing signal's
+     `originating_signal_ids`) — never a fabricated `convergence_strength` field the registry's own example
+     shows but this implementation has no honest formula for (same "never fabricate an unsupplied field"
+     discipline as every other trigger evaluator in this codebase). An active episode (the same qualifying
+     signal_type combination, observed again before it ages out) reuses the same `trigger_id`/`event_timestamp`
+     rather than minting a new one every poll — the mechanism for "prevent repeated convergence alerts for the
+     same active episode." A signal_type aging out of the window (or the qualifying combination genuinely
+     changing) clears the active episode, so a later re-convergence is correctly treated as new. Because
+     distinct source types are tracked as a *set*, not a counter, repeated polling of one already-observed
+     signal_type can never manufacture a second or third "distinct" source on its own — the mechanism for
+     "prevent repeated polling ... from falsely satisfying convergence."
+  2. **Coherent-opportunity merge** (`logan_core/orchestrator/pipeline.py`, new module-level
+     `_collapse_duplicate_event_ids`/`_merge_entity_events`/`_attach_trigger` helpers, called from
+     `Orchestrator.run()`) — fixes the actual "silently drops all but one" bug at its root cause, one layer
+     above World Model. Every raw_signal's own resulting `EnrichedEvent` is now kept during the loop instead of
+     only the last one; after the loop, same-`event_id` repeats (World Model's own same-signal_type
+     corroboration, e.g. TSLA's two-signal fixture) collapse to the single up-to-date version each already
+     represented — an exact reproduction of the old single-`event`-variable behavior — and only then are
+     genuinely distinct signal_type events unioned (entities/signal_ids/supporting/downstream/trigger_events)
+     into one coherent per-entity opportunity. A deliberate no-op whenever only one distinct event exists
+     (return `events[0]` unchanged), so every pre-Block-2 caller/test is byte-for-byte unaffected — verified by
+     running the full pre-existing suite unmodified. `StockConvergenceTracker`'s output (if any) is attached
+     onto the resulting coherent event via the same replace-by-`trigger_code` discipline `WorldModel.process()`
+     already uses for duplicate triggers, not appended/stacked. `is_new`/`occurred_at`/`summary`/`event_id` are
+     taken only from the primary (first-processed) signal, never OR'd/combined across siblings — deliberately,
+     since a merged opportunity being "new" should track its primary signal's own dedup state, not become true
+     merely because one of several converging signal_types happened to be new this particular poll.
+  3. **`PipelineDependencies.convergence_tracker`** (new field, `Optional[StockConvergenceTracker] = None`) —
+     same opt-in gating discipline as `trigger_detector`: every existing caller that doesn't wire one in gets
+     identical behavior (no `"convergence_tracker"` `ExecutionTrace` layer, no `STOCK_CONVERGENCE_MULTI_SOURCE`
+     ever attached).
+  4. **Live wiring** (`backend/app/logan_feed.py`) — `_get_orchestrator()` now constructs a
+     `StockConvergenceTracker` alongside the existing `StocksTriggerEvaluator` under the same
+     `STRATUS_LIVE_NVDA_EARNINGS` flag (reused, not a new flag — this is still "is live NVDA data enabled,"
+     now covering three signal types instead of one). Two new functions,
+     `_live_nvda_price_move_raw_signal`/`_live_nvda_analyst_grade_raw_signal`, fetch Block 1's live
+     `FmpMarketDataProvider` quote/grade data the same way `_live_nvda_raw_signal` already does for earnings —
+     each independently gated on its own trigger actually firing (a valid provider response is not itself an
+     opportunity, same standing rule), and each is *additive* to `raw_signals` rather than a fixture
+     replacement (unlike earnings, there is no simulated price-move/analyst-grade fixture for NVDA to replace).
+     `_run_feed_pipeline()` now passes all qualifying live NVDA signals (1–3, whatever genuinely fires this
+     poll) into one `orchestrator.run()` call, relying on the coherent-opportunity merge above instead of
+     silently dropping any of them. A quiet trading day with no rating change still contributes nothing extra —
+     never a fabricated non-event, never a fabricated convergence.
+- Consequences: `EvidenceTrustEngine`/`ConvergenceDetector` (Sprint 3.6.6D) are completely unmodified —
+  `STOCK_CONVERGENCE_MULTI_SOURCE`'s `+0.20` contribution competes on the same "strongest trigger wins, never
+  summed" rule as every other trigger on a coherent event; a real live NVDA case with earnings/price/analyst
+  all qualifying still resolves its bonus from whichever single trigger has the highest registered
+  `confidence_contribution` (currently `STOCK_EARNINGS_BEAT` at `+0.22`), with convergence itself remaining
+  fully visible in `trigger_events`/`decision_trace` for auditability — "convergence enriches the opportunity,
+  it never replaces the individual signals that produced it." New tests: `test_convergence_tracker.py` (new,
+  11 tests — fire condition, window boundary, duplicate/repeated-polling suppression, repeated-active-episode
+  suppression, provenance, decision trace), `test_pipeline_convergence.py` (new, 6 tests — coherent-opportunity
+  merge, end-to-end convergence firing through the full unmodified downstream pipeline, sub-threshold
+  non-firing, cross-call episode stability), `test_live_nvda_market_data.py` (new, 7 tests — live wiring,
+  convergence-tracker gating, provider-failure isolation, API contract). One unrelated pre-existing flake
+  found and fixed while running the full suite for this change (`test_pipeline_market_data.py`'s
+  `test_nvda_significant_price_move_produces_delivered_opportunity`): its fixture's fixed quote timestamp lets
+  `EvidenceTrustEngine`'s real-wall-clock recency decay push `internal_rank_score` below the test's own `>=
+  0.6` assertion as real time passes, independent of any pipeline behavior — confirmed via `git stash` against
+  clean `6fe4fdd` before touching it; re-timestamped to "now" in the test, no production code involved.
+  `backend`/`logan_core` test count 330 → 354. mypy/ruff/black clean. No merge to main.

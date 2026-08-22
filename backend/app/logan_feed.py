@@ -26,19 +26,25 @@ from logan_core.contracts import (  # noqa: E402
     RawSignal,
     UserModel,
 )
+from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     earnings_report_to_raw_signal,
+    grade_change_to_raw_signal,
+    quote_to_raw_signal,
     simulated_fixtures,
     tesla_ai_partnership_corroboration,
 )
 from logan_core.receptors.providers import (  # noqa: E402
     FmpEarningsProvider,
+    FmpMarketDataProvider,
     FmpProviderError,
 )
 from logan_core.trigger_detection import (  # noqa: E402
     StocksTriggerEvaluator,
+    evaluate_analyst_grade_condition,
     evaluate_earnings_beat_condition,
+    evaluate_price_move_condition,
 )
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
@@ -104,8 +110,18 @@ def _get_orchestrator() -> Orchestrator:
             # Read once at construction time, matching config.py's own
             # documented assumption that flipping this flag requires a clean
             # backend restart, not a mid-process toggle.
+            #
+            # Sprint 3.6.7 Block 2: convergence_tracker is gated behind the
+            # same flag, for the same reason -- it must be constructed once
+            # and reused for the life of this process (its 30-minute window
+            # is meaningless across fresh instances), exactly like world_model
+            # already is via the shared Orchestrator itself. Disabled mode
+            # gets no convergence_tracker at all, same as no trigger_detector.
             deps = (
-                PipelineDependencies(trigger_detector=StocksTriggerEvaluator())
+                PipelineDependencies(
+                    trigger_detector=StocksTriggerEvaluator(),
+                    convergence_tracker=StockConvergenceTracker(),
+                )
                 if live_nvda_earnings_enabled()
                 else PipelineDependencies()
             )
@@ -220,6 +236,94 @@ def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
         f"beat_pct={beat_pct:.2f})"
     )
     return earnings_report_to_raw_signal(report)
+
+
+def _live_nvda_price_move_raw_signal(now: datetime) -> RawSignal | None:
+    """Sprint 3.6.7 Block 2: wires Block 1's live STOCK_PRICE_MOVE_SIGNIFICANT
+    signal into the same live NVDA path as earnings -- an *additional*
+    raw_signal alongside earnings, not a replacement (unlike
+    `_live_nvda_raw_signal`, there is no simulated price-move fixture for
+    NVDA to fall back to). Now safe to add: Orchestrator.run() combines
+    multiple distinct-signal_type EnrichedEvents for one entity into one
+    coherent opportunity (see pipeline.py's `_merge_entity_events`) instead
+    of the last one silently dropping the others (ADR-051 finding 5).
+
+    Returns None on any provider failure or when the fetched quote does not
+    itself satisfy STOCK_PRICE_MOVE_SIGNIFICANT -- same "a valid response is
+    not itself an opportunity" discipline as `_live_nvda_raw_signal`. An
+    ordinary trading day contributes nothing extra, never a fabricated
+    non-event.
+    """
+    try:
+        provider = FmpMarketDataProvider()
+    except FmpProviderError as exc:
+        print(
+            f"[live-nvda] market-data provider unavailable, skipping price move: {exc}"
+        )
+        return None
+
+    try:
+        quote = provider.fetch_quote("NVDA")
+    except FmpProviderError as exc:
+        print(f"[live-nvda] FMP quote fetch failed, skipping price move: {exc}")
+        return None
+
+    if quote is None:
+        print("[live-nvda] FMP has no quote for NVDA, skipping price move")
+        return None
+
+    fired, change_pct, reason = evaluate_price_move_condition(quote.change_pct)
+    if not fired:
+        print(
+            f"[live-nvda] real quote fetched but STOCK_PRICE_MOVE_SIGNIFICANT did "
+            f"not fire ({reason}), skipping price move"
+        )
+        return None
+
+    print(
+        f"[live-nvda] using real FMP quote dated {quote.quote_timestamp.date()} for "
+        f"NVDA price move (source={quote.source_id}, change_pct={change_pct:.2f})"
+    )
+    return quote_to_raw_signal(quote)
+
+
+def _live_nvda_analyst_grade_raw_signal(now: datetime) -> RawSignal | None:
+    """Sprint 3.6.7 Block 2: wires Block 1's live STOCK_ANALYST_UPGRADE/
+    STOCK_ANALYST_DOWNGRADE signal into the live NVDA path, on the same terms
+    as `_live_nvda_price_move_raw_signal` above (additional signal, not a
+    replacement; None on any failure or non-qualifying result).
+    """
+    try:
+        provider = FmpMarketDataProvider()
+    except FmpProviderError as exc:
+        print(
+            f"[live-nvda] market-data provider unavailable, skipping analyst grade: {exc}"
+        )
+        return None
+
+    try:
+        grade = provider.fetch_latest_grade_change("NVDA")
+    except FmpProviderError as exc:
+        print(f"[live-nvda] FMP grades fetch failed, skipping analyst grade: {exc}")
+        return None
+
+    if grade is None:
+        print("[live-nvda] FMP has no analyst grade for NVDA, skipping analyst grade")
+        return None
+
+    trigger_code, reason = evaluate_analyst_grade_condition(grade.action)
+    if trigger_code is None:
+        print(
+            f"[live-nvda] real grade fetched but no analyst trigger fired "
+            f"({reason}), skipping analyst grade"
+        )
+        return None
+
+    print(
+        f"[live-nvda] using real FMP grade dated {grade.action_date.date()} for NVDA "
+        f"analyst grade (source={grade.source_id}, action={grade.action})"
+    )
+    return grade_change_to_raw_signal(grade)
 
 
 def reset_pipeline_state() -> None:
@@ -487,6 +591,28 @@ def _run_feed_pipeline() -> tuple[list[FeedItem], datetime, list[UUID]]:
             raw_signals = [raw_signal]
             if entity_id == "TSLA":
                 raw_signals.append(tesla_ai_partnership_corroboration(now))
+
+            # Sprint 3.6.7 Block 2: layers Block 1's live price-move/
+            # analyst-grade signals in alongside NVDA's earnings signal
+            # (live or simulated) now that Orchestrator.run() combines
+            # multiple distinct-signal_type EnrichedEvents for one entity
+            # into one coherent opportunity instead of the last one
+            # silently dropping the others (ADR-051 finding 5). Each fetch
+            # is independently gated on its own trigger actually firing --
+            # see _live_nvda_price_move_raw_signal/
+            # _live_nvda_analyst_grade_raw_signal's own docstrings -- so a
+            # quiet trading day/no rating change contributes nothing extra.
+            # StockConvergenceTracker only ever emits
+            # STOCK_CONVERGENCE_MULTI_SOURCE once genuinely ≥3 distinct
+            # signal_types have fired within its window; it is never forced
+            # here.
+            if entity_id == "NVDA" and live_nvda_earnings_enabled():
+                live_price_signal = _live_nvda_price_move_raw_signal(now)
+                if live_price_signal is not None:
+                    raw_signals.append(live_price_signal)
+                live_grade_signal = _live_nvda_analyst_grade_raw_signal(now)
+                if live_grade_signal is not None:
+                    raw_signals.append(live_grade_signal)
 
             result = orchestrator.run(
                 raw_signals=raw_signals,
