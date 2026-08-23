@@ -128,13 +128,18 @@ def test_restart_safety_matrix(monkeypatch, tmp_path):
     # resolves to no history at all.
     assert get_ask_history(LOCAL_FOUNDER_USER_ID, "restart-matrix") == []
 
-    # DOES NOT SURVIVE: registered push tokens / dispatch-review state --
-    # in-memory only, unrelated to STRATUS_PERSIST_MEMORY.
+    # SURVIVES (Sprint 3.6.9 Block 1): registered push tokens and dispatch/
+    # review dedup state, when STRATUS_PERSIST_MEMORY is enabled -- see
+    # notification_store.py. This test enables STRATUS_PERSIST_MEMORY (same
+    # flag as MemoryStore's own durability above), so the pre-restart
+    # registration is expected to still be there; see
+    # test_notification_persistence.py for the dedicated disabled-vs-enabled
+    # contrast and the dispatch-dedup-survives-restart correctness case.
     response = client.post(
         "/v1/notifications/register",
         json={"expo_push_token": "ExponentPushToken[post-restart]"},
     )
-    assert response.json()["token_count"] == 1  # not 2 -- the old registration is gone
+    assert response.json()["token_count"] == 2  # old registration persisted + new one
 
 
 # --- Multi-user regression through the full Block 3 conversational stack --

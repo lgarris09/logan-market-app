@@ -1238,3 +1238,84 @@ with real, current market data.
 already entity-generic). Combined 533 → 573. mypy/ruff/black clean. Mobile: 100/100 Jest, `tsc --noEmit`,
 `eslint` clean with zero code changes. No owner-level architecture decision was encountered -- no new vendor
 was added or selected for any domain, matching the standing instruction precisely.
+
+# Session Notes — 2026-08-23 (Sprint 3.6.9 Block 1 — Remote STRATUS: Fly.io hosting readiness)
+
+## What was asked
+
+First block of Sprint 3.6.9 ("Beta Foundation: Remote Operation + Sports/Odds Intelligence"), following the
+formal post-3.6.8 gap analysis. Scoped to remote operation only — Sports/Odds explicitly deferred. Owner
+decisions given up front: Fly.io as the hosting target; SQLite kept on a durable Fly Volume (no PostgreSQL
+migration this block); `STRATUS_PERSIST_MEMORY` enabled for the hosted configuration; mobile API
+configuration in-scope; no external account/payment/secret created without the owner doing so directly.
+Reconnaissance and a hosting/persistence decision package were delivered first (Fly.io recommended over
+Render/AWS-GCP; SQLite-on-durable-volume recommended over an immediate Postgres migration) and approved
+before any implementation began.
+
+## The correctness gap the owner specifically asked to be investigated: notification state on redeploy
+
+Reconnaissance had flagged registered push tokens and dispatch/review dedup state as process-memory only,
+unrelated to `STRATUS_PERSIST_MEMORY` — every hosted redeploy would silently drop every tester's push
+registration. Investigated whether this was a contained fix using the existing durable-volume architecture,
+per the owner's explicit "if contained, implement it" instruction. It was: a new, independent SQLite file
+(`NotificationStore`, a sibling of `MemoryStore`'s own file, never a shared connection to it) reusing the
+existing `STRATUS_PERSIST_MEMORY` flag rather than a second toggle. Persisted the three flat dedup
+sets — registered tokens, dispatched-event ids, reviewed-event ids — and deliberately did *not* persist
+Ask STRATUS session history, the `OpportunityContext` cache, World Model/orchestrator event identity, or
+STRATUS Watch's fatigue/cooldown `AttentionState`, per the owner's explicit "don't persist everything"
+scope. The fatigue/cooldown case got its own judgment call (see ADR-061 Decision 4): not persisted this
+block — a materially different, larger-shaped piece of `PrioritizationEngine`-internal state than the flat
+dedup sets, and the risk is already bounded by the independent per-event dispatch dedup, which prevents an
+actual duplicate *push* regardless of fatigue state. Documented as a known, bounded gap, not silently
+skipped.
+
+## One real bug found while wiring the notification persistence in
+
+`dispatch_eligible_notifications()` (the background poller's own function) checked
+`if not _registered_tokens: return 0` *before* anything had triggered the durable store's lazy load. On the
+very first poll cycle after a real restart — before any client had re-registered a token that process's
+lifetime — this would have silently short-circuited to "nothing to do" every cycle, meaning the entire
+point of the persistence being added (not needing to reopen the app after a redeploy) would have silently
+never actually worked. Fixed by calling `_get_store()` (which hydrates the three dicts from disk on first
+use) at the very top of that function, before the empty check. Caught by writing
+`test_enabled_mode_dispatch_dedup_survives_restart_no_duplicate_push`, which simulates exactly this
+sequence (dispatch → restart → dispatch again) and asserts no second push actually went out.
+
+## What got built (see ADR-061 for the full per-area record)
+
+1. `Dockerfile`/`.dockerignore`/`fly.toml` (repo root) — repository made deployment-ready, nothing deployed.
+   Build context is the repo root, not `backend/`, because `backend/app/*.py`'s existing `sys.path` bridge to
+   `logan_core` (ADR-022) needs both directories present as siblings — preserved rather than refactored.
+   `.dockerignore` excludes `backend/.env` (holds the real `FMP_API_KEY`/`ANTHROPIC_API_KEY`) and local
+   `*.db` files from the image. `fly.toml` pins `min_machines_running=1`/`auto_stop_machines=false` because
+   the existing in-process notification poller only works while the server process stays running.
+2. `config.legacy_memory_db_path()` — the historical `memory_engine.py` prototype's SQLite path was
+   hardcoded to `backend/data/`, which is ephemeral container storage in a hosted deployment; now
+   configurable via `STRATUS_LEGACY_MEMORY_DB_PATH`, defaulting to the exact pre-Block-1 path when unset.
+3. `NotificationStore` + the wiring above.
+4. `config.cors_allowed_origins()` — replaces the hardcoded `allow_origins=["*"]`. Demo/development mode
+   unchanged; beta/production mode defaults to an empty allowlist unless explicitly configured. CORS is
+   browser-only enforcement, so this can never affect the React Native app's own requests either way.
+5. `config.startup_config_summary()` — one non-secret line logged at process startup stating effective
+   runtime mode, configured tickers, persistence/LLM-Ask status, and the active CORS policy.
+6. Mobile release-URL invariant — new `EXPO_PUBLIC_APP_ENV` (set per `eas.json` build profile) and
+   `constants/config.ts`'s new `resolveApiBaseUrl()`/`isLanOrLocalUrl()` (pure, unit-tested functions).
+   `development` keeps the existing zero-config LAN fallback exactly. `preview`/`production` throw a
+   specific, readable error at load time if `EXPO_PUBLIC_API_BASE_URL` is unset, LAN/loopback-shaped, or not
+   HTTPS — a deliberate loud-crash-over-silent-failure choice, since a release build silently pointing at an
+   unreachable LAN address is indistinguishable from "the app is broken" with no diagnostic. `eas.json`'s
+   `preview`/`production` profiles deliberately do not yet set `EXPO_PUBLIC_API_BASE_URL` (no Fly URL exists
+   yet) — building either profile today correctly throws until the owner adds the real hosted URL, which is
+   the intended behavior for this stage.
+
+## Status at the end of this session
+
+`backend` test count: 267 → 284 (+17: `test_deployment_config.py` 11, `test_notification_persistence.py`
+6). `test_beta_hardening.py`'s restart-safety-matrix test updated to assert the new persisted-token
+behavior (was asserting the now-superseded opposite). `logan_core` unchanged (306, no logan_core files
+touched). mobile Jest: 100 → 125 (+25: `lib/__tests__/config.test.ts`). mypy (run from the repo root,
+matching the existing baseline invocation)/ruff/black clean; `tsc --noEmit`/`eslint` clean. No Docker
+install available in this environment to locally build the image — reviewed for correctness, not build-
+verified; `fly deploy`'s own remote builder does not require local Docker either, so this is not expected to
+block actual deployment. No Fly.io account, app, volume, or secret was created — see the Block 1 report for
+the exact remaining owner steps. No merge to main; commit not pushed pending review.

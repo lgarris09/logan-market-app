@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -8,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
 from .ask_llm_provider import ConversationTurn
+from .config import cors_allowed_origins, legacy_memory_db_path, startup_config_summary
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
@@ -84,6 +84,12 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     bad cycle must not silently end all future notifications for the rest
     of the process's life.
     """
+    # Sprint 3.6.9 Block 1: one loud, non-secret line stating this process's
+    # effective configuration -- printed at startup so a hosted deployment's
+    # logs always show which mode it actually came up in (demo vs.
+    # live-data-only, which tickers, whether durable persistence/LLM Ask are
+    # on, the active CORS policy) without requiring a code change to check.
+    print(startup_config_summary())
     task = asyncio.create_task(_notification_poll_loop())
     yield
     task.cancel()
@@ -96,17 +102,25 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+# Sprint 3.6.9 Block 1: environment-configurable, see config.cors_allowed_origins()
+# -- demo/development mode (the default) keeps the exact prior `["*"]`
+# behavior; beta/production mode defaults to a safe empty allowlist unless
+# STRATUS_CORS_ALLOWED_ORIGINS is explicitly set. This is a browser-only
+# enforcement mechanism -- restricting it can never block the React Native
+# app's own requests (native fetch is not subject to CORS).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_allowed_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-memory_engine = MemoryEngine(
-    Path(__file__).resolve().parent.parent / "data" / "logan_memory.db"
-)
+# Sprint 3.6.9 Block 1: path is now deployment-configurable (see
+# config.legacy_memory_db_path()) rather than hardcoded to `backend/data/`,
+# which is ephemeral container storage in a hosted deployment, not durable.
+# Defaults to the exact pre-Block-1 path when unset -- local dev unaffected.
+memory_engine = MemoryEngine(legacy_memory_db_path())
 
 
 @app.get("/health")

@@ -4,18 +4,24 @@ Smallest production-capable path: reuses the existing Prioritization
 Engine's `interruption == "alert"` gate as notification eligibility (no new
 threshold invented), dispatches real Expo pushes to registered device
 tokens, and dedups per event_id so the same opportunity isn't re-pushed on
-every poll cycle. Token storage and dedup state are in-memory,
-process-lifetime only -- the same pattern already used for `_orchestrator`/
-`_baseline_established` in logan_feed.py, not a new persistence layer.
+every poll cycle. Token storage and dedup state live in the three
+process-memory dicts below, optionally durably backed by SQLite (see
+`NotificationStore`, `notification_store.py`) when
+`config.memory_persistence_enabled()` is true.
 
 Sprint 3.6.8 Block 2 (ADR-057): every piece of state here is now keyed by
 `user_id`, not global -- a single shared token/dedup set meant one user's
 push-token registration received every other user's alert-eligible items
 (since alert eligibility comes from `get_alert_eligible_items()`, which is
 now itself per-user), and one user reviewing a notification silenced the
-pending-push badge for everyone. A real per-user, *durable* token store
-(surviving a backend restart) remains an ADR-006-scale decision, still not
-made here -- this block fixes cross-user isolation, not persistence.
+pending-push badge for everyone.
+
+Sprint 3.6.9 Block 1 (see docs/DECISIONS.md's Sprint 3.6.9 Block 1 ADR):
+registered tokens and dispatch/review dedup state now survive a backend
+restart when `STRATUS_PERSIST_MEMORY` is enabled -- closing the gap the
+Block 2 comment above used to flag as "not made here." Disabled (the
+default, and every pre-Block-1 test) leaves this byte-for-byte the prior
+in-memory-only behavior.
 
 Known limitation, not solved here: a successful HTTP response from Expo's
 push endpoint does not guarantee each individual message was deliverable
@@ -30,8 +36,10 @@ from uuid import UUID
 
 import httpx
 
+from .config import memory_persistence_enabled, notification_store_db_path
 from .logan_feed import FeedItem, get_alert_eligible_items
 from .models import RegisterPushTokenRequest, RegisterPushTokenResponse
+from .notification_store import NotificationStore
 
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 # Matches the mobile app's own foreground poll cadence (index.tsx's
@@ -50,12 +58,50 @@ _dispatched_event_ids: dict[str, set[UUID]] = {}
 # is a derived view on top of it (get_pending_push_event_ids).
 _reviewed_pushed_event_ids: dict[str, set[UUID]] = {}
 
+# Sprint 3.6.9 Block 1: optional durable backing for the three dicts above --
+# reuses config.memory_persistence_enabled() rather than a second flag (see
+# the Sprint 3.6.9 Block 1 ADR): "durable state persistence is on for this
+# deployment" is one operator decision covering both behavioral memory and
+# this notification state, not two independent toggles. None (the default,
+# and every pre-Block-1 test) means these dicts behave exactly as before --
+# pure process-memory, reset on every restart.
+_store: Optional[NotificationStore] = None
+
+
+def _get_store() -> Optional[NotificationStore]:
+    """Lazily constructs (and loads from) the durable store on first use when
+    persistence is enabled; a no-op returning None otherwise. Lazy rather
+    than at import time so tests that flip STRATUS_PERSIST_MEMORY/
+    STRATUS_STATE_DB_PATH via monkeypatch and then call
+    reset_notification_state() (see below) get a fresh store pointed at
+    whatever path is configured *now*, matching logan_feed._get_orchestrator()'s
+    identical lazy-construction pattern for MemoryStore.
+    """
+    global _store
+    if not memory_persistence_enabled():
+        return None
+    if _store is None:
+        _store = NotificationStore(notification_store_db_path())
+        _registered_tokens.clear()
+        for user_id, tokens in _store.load_tokens().items():
+            _registered_tokens[user_id] = set(tokens)
+        _dispatched_event_ids.clear()
+        for user_id, event_ids in _store.load_dispatched().items():
+            _dispatched_event_ids[user_id] = set(event_ids)
+        _reviewed_pushed_event_ids.clear()
+        for user_id, event_ids in _store.load_reviewed().items():
+            _reviewed_pushed_event_ids[user_id] = set(event_ids)
+    return _store
+
 
 def register_token(
     user_id: str, request: RegisterPushTokenRequest
 ) -> RegisterPushTokenResponse:
+    store = _get_store()
     tokens = _registered_tokens.setdefault(user_id, set())
     tokens.add(request.expo_push_token)
+    if store is not None:
+        store.save_token(user_id, request.expo_push_token)
     return RegisterPushTokenResponse(registered=True, token_count=len(tokens))
 
 
@@ -72,6 +118,9 @@ def mark_pushed_notifications_reviewed(user_id: str, event_ids: list[UUID]) -> N
     same event_id.
     """
     _reviewed_pushed_event_ids.setdefault(user_id, set()).update(event_ids)
+    store = _get_store()
+    if store is not None:
+        store.save_reviewed(user_id, event_ids)
     print(f"[notifications] reviewed for {user_id}: {event_ids}")
 
 
@@ -98,7 +147,20 @@ def reset_notification_state() -> None:
     """Test-only (and general-purpose "start over") hook, mirroring
     logan_feed.reset_pipeline_state() -- drops registered tokens and dispatch
     history so the next call behaves like a fresh process start.
+
+    Sprint 3.6.9 Block 1: also releases the durable store's SQLite connection
+    (mirroring reset_pipeline_state()'s identical handling of MemoryStore) --
+    a no-op when persistence is disabled. The underlying file, if any, is
+    left untouched: this simulates a real process restart (state reloads
+    from disk on next use), not a data wipe. The *next* call to a mutating
+    function (or `_get_store()` directly) reconstructs the store and reloads
+    whatever was durably saved -- exactly the behavior a real backend restart
+    with STRATUS_PERSIST_MEMORY enabled should have.
     """
+    global _store
+    if _store is not None:
+        _store.close()
+    _store = None
     _registered_tokens.clear()
     _dispatched_event_ids.clear()
     _reviewed_pushed_event_ids.clear()
@@ -175,7 +237,18 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
     dispatched (for that user) after a successful send, so a transient
     failure retries on the next cycle rather than silently dropping the
     notification forever.
+
+    Sprint 3.6.9 Block 1: `_get_store()` is called here, first, specifically
+    so this works correctly on the very first poll cycle after a real
+    restart with persistence enabled -- before any client has re-registered
+    a token this process's lifetime. Without this, `_registered_tokens`
+    would still be empty at the `if not _registered_tokens` check below (no
+    other code path had triggered the lazy load yet), the background poller
+    would short-circuit to 0 every cycle, and durable token persistence
+    would silently never actually restore delivery -- exactly the bug this
+    block exists to close.
     """
+    _get_store()
     if not _registered_tokens:
         return 0
 
@@ -229,6 +302,9 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
                     f"token(s): {dispatched_item_ids}"
                 )
                 dispatched_ids.update(dispatched_item_ids)
+                store = _get_store()
+                if store is not None:
+                    store.save_dispatched(user_id, dispatched_item_ids)
                 total_dispatched += len(eligible)
             except Exception as exc:  # noqa: BLE001 -- see comment above
                 print(

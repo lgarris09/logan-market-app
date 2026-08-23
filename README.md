@@ -111,6 +111,28 @@ The phone and computer must be on the same Wi-Fi. No source file needs editing (
 `mobile/constants/config.ts` for the fallback logic). Changing `.env` takes effect the next time
 `npx expo start --dev-client` runs — no rebuild required.
 
+This LAN-based flow is for local development only. A `preview`/`production` EAS build requires a real,
+externally reachable `EXPO_PUBLIC_API_BASE_URL` set in `mobile/eas.json`'s `env` block for that profile —
+see "Deploy the backend to Fly.io" below and `constants/config.ts`'s `resolveApiBaseUrl()`, which throws a
+clear error rather than silently falling back to a LAN address for those two profiles.
+
+## Deploy the backend to Fly.io
+
+Sprint 3.6.9 Block 1 made the repository deployment-ready for [Fly.io](https://fly.io) — see
+`Dockerfile`, `.dockerignore`, and `fly.toml` at the repo root, and
+[docs/DECISIONS.md's ADR-061](docs/DECISIONS.md#adr-061-sprint-369-block-1--remote-stratus-flyio-hosting-durable-notification-state-mobile-release-url-invariant)
+for the full reasoning. Nothing is deployed by default — these files only make `fly launch`/`fly deploy`
+possible once you have a Fly account. High-level steps (see a session's Block 1 report for the exact
+commands and required secrets):
+
+1. Install the `fly` CLI and `fly auth login` (creates/logs into your own Fly.io account — not done for you).
+2. `fly launch` from the repo root (uses the existing `fly.toml`/`Dockerfile`) or `fly apps create`.
+3. `fly volumes create stratus_data --size 1` (durable storage for SQLite — see `fly.toml`'s `[[mounts]]`).
+4. `fly secrets set FMP_API_KEY=... ANTHROPIC_API_KEY=...` (real secrets, never committed).
+5. `fly deploy`.
+6. Add the resulting HTTPS URL to `mobile/eas.json`'s `preview`/`production` `env` blocks as
+   `EXPO_PUBLIC_API_BASE_URL`, then build with `eas build --profile preview` (or `production`).
+
 ## Run the Logan Intelligence System demo
 
 `POST /v1/demo/tesla` bridges the historical backend to the `logan_core` pipeline (see

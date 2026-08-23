@@ -1,0 +1,29 @@
+# Sprint 3.6.9 Block 1. Critical: backend/.env holds real, gitignored secrets
+# (FMP_API_KEY, ANTHROPIC_API_KEY) for local dev -- it must never be baked
+# into an image layer. Hosted secrets are supplied at runtime via `fly
+# secrets set` (see fly.toml's own comments), never via this file being
+# copied into the build.
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Local dev / historical prototype SQLite files -- durable hosted state comes
+# from the Fly Volume at runtime (see fly.toml), never from image layers.
+backend/data/
+
+.git
+.gitignore
+*.md
+docs/
+
+mobile/
+node_modules/
+
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+backend/.venv/
+*.db

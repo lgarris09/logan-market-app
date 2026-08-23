@@ -2448,3 +2448,127 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   5. **`STRATUS_RUNTIME_MODE` is not yet wired into any deployment** — the mechanism exists and is tested,
      but no real beta/production deployment configuration exists yet (see Block 4's own flagged `eas.json`/
      hosting gaps, unrelated to this block, still open).
+
+## ADR-061: Sprint 3.6.9 Block 1 — remote STRATUS: Fly.io hosting, durable notification state, mobile release-URL invariant
+
+- Date: 2026-08-23
+- Status: Accepted
+- Context: The post-3.6.8 gap analysis identified two CRITICAL beta blockers: no hosted backend (ADR-006
+  remains open) and no way for a real EAS `preview`/`production` build to reach a hosted backend without
+  silently falling back to a hardcoded LAN address baked into `constants/config.ts`. Owner decisions made
+  before this block, per the Block 1 reconnaissance report: hosting target is **Fly.io**; persistence stays
+  **SQLite on a durable Fly Volume** for this beta stage (no PostgreSQL migration); `STRATUS_PERSIST_MEMORY`
+  is enabled for the hosted configuration; mobile API configuration is in-scope for this block; no external
+  account, payment method, or secret is created without the owner doing so directly. Reconnaissance also
+  surfaced a correctness gap the owner explicitly asked to be evaluated for a contained fix: registered Expo
+  push tokens and dispatch/review dedup state (`backend/app/notifications.py`) were process-memory only,
+  unrelated to `STRATUS_PERSIST_MEMORY` — meaning every hosted redeploy would silently drop every tester's
+  push registration and dedup history, requiring the app be reopened just to restore delivery.
+- Decision (by area):
+  1. **Fly.io deployment made repository-ready, not deployed.** New root-level `Dockerfile` (build context is
+     the repo root, not `backend/`, because `backend/app/*.py`'s existing `sys.path` bridge to `logan_core`
+     — ADR-022 — requires both directories present as siblings; this preserves that pattern rather than
+     refactoring imports, per the block's "operationalize the existing architecture, don't replace it"
+     constraint), `.dockerignore` (excludes `backend/.env` and any local `*.db` file from the image — a real
+     secret-leak risk if omitted, since `backend/.env` holds the real `FMP_API_KEY`/`ANTHROPIC_API_KEY`), and
+     `fly.toml`. `fly.toml` deliberately sets `auto_stop_machines = false` / `min_machines_running = 1` — the
+     existing in-process `_notification_poll_loop()` asyncio task (Sprint 3.6.6F) only notices a newly-
+     qualifying opportunity while the server process is actually running, so Fly's default scale-to-zero
+     behavior would silently break real-world push delivery. No Fly account, app, volume, or secret was
+     created — `fly.toml`'s `app`/`primary_region` are explicit placeholders.
+  2. **Persistence: SQLite kept, made deployment-configurable, not migrated.** `config.legacy_memory_db_path()`
+     (new) makes the historical `memory_engine.py` prototype's database path configurable via
+     `STRATUS_LEGACY_MEMORY_DB_PATH` — it was hardcoded to `backend/data/logan_memory.db`, which is ephemeral
+     container storage in a hosted deployment, not the durable volume. `memory_store_db_path()` (existing,
+     Sprint 3.6.7 Block 3) is unchanged. `fly.toml` points both at the durable `/data` mount. No changes to
+     `MemoryStore`'s schema or abstraction — the owner's "preserve the existing persistence abstractions so a
+     later PostgreSQL migration remains possible" instruction is satisfied by construction, not by new code.
+  3. **Notification-state persistence: implemented, scoped narrowly, using the same durability flag.** New
+     `backend/app/notification_store.py` (`NotificationStore`) durably backs exactly three things:
+     registered push tokens, dispatched-event dedup, and reviewed-event dedup — the minimum state whose loss
+     causes either lost delivery or a duplicate push after a redeploy, matching the owner's explicit "at
+     minimum" scope. Deliberately reuses `memory_persistence_enabled()` (`STRATUS_PERSIST_MEMORY`) rather
+     than inventing a second toggle — "durable state persistence is on for this deployment" is one operator
+     decision, not two independent ones to keep synchronized. Stored in its own SQLite file (a sibling of
+     `memory_store_db_path()`, see `config.notification_store_db_path()`), not a shared connection to
+     MemoryStore's file — keeps the two abstractions and their schemas/lifecycles fully independent. A real
+     bug was found and fixed while wiring this in: `dispatch_eligible_notifications()` (the background
+     poller's own function) checked `if not _registered_tokens: return 0` *before* anything had triggered
+     the store's lazy load — on the very first poll cycle after a real restart, with no client having
+     re-registered yet, this would have silently short-circuited to "nothing to do" every cycle, defeating
+     the entire point of the persistence being added. Fixed by calling `_get_store()` (which hydrates the
+     three dicts from disk on first use) at the very top of that function, before the empty check.
+  4. **STRATUS Watch fatigue/cooldown state (Prioritization's `AttentionState`) — evaluated, deliberately not
+     persisted in this block.** Judgment call per the owner's explicit instruction ("if restart loss can
+     cause harmful/repetitive notifications... and it is straightforward, persist; otherwise document
+     clearly"): fatigue/cooldown loss on restart makes Watch *momentarily more willing* to re-surface
+     something it would otherwise have suppressed as recently-seen — an over-notification risk bounded by
+     the existing per-event dispatch dedup (Decision 3) which independently prevents an actual duplicate
+     *push* for the same event_id regardless of fatigue state. It is not a "straightforward" persist:
+     `AttentionState` is keyed by `(user_id, entity_id)` with several time-windowed counters
+     (`FATIGUE_LIMIT`, cooldown timestamps) owned internally by `PrioritizationEngine`, a genuinely different
+     shape of data than the three flat dedup sets in Decision 3, and persisting it correctly would mean
+     either exposing `PrioritizationEngine`'s internals to a new persistence boundary or duplicating its
+     state machine — a materially larger change than "reuse the existing durable-volume architecture without
+     creating a major new subsystem" permits. Documented here as a known, bounded beta-stage gap rather than
+     silently left unaddressed: a backend redeploy can very occasionally cause an alert-eligible item to be
+     evaluated as fresh from Watch's fatigue perspective sooner than it otherwise would have been, but never
+     a literal duplicate push of the same opportunity.
+  5. **CORS: replaced the hardcoded wildcard with an environment-configurable, mode-aware default.** New
+     `config.cors_allowed_origins()`: an explicit `STRATUS_CORS_ALLOWED_ORIGINS` always wins; otherwise demo/
+     development mode (the default) keeps the exact prior `allow_origins=["*"]` behavior, and beta/production
+     mode (`live_data_only_mode()`) defaults to an empty allowlist instead of silently inheriting the
+     wildcard into a hosted deployment nobody explicitly configured. CORS is a browser-enforced mechanism
+     (preflight + `Origin` header checks) that React Native's `fetch` is never subject to — restricting this
+     list cannot block the mobile app's own requests under any configuration, only a hypothetical future
+     browser-based client from an unlisted origin. Evaluated once at process startup (same "flip requires a
+     restart, not a mid-process toggle" convention already used by `live_stock_tickers()`), not per-request.
+  6. **Mobile release-URL invariant: a preview/production build must never silently use a hardcoded LAN
+     address.** New `EXPO_PUBLIC_APP_ENV` (set per EAS build profile in `eas.json`: `development`/`preview`/
+     `production`) and `constants/config.ts`'s new `resolveApiBaseUrl()`/`isLanOrLocalUrl()` (pure, unit-
+     tested functions, not inline module code, specifically so this invariant is independently testable).
+     `development` (the default when unset — every pre-Block-1 local `expo start` is unaffected) keeps the
+     existing LAN-fallback behavior exactly. `preview`/`production` require `EXPO_PUBLIC_API_BASE_URL` to be
+     set, not LAN/loopback-shaped, and HTTPS — otherwise the module throws at load time with a message naming
+     exactly what's wrong and where to fix it. This is a deliberate loud-crash-over-silent-failure choice: a
+     release build silently pointing at an unreachable LAN address is indistinguishable from "the app is
+     broken," with no diagnostic short of reading source code. `eas.json`'s `preview`/`production` profiles
+     do not yet set `EXPO_PUBLIC_API_BASE_URL` (no Fly URL exists yet) — building either profile today
+     correctly throws until the owner adds the real hosted URL once it exists, which is the intended,
+     correct behavior for this stage rather than a gap to silently paper over with a placeholder value.
+  7. **Startup configuration visibility.** New `config.startup_config_summary()`, printed once at process
+     startup (`main.py`'s `_lifespan`) — states effective runtime mode, configured live tickers, whether
+     durable persistence/LLM Ask are on, and the active CORS policy. Never includes a secret value (tested
+     explicitly). Not a validation/hard-fail mechanism — a deployment's logs always show what it actually
+     came up as, which is the practical form "fail clearly rather than silently degrade" takes here, since
+     this codebase has no way to detect "invalid" configuration from inside the process (an unset
+     `STRATUS_RUNTIME_MODE` is a legitimate, safe default, not an error condition).
+- Consequences: New `Dockerfile`, `.dockerignore`, `fly.toml` (repo root). `backend/app/config.py` gains
+  `legacy_memory_db_path()`, `notification_store_db_path()`, `cors_allowed_origins()`,
+  `startup_config_summary()`. New `backend/app/notification_store.py`. `backend/app/notifications.py` and
+  `backend/app/main.py` wired to use them; `main.py`'s CORS middleware and `memory_engine` construction
+  updated; `dispatch_eligible_notifications()`'s empty-check ordering bug fixed. `mobile/constants/config.ts`
+  gains `resolveApiBaseUrl()`/`isLanOrLocalUrl()`/`APP_ENV`; `mobile/eas.json` gains per-profile
+  `EXPO_PUBLIC_APP_ENV`; `mobile/.env.example` documents it. New tests: `test_deployment_config.py` (11),
+  `test_notification_persistence.py` (6), `test_beta_hardening.py`'s restart-safety-matrix test updated to
+  assert the new persisted-token behavior (was asserting the opposite, now-superseded behavior), mobile
+  `lib/__tests__/config.test.ts` (25). `backend` test count 267 → 284 (+17); `logan_core` unchanged (306, no
+  logan_core files touched); mobile Jest 100 → 125 (+25). mypy (run from the repo root, matching the
+  existing baseline invocation)/ruff/black clean; `tsc --noEmit`/`eslint` clean.
+- Deferred / flagged for the owner — real, not resolved here by design:
+  1. **STRATUS Watch fatigue/cooldown state remains process-memory only** — see Decision 4's full reasoning;
+     a bounded, documented gap, not silently unaddressed.
+  2. **Ask STRATUS session history, `OpportunityContext` cache, and World Model/orchestrator event identity
+     remain process-memory only** — unchanged from before this block, per the owner's explicit instruction
+     that naturally reconstructable/ephemeral state need not be persisted.
+  3. **No PostgreSQL migration** — explicitly out of scope for this block; the existing SQLite abstractions
+     were preserved specifically to keep that migration possible later without a rewrite.
+  4. **No Fly.io account, app, volume, or secret was created** — the repository is deployment-ready; actual
+     deployment requires the owner's own Fly account and the exact CLI steps in the Block 1 report.
+  5. **Full authentication/authorization remains Block 2's scope** — `X-Stratus-User-Id` is still
+     client-asserted identity, not verified authentication; this block does not change that boundary, only
+     documents it again for a hosted context where the distinction matters more.
+  6. **CORS's empty beta/production default has not been validated against a real browser-based client** —
+     no such client exists yet; the policy is designed correctly by inspection (native mobile is unaffected
+     regardless) but has only been exercised by unit tests against the pure config function, not an actual
+     cross-origin browser request against a hosted deployment.

@@ -162,6 +162,90 @@ def live_data_only_mode() -> bool:
     return mode in ("live", "beta", "production")
 
 
+def legacy_memory_db_path() -> Path:
+    """Sprint 3.6.9 Block 1: the historical `memory_engine.py` prototype
+    (`/v1/memories`) previously hardcoded its SQLite file to
+    `backend/data/logan_memory.db` relative to `main.py` -- fine for local
+    dev (that path is writable, ephemeral disk on the dev machine), wrong for
+    a hosted deployment, where `backend/data/` inside the container is
+    ephemeral container storage, not the durable Fly Volume. Overridable via
+    STRATUS_LEGACY_MEMORY_DB_PATH so a hosted deployment can point this at
+    the same durable volume `memory_store_db_path()` already uses (e.g.
+    `/data/logan_memory.db`) -- defaults to the exact pre-Block-1 path when
+    unset, so local dev is completely unaffected.
+    """
+    override = os.environ.get("STRATUS_LEGACY_MEMORY_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent / "data" / "logan_memory.db"
+
+
+def notification_store_db_path() -> Path:
+    """Sprint 3.6.9 Block 1: the durable SQLite file backing registered push
+    tokens and dispatch/review dedup state (see notification_store.py) when
+    memory_persistence_enabled() is true -- deliberately reuses that same
+    flag rather than inventing a second persistence toggle (see the Sprint
+    3.6.9 Block 1 ADR): "durable state persistence is enabled for this
+    deployment" is one operator decision, not two. A separate SQLite *file*
+    from memory_store_db_path() (not a shared connection to the same file) --
+    same durable directory, independent schema/lifecycle, so this store's
+    tests and MemoryStore's tests never contend for the same file. Defaults
+    to a sibling `notifications.db` next to memory_store_db_path()'s own
+    file, so a hosted deployment only has to set STRATUS_STATE_DB_PATH to
+    point both stores at the durable volume. Overridable independently via
+    STRATUS_NOTIFICATIONS_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_NOTIFICATIONS_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "notifications.db"
+
+
+def cors_allowed_origins() -> list[str]:
+    """Sprint 3.6.9 Block 1: environment-configurable CORS policy, replacing
+    the previous hardcoded `allow_origins=["*"]`. Reads
+    STRATUS_CORS_ALLOWED_ORIGINS (comma-separated, e.g.
+    "https://app.example.com,https://admin.example.com") when set -- an
+    explicit operator choice always wins, in any runtime mode.
+
+    When unset, the default depends on live_data_only_mode(): demo/
+    development mode (the default) keeps the exact pre-Block-1 behavior,
+    `["*"],` so nothing changes for local dev or the existing test suite.
+    Beta/production mode defaults to an empty allowlist (`[]`) instead of
+    silently inheriting the wildcard -- a hosted deployment must not
+    accidentally serve every browser origin just because nobody set this
+    variable.
+
+    Irrelevant to the mobile app either way: CORS is a browser-enforced
+    mechanism (preflight + `Origin` header checks) that React Native's
+    `fetch` is not subject to at all -- restricting this list can never
+    block a native mobile request, only a hypothetical future browser-based
+    client from an origin not on the list.
+    """
+    raw = os.environ.get("STRATUS_CORS_ALLOWED_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [] if live_data_only_mode() else ["*"]
+
+
+def startup_config_summary() -> str:
+    """Sprint 3.6.9 Block 1: one loud, non-secret line logged at process
+    startup (see main.py's `_lifespan`) so the *effective* configuration of a
+    given deployment is always visible in its logs -- "fail clearly" means
+    visibly stating what mode this process actually came up in, not just
+    handling misconfiguration silently. Never includes a secret value, only
+    which optional capabilities are on/off and which mode is active.
+    """
+    tickers = live_stock_tickers()
+    return (
+        f"[startup] runtime_mode={'live-data-only' if live_data_only_mode() else 'demo'} "
+        f"live_tickers={','.join(tickers) if tickers else '(none)'} "
+        f"memory_persistence={memory_persistence_enabled()} "
+        f"llm_ask={llm_ask_enabled()} "
+        f"cors_origins={cors_allowed_origins()}"
+    )
+
+
 def llm_ask_enabled() -> bool:
     """Sprint 3.6.8 Block 1: gates whether contextual Ask STRATUS attempts a
     real, grounded LLM call (AnthropicAskLlmProvider, ask_llm_anthropic.py)
