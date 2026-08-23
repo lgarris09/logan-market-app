@@ -2046,3 +2046,121 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   work" scope boundary. (5) `docs/specs/.../27_SECURITY_PRIVACY_COMPLIANCE.md`'s prior "multi-user persistence
   explicitly excluded from V3.1.4 scope" note needs a follow-up edit reflecting this block's real, if partial,
   multi-user isolation work — flagged for the next docs pass, not done as part of this commit's diff.
+
+## ADR-058: Sprint 3.6.8 Block 3 — bounded conversational Ask STRATUS
+
+- Date: 2026-08-23
+- Status: Accepted
+- Context: Every pre-Block-3 `/v1/ask` call was answered in isolation — the LLM path (ADR-056) sent one
+  question against one `OpportunityContext` with no memory of anything asked earlier in the same session,
+  so a natural follow-up ("Why?", "Which of those signals is strongest?") had nothing to resolve against and
+  fell through to a generic overview. Recon before writing code found the mobile client (`mobile/app/ask.tsx`)
+  already renders a real, accumulating multi-turn conversation client-side and already resends the same
+  `session_id` on every turn in one screen visit — the gap was entirely server-side: nothing retained prior
+  turns to ground a follow-up in, and nothing threaded them into the LLM call.
+- Decision (by area):
+  1. **Bounded conversation storage, in `backend/app/logan_feed.py`'s existing per-`(user_id, session_id)`
+     `_AskSession` (Block 2/ADR-057), not a new store.** Adds `history: list[ConversationTurn]`. Two explicit,
+     reasoned bounds, in this codebase's existing small-integer-with-a-reason convention (`FATIGUE_LIMIT=5`,
+     `MIN_REPEAT_EVIDENCE=2`), not values tuned against real usage data: `_MAX_ASK_HISTORY_TURNS=6` (question,
+     answer) pairs retained (12 messages) — generous enough for the full "why? / why does that matter? /
+     which signal? / what would weaken this?" chain the block's own acceptance examples describe, never
+     unbounded; `_MAX_ASK_HISTORY_CHARS=4000` — a secondary defensive bound so a handful of unusually long
+     turns can't blow past a reasonable prompt-size budget before hitting the turn cap. Eviction is always a
+     full `(user, assistant)` pair at once (`_trim_ask_history()`), never a partial pair — required so
+     retained history always starts on a "user" turn and strictly alternates, which both `AskLlmProvider`'s
+     own contract and Anthropic's Messages API depend on. Session lifetime, eviction, and process-lifetime-
+     only persistence are otherwise unchanged from Block 4's original `_AskSession`/`_ASK_SESSION_LIMIT=500`
+     design — no durable raw-chat database was introduced, matching the explicit instruction not to add one
+     without approval; conversation text remains out of SQLite exactly as it always has been.
+  2. **User/session/opportunity boundaries carried forward from Block 2, not re-derived.** `_AskSession` was
+     already keyed by `(user_id, session_id)` tuple (ADR-057) — `history` inherits that isolation for free;
+     two users reusing the identical `session_id` string get independent histories, and `OpportunityContext`
+     resolution stays per-user (a stale/invalid `event_id`, or one that only exists in a different user's
+     cache, still never creates or reveals history). **New this block:** opportunity-anchor-change detection.
+     `set_ask_session_event()` now clears a session's history whenever its `event_id` changes to a genuinely
+     different opportunity — a deliberate, deterministic reset (not a silent carryover), because letting a
+     "why?" resolve against a different opportunity's prior exchange would be a real correctness bug, not a
+     convenience. Repeatedly resending the *same* `event_id` every turn (exactly what the mobile client
+     already does) is correctly a no-op, not a reset.
+  3. **Authoritative grounding wins over conversation history — made an explicit, testable invariant, not an
+     assumption.** `build_system_prompt()` (`ask_llm_provider.py`, vendor-agnostic) gained new text: current
+     `OpportunityContext` always wins over anything implied by an earlier turn, from either party; the model
+     must not let its own earlier reply drift the current answer away from it. Structurally reinforced, not
+     just asserted: `build_system_prompt(context)` still takes only `context` as an argument — conversation
+     history can never be concatenated into the system prompt at all, by construction, regardless of what a
+     malicious earlier turn said. History only ever reaches the model as ordinary `user`/`assistant` messages
+     (see Decision 5), ranked no differently in trust than the current question.
+  4. **No invented signal ranking, made explicit in the prompt.** The deterministic path
+     (`answer_question()`'s `_dominant_signal_answer`) already refused to rank contributing signals against
+     each other absent a genuine `STOCK_CONVERGENCE_MULTI_SOURCE` firing — unchanged this block. Added the
+     equivalent instruction to `build_system_prompt()` for the LLM path: if asked which signal is strongest,
+     say the available data doesn't support a definitive ranking unless real convergence fired, rather than
+     inventing one. The LLM interprets STRATUS's own deterministic evidence; it does not manufacture new
+     comparative intelligence STRATUS itself never computed.
+  5. **Provider abstraction evolved additively, not replaced.** New vendor-neutral `ConversationTurn` (role +
+     text) in `ask_llm_provider.py`. `AskLlmProvider.generate()` gained a `history: Sequence[ConversationTurn]
+     = ()` parameter — defaulted, so every pre-Block-3 caller (a single-turn question) is unaffected.
+     `AnthropicAskLlmProvider.generate()` is the only place in this codebase that translates `ConversationTurn`
+     into Anthropic's own alternating `{"role", "content"}` message-list shape (`list[anthropic.types.
+     MessageParam]`) — no Anthropic SDK type reaches `ask_engine.py`, `logan_feed.py`, or `main.py`.
+     `FixtureAskLlmProvider.calls` grew from `(context, question)` 2-tuples to `(context, question, history)`
+     3-tuples — the one small, deliberate breaking change to an existing test double, migrated across its 2
+     existing call sites in `test_ask_llm.py`.
+  6. **Deterministic fallback mid-conversation: the safest policy, reasoned explicitly.**
+     `generate_grounded_answer()` gained a `history` parameter but deliberately does **not** pass it to
+     `answer_question()` — the deterministic path answers the current question standalone, exactly as it
+     always has; teaching it to parse conversational references would be a materially larger, separate
+     change, and an honest, non-fabricated single-turn answer on fallback already satisfies the actual
+     requirement ("no LLM failure should break the experience"), not "the fallback must also be
+     conversationally fluent." Whichever path actually produced an answer — LLM or deterministic fallback —
+     is what gets appended to history (`main.py`'s `append_ask_turn()` call): both are real, true, grounded
+     responses to the user's actual question, so both are legitimate context for a later turn. History is
+     only ever appended after a real `OpportunityContext` resolved and a real answer was produced — an
+     unresolved `event_id` or an empty message never reaches that point, so history can never contain a
+     fabricated or ungrounded exchange.
+  7. **ASK_FOLLOWUP / personalization bound: unchanged, verified, not re-derived.** The existing Block 4
+     `should_record_ask_followup()` per-`(session, opportunity)` cap already made conversational depth
+     independent of personalization strength — repeated questions in one session already only ever
+     contributed once. No code change was needed here; this block adds an explicit test proving 12 real,
+     distinct conversational turns still produce exactly one `ask_followup` `feedback_record`, and a second
+     test proving switching between two opportunities mid-session correctly earns at most one contribution
+     *per opportunity*, never more.
+  8. **Mobile: zero code changes.** `mobile/app/ask.tsx` already renders an accumulating multi-turn
+     conversation, already resends the same `session_id` for every turn in one screen visit, already resends
+     the same `eventId` from its route params every turn (so an anchor-change scenario cannot occur from
+     normal mobile use), and already handles loading/timeout/error states. The request/response contract
+     (`AskRequest`/`AskResponse`, `models.py`) is completely unchanged — conversational continuity is a purely
+     server-side capability the existing screen benefits from automatically. `lib/__tests__/ask.test.ts`'s 6
+     existing tests remain valid unchanged; the full mobile suite (100 tests), `tsc --noEmit`, and `eslint`
+     were re-run and are clean, confirming no regression from a change this codebase's own client code never
+     touched.
+- Consequences: `ask_llm_provider.py` gains `ConversationTurn` and an extended grounding-priority system
+  prompt; `ask_llm_fixture.py` and `ask_llm_anthropic.py` gained the `history` parameter (one small breaking
+  change to the fixture's `.calls` shape, migrated); `ask_engine.py`'s `generate_grounded_answer()` gained
+  `history`; `logan_feed.py` gained bounded history storage/eviction/anchor-reset on the existing `_AskSession`;
+  `main.py`'s `ask_logan()` reordered to detect anchor changes and fetch history *before* generating this
+  turn's answer, then append the real produced answer to history afterward. New tests:
+  `test_ask_conversation.py` (30 — first/second/third-turn continuity, pronoun/reference resolution, bounded
+  turn/char eviction with alternating-role invariant proof, same-session-id-two-users isolation,
+  same-user-two-sessions isolation, opportunity-anchor-change reset and no-op-on-same-anchor, invalid/stale
+  anchor cross-user isolation, authoritative-context-wins system-prompt assertions, no-invented-ranking
+  assertions, first/later/retained-history injection resistance at both the structural system-prompt level
+  and the wire-message-shape level, provider failure on first and later turns, deterministic-fallback-answer
+  entering history correctly, malformed-response fallback, LLM-disabled multi-turn behavior, ASK_FOLLOWUP
+  bounded across 12 turns and across an opportunity switch, and existing single-turn paths still working).
+  Every pre-existing Ask STRATUS test (`test_ask_context.py`, `test_ask_engine.py`, `test_ask_route.py`,
+  `test_ask_llm.py`) passes unchanged; 2 of `test_ask_llm.py`'s own assertions were mechanically updated for
+  the fixture's new 3-tuple `.calls` shape, not weakened. `backend` test count 193 → 223 (+30).
+  `logan_core` unaffected (306, untouched by this block). mypy/ruff/black clean on every
+  new/changed file (the pre-existing `**dict[str, object]` mypy pattern from Blocks 1/2/4's own test fixtures
+  now appears in a 4th file, `test_ask_conversation.py`, for internal consistency with those files — not a
+  new class of issue, flagged as worth a real fix in a future pass rather than left unexplained). Mobile:
+  100/100 Jest tests, `tsc --noEmit`, and `eslint` all clean with zero code changes. No merge to main.
+- Deferred / flagged for the owner: the deterministic fallback path does not attempt conversational reference
+  resolution (Decision 6) — an accepted, documented scope boundary, not an oversight; a user whose follow-up
+  hits an LLM outage gets an honest overview answer, not a broken one, but not a conversationally sharp one
+  either. `DomainPref(weight=0.5)`'s dead-consumer status (ADR-057) remains unresolved, unrelated to this
+  block. The pre-existing `**dict[str, object]` mypy pattern across Ask STRATUS test fixtures (now 4 files)
+  is worth a real fix — a small typed builder function instead of `**overrides` dict-unpacking — in a future
+  pass, not urgent enough to block this one.

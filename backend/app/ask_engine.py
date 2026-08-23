@@ -21,12 +21,12 @@ unchanged -- no LLM failure can break the existing opportunity experience.
 """
 
 import threading
-from typing import Optional
+from typing import Optional, Sequence
 
 from pydantic import BaseModel
 
 from .ask_context import OpportunityContext
-from .ask_llm_provider import AskLlmProvider, AskLlmProviderError
+from .ask_llm_provider import AskLlmProvider, AskLlmProviderError, ConversationTurn
 
 _EARNINGS_CODES = {
     "STOCK_EARNINGS_BEAT",
@@ -287,6 +287,7 @@ def generate_grounded_answer(
     context: OpportunityContext,
     message: str,
     provider: Optional[AskLlmProvider],
+    history: Sequence[ConversationTurn] = (),
 ) -> GroundedAnswer:
     """Tries a real LLM answer when `provider` is configured, falling back
     to the existing deterministic `answer_question()` on `provider=None`
@@ -296,10 +297,20 @@ def generate_grounded_answer(
     deterministic path is not a degraded experience; it's the same grounded,
     real-data answer this codebase has always produced, exercised by the
     full pre-existing test suite.
+
+    Sprint 3.6.8 Block 3: `history` (this session's bounded prior turns, see
+    logan_feed.py's `_AskSession.history`) is passed to the LLM provider so
+    it can resolve conversational follow-ups ("why?", "which of those?").
+    Deliberately NOT passed to `answer_question()` -- the deterministic path
+    answers the current question standalone, exactly as it always has;
+    teaching it to parse conversational references would be a much larger,
+    separate change, and a plain, honest single-turn answer on fallback is
+    still a correct, non-fabricated response (never a broken one), which is
+    the actual requirement here, not conversational fluency on every path.
     """
     if provider is not None:
         try:
-            llm_answer = provider.generate(context, message)
+            llm_answer = provider.generate(context, message, history)
         except AskLlmProviderError as exc:
             print(f"[ask-llm] provider failed, falling back to deterministic: {exc}")
         else:

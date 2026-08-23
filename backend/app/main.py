@@ -7,10 +7,13 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
+from .ask_llm_provider import ConversationTurn
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
     DemoFeedResponse,
+    append_ask_turn,
+    get_ask_history,
     get_ask_session_event,
     get_opportunity_context,
     mark_notifications_reviewed,
@@ -281,6 +284,16 @@ def ask_logan(
     session continuity anchor, and the resulting ASK_FOLLOWUP behavioral
     evidence are all `user_id`-scoped, so one user's Ask STRATUS activity
     can never read or influence another's.
+
+    Sprint 3.6.8 Block 3 (ADR-058): a session's bounded prior turns (see
+    logan_feed.py's `_AskSession.history`) are fetched *after*
+    `set_ask_session_event()` runs -- that call is what detects and clears
+    history on a genuine opportunity-anchor change, so fetching history
+    afterward guarantees a freshly-anchored turn never drags in a different
+    opportunity's conversation. Every real, successfully-grounded turn
+    (LLM or deterministic fallback -- both are true, non-fabricated answers)
+    is appended to history exactly once; an unresolved event_id or an empty
+    message never reaches that point at all.
     """
     clean_message = request.message.strip()
     if not clean_message:
@@ -297,19 +310,29 @@ def ask_logan(
     if target_event_id is not None:
         context = get_opportunity_context(user_id, target_event_id)
         if context is not None:
+            history: list[ConversationTurn] = []
+            if request.session_id:
+                # Detects/clears history on a genuine anchor change (see
+                # set_ask_session_event's own docstring) *before* history is
+                # fetched for this turn's grounding -- a freshly-switched
+                # opportunity always starts this turn with no prior context.
+                set_ask_session_event(user_id, request.session_id, target_event_id)
+                history = get_ask_history(user_id, request.session_id)
+
             grounded_answer = generate_grounded_answer(
-                context, clean_message, get_ask_llm_provider()
+                context, clean_message, get_ask_llm_provider(), history
             )
             answer = grounded_answer.text
 
             if request.session_id:
-                set_ask_session_event(user_id, request.session_id, target_event_id)
+                append_ask_turn(user_id, request.session_id, clean_message, answer)
                 # Feedback-loop protection: at most one ASK_FOLLOWUP
                 # behavioral-evidence contribution per (session, opportunity)
                 # pair -- see should_record_ask_followup's own docstring.
                 # Repeated follow-ups in the same session still get a real,
                 # freshly-grounded answer every time; only the *behavioral
-                # evidence* is capped.
+                # evidence* is capped -- conversational depth is not a second,
+                # unbounded personalization lever (Sprint 3.6.8 Block 3).
                 if should_record_ask_followup(
                     user_id, request.session_id, target_event_id
                 ):
@@ -323,7 +346,9 @@ def ask_logan(
             else:
                 # No session_id at all (e.g. a direct API caller) -- still a
                 # real, single question about a real opportunity, recorded
-                # once with no session-level cap to apply.
+                # once with no session-level cap to apply. No conversation
+                # history to thread through either -- there's no session to
+                # retain it in.
                 record_interaction(
                     user_id=user_id,
                     event_id=target_event_id,

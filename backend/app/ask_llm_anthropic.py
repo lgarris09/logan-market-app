@@ -13,12 +13,17 @@ fabricates a result.
 """
 
 import os
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 
 import anthropic
 
 from .ask_context import OpportunityContext
-from .ask_llm_provider import AskLlmAnswer, AskLlmProviderError, build_system_prompt
+from .ask_llm_provider import (
+    AskLlmAnswer,
+    AskLlmProviderError,
+    ConversationTurn,
+    build_system_prompt,
+)
 
 ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -76,8 +81,29 @@ class AnthropicAskLlmProvider:
             max_retries=1,
         )
 
-    def generate(self, context: OpportunityContext, question: str) -> AskLlmAnswer:
+    def generate(
+        self,
+        context: OpportunityContext,
+        question: str,
+        history: Sequence[ConversationTurn] = (),
+    ) -> AskLlmAnswer:
         system_prompt = build_system_prompt(context)
+
+        # Sprint 3.6.8 Block 3: prior turns (oldest first, already bounded/
+        # evicted by logan_feed.py) are translated into Anthropic's own
+        # alternating {"role", "content"} message shape here -- the only
+        # place in this codebase that knows that shape. `history` always
+        # starts with a "user" turn and strictly alternates (the caller's
+        # eviction policy only ever drops a full user+assistant pair at
+        # once), so appending the current question as the final "user" turn
+        # keeps the whole list Anthropic-API-valid. Every prior "user" turn
+        # is exactly as untrusted as the current one -- the system prompt
+        # (build_system_prompt) says so explicitly, this is not a second,
+        # separate guardrail.
+        messages: list[anthropic.types.MessageParam] = [
+            {"role": turn.role, "content": turn.text} for turn in history
+        ]
+        messages.append({"role": "user", "content": question})
 
         try:
             response = self._client.messages.create(
@@ -85,15 +111,7 @@ class AnthropicAskLlmProvider:
                 max_tokens=DEFAULT_MAX_TOKENS,
                 output_config={"effort": DEFAULT_EFFORT},
                 system=system_prompt,
-                # Structurally separate from the system prompt -- the
-                # question is sent as its own `user` turn, never
-                # concatenated into `system_prompt`'s text. This is the
-                # actual prompt-injection guardrail: even if the question
-                # contains text like "ignore previous instructions," it
-                # arrives as user content the model is explicitly told (in
-                # the system prompt) to treat as untrusted, not as a second
-                # system instruction.
-                messages=[{"role": "user", "content": question}],
+                messages=messages,
             )
         except anthropic.APITimeoutError as exc:
             raise AskLlmProviderError(f"Anthropic API timed out: {exc}") from exc

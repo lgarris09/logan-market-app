@@ -94,8 +94,8 @@ def test_fixture_provider_records_every_call():
     provider.generate(context, "question one")
     provider.generate(context, "question two")
     assert len(provider.calls) == 2
-    assert provider.calls[0] == (context, "question one")
-    assert provider.calls[1] == (context, "question two")
+    assert provider.calls[0] == (context, "question one", ())
+    assert provider.calls[1] == (context, "question two", ())
 
 
 # --- build_system_prompt: structured grounding + prompt-injection safety --
@@ -214,9 +214,10 @@ def test_provider_is_actually_called_with_real_context_and_question():
     provider = FixtureAskLlmProvider(answer="ok")
     generate_grounded_answer(context, "why does this matter?", provider)
     assert len(provider.calls) == 1
-    called_context, called_question = provider.calls[0]
+    called_context, called_question, called_history = provider.calls[0]
     assert called_context.entity_id == "AAPL"
     assert called_question == "why does this matter?"
+    assert called_history == ()
 
 
 # --- Config gating ---------------------------------------------------------

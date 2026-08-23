@@ -1021,3 +1021,68 @@ required. Committed locally, **not pushed**, per explicit instruction pending re
 - `docs/specs/.../27_SECURITY_PRIVACY_COMPLIANCE.md`'s prior "multi-user persistence explicitly excluded from
   V3.1.4 scope" note needs a follow-up edit reflecting this block's real (if partial) multi-user isolation
   work.
+
+---
+
+# Session Notes — 2026-08-23 (Sprint 3.6.8 Block 3 — bounded conversational Ask STRATUS)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 2 closeout commit
+`9f8807e`. See ADR-058 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative. Working autonomously per the owner's own instruction, with Block 4 to follow directly if Block 3
+finished clean with no unresolved owner-level decision.
+
+## What was asked
+
+Turn the existing single-turn grounded Ask STRATUS path into bounded, genuinely conversational reasoning --
+"why?", "which of those signals is strongest?", "is that because of the analyst downgrade?" -- while keeping
+deterministic STRATUS intelligence as the sole source of authoritative truth.
+
+## The recon finding that shaped the whole block: mobile already does its half
+
+Before writing any code, read `mobile/app/ask.tsx` closely. It already renders a real, accumulating
+multi-turn conversation (a `messages` array of user/assistant turns), already resends the identical
+`session_id` on every submit within one screen visit, already resends the same `eventId` from its route
+params on every turn (never omitting it to rely on session continuity), and already handles
+loading/timeout/error states. The entire gap was server-side: nothing retained what was asked earlier, and
+nothing threaded it into the LLM call. This meant the block's own "minimum additive mobile changes" and
+"reuse rather than rebuild" instructions resolved to **zero mobile code changes** -- confirmed, not assumed,
+by re-running the full mobile suite (100 Jest tests, `tsc --noEmit`, `eslint`) at the end and finding it
+untouched and clean.
+
+## What got built (see ADR-058 for the full per-area record)
+
+1. **Bounded history on the existing per-`(user_id, session_id)` `_AskSession`** (Block 2's own store, not a
+   new one) -- `_MAX_ASK_HISTORY_TURNS=6` pairs, `_MAX_ASK_HISTORY_CHARS=4000` as a secondary defensive bound,
+   both reasoned small integers in this codebase's existing style, not tuned against usage data. Eviction
+   always drops a full `(user, assistant)` pair at once so retained history never breaks the
+   strictly-alternating-role invariant Anthropic's Messages API requires.
+2. **Opportunity-anchor-change detection** -- new this block: `set_ask_session_event()` now clears history
+   when a session's `event_id` genuinely changes, a deliberate reset so a "why?" can never accidentally
+   resolve against a different opportunity. Resending the same `event_id` every turn (what mobile already
+   does) is correctly a no-op.
+3. **Authoritative-context-wins made an explicit, structural invariant** -- `build_system_prompt()` still
+   takes only `context`, so history can never be concatenated into the system prompt at all; new prompt text
+   states current context always wins over anything implied by an earlier turn, from either party.
+4. **No invented signal ranking** -- added to the system prompt directly: without a genuine convergence
+   firing, say the data doesn't support a definitive ranking rather than inventing one (the deterministic
+   path's own `_dominant_signal_answer` already enforced this; now the LLM path says so explicitly too).
+5. **Provider abstraction evolved additively** -- new vendor-neutral `ConversationTurn`, `AskLlmProvider.
+   generate()` gained a defaulted `history` parameter, `AnthropicAskLlmProvider` is the only place that
+   translates it into Anthropic's own message shape.
+6. **Deterministic fallback: reasoned, not just implemented** -- the fallback path deliberately does not
+   attempt conversational reference resolution (a materially larger, separate change); whichever path
+   actually produced an answer becomes the retained turn, since both are real and true.
+7. **ASK_FOLLOWUP bound: verified unchanged, not re-derived** -- the existing per-`(session, opportunity)` cap
+   already made conversational depth independent of personalization strength; added tests proving 12
+   real turns and a mid-session opportunity switch both stay correctly bounded.
+
+## Status at the end of this session
+
+`backend` test count 193 → 223 (+30, `test_ask_conversation.py`). `logan_core` unaffected (306). Combined
+529. mypy/ruff/black clean (one new mypy fix needed: `messages` had to be typed as
+`list[anthropic.types.MessageParam]`, not a plain `list[dict[str, str]]`, for the SDK's overload resolution
+to accept it -- caught immediately by the existing mypy pass, not a runtime bug). Mobile: 100/100 Jest,
+`tsc --noEmit`, `eslint` all clean with zero code changes. No owner-level architecture decision was
+encountered -- provider abstraction, bounded-cache design, and history-eviction policy were all judged to be
+within the pre-approved "straightforward bounded-cache implementation" / "normal refactoring" categories.
+Continuing directly into Block 4 per the owner's own instruction.

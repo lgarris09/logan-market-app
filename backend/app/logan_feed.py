@@ -54,6 +54,7 @@ from .ask_context import (  # noqa: E402
     OpportunityContextCache,
     build_opportunity_context,
 )
+from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
     live_nvda_earnings_enabled,
     memory_persistence_enabled,
@@ -129,17 +130,64 @@ _opportunity_context_caches: dict[str, OpportunityContextCache] = {}
 # convenience store, not a place to spend real per-user LRU machinery on.
 _ASK_SESSION_LIMIT = 500
 
+# Sprint 3.6.8 Block 3 -- bounded conversational history (ADR-058). Small,
+# reasoned integers in this codebase's existing style (FATIGUE_LIMIT=5,
+# MIN_REPEAT_EVIDENCE=2), not values tuned against real usage data:
+# _MAX_ASK_HISTORY_TURNS caps retained (question, answer) pairs per session
+# -- generous enough to cover a real "why? / why does that matter? / which
+# signal? / what would weaken this?" chain (the acceptance examples run to
+# ~10 questions across a session, well within 6 retained *pairs* = 12
+# messages) without ever growing unbounded. _MAX_ASK_HISTORY_CHARS is a
+# secondary defensive bound -- a handful of unusually long turns could still
+# blow past a reasonable prompt-size budget before hitting the turn cap;
+# both bounds evict the oldest full (user, assistant) pair at a time, never
+# a partial pair, so the retained history always starts on a "user" turn
+# and strictly alternates (required by Anthropic's Messages API shape, see
+# ask_llm_anthropic.py's generate()).
+_MAX_ASK_HISTORY_TURNS = 6
+_MAX_ASK_HISTORY_CHARS = 4000
+
 
 class _AskSession:
-    __slots__ = ("event_id", "ask_followup_recorded_event_ids", "last_active_at")
+    __slots__ = (
+        "event_id",
+        "ask_followup_recorded_event_ids",
+        "last_active_at",
+        "history",
+    )
 
     def __init__(self) -> None:
         self.event_id: UUID | None = None
         self.ask_followup_recorded_event_ids: set[UUID] = set()
         self.last_active_at: datetime = datetime.now(timezone.utc)
+        # Sprint 3.6.8 Block 3: bounded conversational history, oldest first.
+        # Never persisted to SQLite -- same short-lived-UI-convenience
+        # reasoning as the rest of this session store (see the module
+        # docstring above); real question/answer text was already
+        # deliberately kept out of durable storage before this block, and
+        # that boundary is unchanged, just extended to cover more than one
+        # turn now.
+        self.history: list[ConversationTurn] = []
 
 
 _ask_sessions: dict[tuple[str, str], _AskSession] = {}
+
+
+def _trim_ask_history(session: "_AskSession") -> None:
+    """Evicts oldest-first, one full (user, assistant) pair at a time --
+    never a partial pair, which would leave `history` starting on an
+    "assistant" turn and break the alternating-role invariant every
+    AskLlmProvider implementation (and Anthropic's own Messages API) relies
+    on. Applies both bounds; either one alone would leave the other
+    unenforced.
+    """
+    while len(session.history) > _MAX_ASK_HISTORY_TURNS * 2:
+        del session.history[:2]
+    while (
+        session.history
+        and sum(len(turn.text) for turn in session.history) > _MAX_ASK_HISTORY_CHARS
+    ):
+        del session.history[:2]
 
 
 def _get_or_create_ask_session(user_id: str, session_id: str) -> _AskSession:
@@ -196,14 +244,57 @@ def should_record_ask_followup(user_id: str, session_id: str, event_id: UUID) ->
 def set_ask_session_event(user_id: str, session_id: str, event_id: UUID) -> None:
     """Records which opportunity a session is currently discussing, so a
     later follow-up question in the same session can omit `event_id` and
-    still resolve against it (see main.py's ask_logan route)."""
+    still resolve against it (see main.py's ask_logan route).
+
+    Sprint 3.6.8 Block 3: if this session was already anchored to a
+    *different* opportunity, its retained conversation history is cleared
+    here -- a deliberate, deterministic reset, not a silent carryover.
+    Pronoun/reference resolution ("why?", "what about that?") must never
+    accidentally resolve against a different opportunity's context just
+    because a session_id happened to be reused. A no-op when the anchor is
+    unchanged (the overwhelmingly common case -- every question in one
+    real Ask STRATUS screen visit discusses the same opportunity) or when
+    this is the session's first-ever anchor (`event_id is None` before).
+    """
     session = _get_or_create_ask_session(user_id, session_id)
+    if session.event_id is not None and session.event_id != event_id:
+        session.history = []
     session.event_id = event_id
 
 
 def get_ask_session_event(user_id: str, session_id: str) -> Optional[UUID]:
     session = _ask_sessions.get((user_id, session_id))
     return session.event_id if session is not None else None
+
+
+def get_ask_history(user_id: str, session_id: str) -> list[ConversationTurn]:
+    """Sprint 3.6.8 Block 3: this session's bounded prior turns, oldest
+    first -- what main.py's ask_logan route passes to
+    `generate_grounded_answer()` so the LLM path can resolve conversational
+    follow-ups. Returns an empty list for a session that doesn't exist yet
+    (this is its first turn) -- never fabricates continuity that was never
+    established.
+    """
+    session = _ask_sessions.get((user_id, session_id))
+    return list(session.history) if session is not None else []
+
+
+def append_ask_turn(user_id: str, session_id: str, question: str, answer: str) -> None:
+    """Sprint 3.6.8 Block 3: records one real, successfully-answered turn
+    (whichever path -- LLM or deterministic fallback -- actually produced
+    `answer`) into this session's bounded history. Only ever called after a
+    real `OpportunityContext` resolved and a real answer was produced (see
+    main.py's ask_logan) -- an invalid/stale event_id or an empty message
+    never reaches here, so history can never contain a fabricated or
+    ungrounded exchange. Deliberately does not distinguish LLM-produced vs.
+    deterministic-fallback answers: both are real, true, grounded responses
+    to the user's actual question, so both are legitimate conversational
+    context for a later turn to reference.
+    """
+    session = _get_or_create_ask_session(user_id, session_id)
+    session.history.append(ConversationTurn(role="user", text=question))
+    session.history.append(ConversationTurn(role="assistant", text=answer))
+    _trim_ask_history(session)
 
 
 def _get_orchestrator() -> Orchestrator:
