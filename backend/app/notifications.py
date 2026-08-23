@@ -187,36 +187,55 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
             if not tokens:
                 continue
 
-            dispatched_ids = _dispatched_event_ids.setdefault(user_id, set())
-            eligible = [
-                item
-                for item in get_alert_eligible_items(user_id)
-                if item.event_id not in dispatched_ids
-            ]
-            if not eligible:
-                continue
-
-            messages = [
-                _build_push_message(token, item)
-                for item in eligible
-                for token in tokens
-            ]
+            # Sprint 3.6.8 Block 4 (beta-readiness hardening): the whole
+            # per-user body -- not just the push send below -- is guarded
+            # here. get_alert_eligible_items(user_id) runs that user's full
+            # personalized pipeline (including any live provider calls);
+            # before this fix, an exception there propagated straight out of
+            # this loop and skipped dispatch for every *other* registered
+            # user in the same poll cycle too, contradicting this function's
+            # own documented contract ("a failure for one user must not stop
+            # dispatch for any other user"). The outer poller loop
+            # (main.py's _notification_poll_loop) still catches anything
+            # that somehow escapes this, but that would silently cost an
+            # entire cycle for every user, not just the one that failed.
             try:
-                client.post(EXPO_PUSH_URL, json=messages)
-            except httpx.RequestError as exc:
+                dispatched_ids = _dispatched_event_ids.setdefault(user_id, set())
+                eligible = [
+                    item
+                    for item in get_alert_eligible_items(user_id)
+                    if item.event_id not in dispatched_ids
+                ]
+                if not eligible:
+                    continue
+
+                messages = [
+                    _build_push_message(token, item)
+                    for item in eligible
+                    for token in tokens
+                ]
+                try:
+                    client.post(EXPO_PUSH_URL, json=messages)
+                except httpx.RequestError as exc:
+                    print(
+                        f"[notifications] Expo push dispatch to {user_id} failed, "
+                        f"will retry next poll: {exc}"
+                    )
+                    continue
+
+                dispatched_item_ids = [item.event_id for item in eligible]
                 print(
-                    f"[notifications] Expo push dispatch to {user_id} failed, "
-                    f"will retry next poll: {exc}"
+                    f"[notifications] dispatched to {user_id}'s {len(tokens)} "
+                    f"token(s): {dispatched_item_ids}"
+                )
+                dispatched_ids.update(dispatched_item_ids)
+                total_dispatched += len(eligible)
+            except Exception as exc:  # noqa: BLE001 -- see comment above
+                print(
+                    f"[notifications] dispatch pass for {user_id} failed "
+                    f"unexpectedly, skipping to the next user: {exc}"
                 )
                 continue
-
-            dispatched_item_ids = [item.event_id for item in eligible]
-            print(
-                f"[notifications] dispatched to {user_id}'s {len(tokens)} token(s): "
-                f"{dispatched_item_ids}"
-            )
-            dispatched_ids.update(dispatched_item_ids)
-            total_dispatched += len(eligible)
     finally:
         if owns_client:
             client.close()

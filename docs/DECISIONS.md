@@ -2164,3 +2164,151 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   block. The pre-existing `**dict[str, object]` mypy pattern across Ask STRATUS test fixtures (now 4 files)
   is worth a real fix — a small typed builder function instead of `**overrides` dict-unpacking — in a future
   pass, not urgent enough to block this one.
+
+## ADR-059: Sprint 3.6.8 Block 4 — beta-readiness hardening: integrated-path fixes, observability, and a corrected security posture
+
+- Date: 2026-08-23
+- Status: Accepted
+- Context: with grounded LLM Ask STRATUS (Block 1), user-scoped state isolation (Block 2), and bounded
+  conversation (Block 3) all shipped, this block's job was to harden the fully integrated backend/mobile
+  path toward controlled family/beta readiness — not a redesign, a recon-driven pass to find and fix real
+  issues in the loop from provider data through to the mobile experience, then report honestly on what
+  still blocks a genuinely live-data beta. Mid-block, the owner stated an explicit, governing rule: production
+  opportunity generation must be live-data-first; demo fixtures/hardcoded events/synthetic qualifying
+  conditions belong only in deterministic tests and acceptance scenarios, never the real app path, and no
+  threshold may ever be lowered or a signal fabricated to force a live check to pass. This block's own
+  recon findings are organized against that rule explicitly, not folded in as an afterthought.
+- Decision (by area):
+  1. **Notification dispatch: real per-user failure isolation bug, fixed.** `dispatch_eligible_notifications()`
+     (`backend/app/notifications.py`, Block 2) already documented "a failure for one user must not stop
+     dispatch for any other user" — but only the actual push send was guarded against that; the per-user
+     call to `get_alert_eligible_items(user_id)` (which runs that user's full pipeline) was not. An
+     exception there — a pipeline bug, an unexpected live-provider failure — propagated straight out of the
+     per-user loop and silently skipped every *other* registered user for that entire poll cycle, directly
+     contradicting the function's own documented contract. Fixed: the whole per-user body is now guarded,
+     not just the send. New test proves one user's simulated pipeline failure does not stop a second user's
+     dispatch in the same call.
+  2. **Notification poller: real event-loop-blocking bug, fixed.** `_notification_poll_loop()`
+     (`backend/app/main.py`) is an `async def` coroutine that called the fully synchronous
+     `dispatch_eligible_notifications()` directly, unlike every HTTP route in this app (plain sync `def`
+     handlers, which FastAPI/Starlette already runs in a threadpool automatically). Since that function runs
+     a full pipeline per registered user — including, when `STRATUS_LIVE_NVDA_EARNINGS` is enabled, up to
+     three sequential live FMP calls bounded at 10s each — a slow poll cycle would have stalled the main
+     asyncio event loop, freezing every other concurrent request this server was handling, for its duration.
+     Fixed: wrapped in `asyncio.to_thread()`. Currently inert at default configuration (the live flag is off
+     by default) but a real, latent hazard the moment it's enabled or the poller does more work.
+  3. **FMP provider: API-key redaction in error messages, added defensively.** `FmpEarningsProvider`/
+     `FmpMarketDataProvider` (`logan_core/receptors/providers/fmp.py`) send the API key as a URL query
+     param and construct error messages from up to 200 characters of the raw HTTP response body — some
+     APIs' error responses echo an invalid credential verbatim (e.g. "Invalid API KEY: <key>"). A new
+     `_redact()` helper strips the real key from every such error message before it's ever raised (and
+     therefore before any caller could print/log it) — a no-op in the normal case where the key never
+     appears in a response body, satisfying the "never log API keys" requirement defensively rather than
+     only by observed absence of the problem.
+  4. **Minimum viable observability for Ask STRATUS routing, added.** Before this block, server logs only
+     ever recorded an LLM *failure* — there was no way to tell from logs alone whether a given `/v1/ask`
+     request was answered by the LLM or the deterministic path, or which user/entity it concerned, unless it
+     happened to fail. `main.py`'s `ask_logan()` now logs one line per successfully-grounded turn:
+     `user_id`, `entity_id`, and which path answered (`deterministic` or `llm:<model>`) — deliberately
+     routing metadata only, never the question or answer text (no raw conversational transcripts in logs,
+     per the explicit requirement), using the same `print(f"[tag] ...")` convention already established
+     throughout this module rather than introducing a new logging framework or SaaS vendor.
+  5. **Restart-safety matrix: made an explicit, executable contract.** Prior blocks each tested their own
+     slice of restart behavior in isolation (Block 3's persisted-interactions test, Block 4's own review).
+     `test_beta_hardening.py::test_restart_safety_matrix` now proves, in one place: MemoryStore's durable
+     behavioral records survive a simulated restart under `STRATUS_PERSIST_MEMORY`; `PrioritizationEngine`'s
+     `AttentionState` (Watch fatigue/cooldown/notification-review) does **not**, regardless of that flag —
+     always a fresh, empty per-user dict on every new `Orchestrator`; Ask STRATUS conversation history does
+     **not** (by design, ADR-055/058, never written to SQLite); registered push tokens/dispatch-review state
+     does **not**. Nothing here changed behavior — this documents and locks in what was already true.
+  6. **Multi-user regression re-proven through the actual integrated stack.** Block 2's isolation guarantees
+     were originally tested against the single-turn Ask surface that existed at the time. New tests exercise
+     the same guarantees through Block 3's real conversational path (multiple turns, retained history, a
+     shared `session_id` string between two distinct users) and confirm ASK_FOLLOWUP stays bounded at
+     exactly one per (user, session, opportunity) even across a multi-turn exchange for each user
+     independently.
+  7. **A full integrated acceptance path, using fixtures throughout, never forcing a result.** New test
+     proves the complete arc named in this block's own spec end-to-end: no explicit holding on a real fixture
+     entity → the opportunity surfaces with limited, honest initial personal relevance → a real multi-turn
+     conversational Ask exchange (fixture LLM, not a live call) → `ASK_FOLLOWUP` recorded exactly once →
+     additional real, correctly-spaced interactions → a simulated restart with durable persistence actually
+     enabled (not simulated in name only) → behavioral evidence survives, correctly scoped to the one user →
+     a rebuild shows genuinely matured but still-bounded inferred relevance → Watch's `AttentionState`
+     confirmed absent post-restart (see Decision 5) → a second user is provably unaffected throughout.
+     No live-market threshold was touched to make this pass, consistent with the owner's live-data-first
+     rule — this is exactly the kind of scenario that rule reserves fixtures for.
+  8. **The live-data-first rule applied to this codebase: a precise inventory, not a guess.** Confirmed by
+     direct inspection: exactly one production (non-test) call site of `simulated_fixtures()` exists
+     anywhere in this codebase — `backend/app/logan_feed.py`'s `_run_feed_pipeline()`, the function backing
+     the real `/v1/opportunities` endpoint. It always runs 11 hardcoded entities across 6 domains
+     (stocks: TSLA/NVDA/AAPL/MARKETS/OIL; crypto: BTC; news: FED; sports: NFL; social: MUSIC/AI_SECTOR;
+     poly: POLY). Exactly one of those eleven — NVDA — has *any* live-provider path at all
+     (`FmpEarningsProvider`/`FmpMarketDataProvider`, Sprint 3.6.6B/3.6.7), and that path is itself
+     config-gated off by default (`STRATUS_LIVE_NVDA_EARNINGS`). A meaningful nuance found during this
+     inventory, not previously written down anywhere: TSLA and AAPL are real, valid stock tickers the
+     *existing* FMP integration could plausibly serve without any new vendor — `logan_feed.py`'s live-data
+     wiring is simply hardcoded to the symbol `"NVDA"` specifically rather than parameterized by entity;
+     extending live coverage to those two would be parameterization of proven code, not a new integration.
+     MARKETS and OIL represent aggregate/commodity concepts, not single tickers, and would need an explicit
+     product decision about what real instrument each should track before any live wiring makes sense. The
+     remaining six entities (BTC, FED, NFL, MUSIC, POLY, AI_SECTOR) span five different domains — crypto,
+     news/macro, sports, social/culture, and prediction markets — for which this codebase has zero existing
+     provider integration of any kind; making any of them live is a genuine new external vendor decision per
+     domain, exactly the category this block's own stop condition names. No such vendor was added or even
+     selected — this is reported as the single largest, most concrete beta-readiness blocker, not
+     silently worked around.
+  9. **Mobile beta-readiness: a real, confirmed distribution blocker found, not fixed.** `mobile/eas.json`
+     declares `development`/`preview`/`production` build profiles with **no `env` configuration at all**.
+     `constants/config.ts`'s `API_BASE_URL` falls back to a hardcoded local Wi-Fi IP
+     (`DEV_FALLBACK_API_BASE_URL`) when `EXPO_PUBLIC_API_BASE_URL` isn't set — already documented in-code as
+     a local-`expo start`-only convenience. Because EAS Build runs on Expo's remote build servers (never the
+     local machine, and never reading the gitignored local `.env`), a `preview` or `production` EAS build
+     today would silently bundle that stale local IP into the shipped binary, unreachable for any real
+     tester outside the developer's home network. Not fixed here: the correct value depends on where the
+     backend will actually be hosted for a beta, which is ADR-006's own still-open decision — setting a
+     guessed or placeholder URL would be actively misleading (looks configured, isn't), so this is reported
+     as a required owner action, matching the same discipline as not attempting Apple signing/credentials.
+  10. **Security/privacy posture corrected precisely, not just softened.** `27_SECURITY_PRIVACY_COMPLIANCE.md`
+      previously stated "the only value ever supplied in this codebase is the hardcoded `LOCAL_FOUNDER_USER_ID`
+      constant... no way for a second distinct user to exist" — stale since Block 2. Corrected precisely per
+      the owner's own explicit instruction: STRATUS now has real, tested backend user-scoped *state
+      isolation* (MemoryStore reads, UserModel, AttentionState, OpportunityContext cache, Ask session/
+      conversation state all genuinely scoped by `user_id`) — but this is **not** authentication or
+      authorization. `resolve_user_id()` trusts the `X-Stratus-User-Id` header outright; nothing verifies a
+      caller's claimed identity, so any process reaching the backend can claim to be any `user_id`. The
+      isolation protects honest, cooperating identities from leaking into each other — it is not a security
+      boundary against an adversarial caller impersonating someone else. Updated: the tag-table's
+      `REQUIRED — TRUSTED ALPHA` description, Core Privacy Principle 5, the "Current State" section's
+      user-identity bullets (the most load-bearing correction), the Authentication and Authorization
+      section's opening line, and the pre-trusted-alpha-distribution checklist. No other section was
+      touched — every other FUTURE/target-design section remains accurately unbuilt.
+- Consequences: `backend/app/notifications.py` (dispatch isolation fix), `backend/app/main.py` (event-loop
+  offload + Ask routing observability), `logan_core/receptors/providers/fmp.py` (key redaction) all changed.
+  New tests: `test_push_notifications.py` (+1, per-user dispatch-failure isolation), `test_beta_hardening.py`
+  (3 — the restart-safety matrix, multi-user regression through the full conversational stack, and the full
+  integrated acceptance path). `backend` test count 223 → 227 (+4). `logan_core` unchanged (306, only the
+  FMP redaction helper touched, behavior-neutral, all 306 pre-existing tests re-verified passing unchanged).
+  Combined 529 → 533. mypy/ruff/black clean (same 20-error pre-existing baseline pattern, unchanged in count
+  and location). Mobile: zero code changes; full suite (100 tests), `tsc --noEmit`, `eslint` all re-run
+  clean. `docs/specs/.../27_SECURITY_PRIVACY_COMPLIANCE.md` corrected as described in Decision 10. No merge
+  to main; commit not pushed pending review.
+- Deferred / flagged for the owner — the actual beta-readiness blockers, not resolved here by design:
+  1. **Live-data coverage is the single biggest gap.** 10 of 11 production entities are simulated-only,
+     always; only NVDA has any live path, off by default. TSLA/AAPL could plausibly extend the *existing*
+     FMP integration (parameterization, not a new vendor) — a real, comparatively small next step if wanted.
+     MARKETS/OIL need a product decision about what instrument each represents. BTC/FED/NFL/MUSIC/POLY each
+     need a genuine new external vendor decision, one per domain — none selected, none added.
+  2. **`eas.json` has no `EXPO_PUBLIC_API_BASE_URL` for any build profile** — a real EAS `preview`/
+     `production` build today would ship with an unreachable, stale local IP baked in. Blocked on ADR-006's
+     open hosting decision; not fixed with a guessed value.
+  3. Push notification credentials, Apple Developer account access, and any other signing/credential setup
+     required for a real TestFlight build were not attempted, per the standing instruction not to perform
+     irreversible external actions.
+  4. `_user_models`/`_opportunity_context_caches` (per-user dicts, Block 2) grow without bound across
+     distinct `user_id`s ever seen by the process, never evicted (unlike `_ask_sessions`'s own
+     `_ASK_SESSION_LIMIT`). Immaterial at controlled-beta scale (a handful of known testers); flagged, not
+     fixed, since adding real eviction machinery for a non-problem at current scale would be exactly the
+     kind of premature hardening this block's own "no broad cosmetic refactors" boundary excludes.
+  5. Advisory-only disclaimer copy (already specified in `27_SECURITY_PRIVACY_COMPLIANCE.md`) has still not
+     been added to any mobile screen — required before any non-operator sees the app, unrelated to this
+     block's own scope but worth restating as a real pre-distribution blocker.

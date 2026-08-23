@@ -1086,3 +1086,75 @@ to accept it -- caught immediately by the existing mypy pass, not a runtime bug)
 encountered -- provider abstraction, bounded-cache design, and history-eviction policy were all judged to be
 within the pre-approved "straightforward bounded-cache implementation" / "normal refactoring" categories.
 Continuing directly into Block 4 per the owner's own instruction.
+
+---
+
+# Session Notes — 2026-08-23 (Sprint 3.6.8 Block 4 — beta-readiness hardening)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 3 closeout commit
+`0d0b771`. See ADR-059 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative.
+
+## A mid-session rule from the owner reshaped how this block's recon was reported
+
+Partway through the integrated-path recon, the owner stated an explicit, governing rule: production
+opportunity generation must be live-data-first -- demo fixtures/hardcoded events/synthetic qualifying
+conditions belong only in deterministic tests and acceptance scenarios, never the real app path, and no
+threshold may ever be lowered or a signal fabricated to force a live check to pass. Confirmed understanding
+immediately and reported the true state honestly: Block 3 never touches signal generation at all (no
+violation there), but the broader, pre-existing app has always run its production feed
+(`/v1/opportunities`) on `simulated_fixtures()` for 10 of 11 entities, with only NVDA having any live path
+at all -- a foundational fact from Sprint 3.6.6, not something this sprint introduced. Built a precise
+inventory rather than a guess (see ADR-059 Decision 8): TSLA/AAPL could extend the *existing* FMP
+integration without a new vendor (it's hardcoded to the symbol "NVDA," not parameterized); MARKETS/OIL need
+a product decision about what instrument they represent; the other five entities (BTC/FED/NFL/MUSIC/POLY)
+each need a genuine new external vendor per domain. None added, none guessed at -- reported as the single
+biggest beta-readiness finding.
+
+## Two real bugs found and fixed during the integrated-path recon
+
+1. **Notification dispatch per-user isolation had a real gap.** `dispatch_eligible_notifications()`
+   (Block 2) already documented that one user's failure must not stop another's dispatch -- but only the
+   push send itself was guarded; the per-user pipeline call (`get_alert_eligible_items(user_id)`) was not.
+   An exception there would have silently skipped every other registered user for that whole poll cycle,
+   contradicting the function's own stated contract. Fixed by widening the try/except to cover the whole
+   per-user body; new test proves the fix.
+2. **The notification poller blocked the event loop.** `_notification_poll_loop()` is `async def` but
+   called the fully synchronous `dispatch_eligible_notifications()` directly -- unlike every HTTP route
+   (plain sync `def`, already threadpooled by FastAPI/Starlette automatically), this ran a full pipeline per
+   registered user, including up to three sequential 10s-bounded live FMP calls when enabled, directly on
+   the main event loop. A slow poll cycle would have frozen every other concurrent request. Fixed with
+   `asyncio.to_thread()`. Currently inert (the live flag defaults off) but a real, latent hazard.
+
+A third, smaller hardening addition: FMP's error messages include up to 200 characters of the raw response
+body, and the API key is sent as a URL query param -- some APIs echo an invalid credential back in an error
+message. Added a defensive `_redact()` helper so the real key can never end up in a raised exception's
+message, even though no live-observed instance of this ever happened; "never log API keys" is satisfied by
+construction, not just by absence of an observed problem.
+
+## What got built (see ADR-059 for the full per-area record)
+
+1. The two bug fixes above, plus the FMP key redaction.
+2. Minimum viable observability: one new log line per successfully-grounded Ask STRATUS turn (`user_id`,
+   `entity_id`, which path answered) -- routing metadata only, never question/answer text, using the
+   existing `print(f"[tag] ...")` convention already established throughout this codebase.
+3. A restart-safety matrix made an explicit, executable test: MemoryStore records survive a persisted
+   restart; AttentionState (Watch fatigue/cooldown), Ask conversation history, and notification token state
+   all do not, regardless of the persistence flag -- documented as a real contract, not left implicit.
+4. Multi-user regression re-proven through the actual Block 3 conversational stack (not just the original
+   single-turn surface Block 2 shipped against), including a shared `session_id` string between two users.
+5. The full integrated acceptance path from the block's own spec, using fixtures throughout and never
+   forcing a live threshold to pass.
+6. `27_SECURITY_PRIVACY_COMPLIANCE.md` corrected precisely, not just softened -- the stale "no way for a
+   second distinct user to exist" claim replaced with an accurate, careful description of what Block 2
+   actually built (real backend state isolation) and what it explicitly is not (authentication -- the
+   `X-Stratus-User-Id` header is never verified against anything).
+
+## Status at the end of this session
+
+`backend` test count 223 → 227 (+4). `logan_core` unchanged (306, only the redaction helper touched,
+behavior-neutral). Combined 529 → 533. mypy/ruff/black clean (same pre-existing baseline pattern). Mobile:
+100/100 Jest, `tsc --noEmit`, `eslint` clean with zero code changes. No owner-level architecture decision
+was required to complete this block's actual scope -- the two real beta-readiness blockers found (live-data
+coverage, `eas.json`'s missing `EXPO_PUBLIC_API_BASE_URL`) were both correctly *not* attempted, matching the
+standing instruction not to guess at new-vendor or hosting decisions, and are reported precisely instead.

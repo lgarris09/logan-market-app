@@ -54,7 +54,18 @@ async def _notification_poll_loop() -> None:
     while True:
         await asyncio.sleep(NOTIFICATION_POLL_INTERVAL_SECONDS)
         try:
-            dispatch_eligible_notifications()
+            # Sprint 3.6.8 Block 4 (beta-readiness hardening): dispatch_eligible_
+            # notifications() is synchronous and, per registered user, runs that
+            # user's full pipeline -- including, when STRATUS_LIVE_NVDA_EARNINGS
+            # is enabled, up to three sequential live FMP HTTP calls (bounded at
+            # 10s each). Every other route in this app is a sync `def` handler,
+            # which FastAPI/Starlette already runs in a threadpool automatically
+            # -- but this poller is the one place calling that same synchronous
+            # work directly from an `async def` coroutine, on the main event
+            # loop. Without offloading it here, a slow live-data poll cycle
+            # would stall every concurrent request this server is handling for
+            # its duration, not just the poller itself.
+            await asyncio.to_thread(dispatch_eligible_notifications)
         except Exception as exc:  # noqa: BLE001 -- see lifespan docstring below
             print(f"[notifications] poller error, will retry next cycle: {exc}")
 
@@ -323,6 +334,24 @@ def ask_logan(
                 context, clean_message, get_ask_llm_provider(), history
             )
             answer = grounded_answer.text
+
+            # Sprint 3.6.8 Block 4 (beta-readiness hardening): minimum viable
+            # observability for which path actually answered -- a real,
+            # documented gap in server logs before this (only LLM *failures*
+            # were ever logged, never a success or a disabled/never-attempted
+            # LLM). Deliberately routing metadata only -- never the question
+            # or answer text itself (no raw conversational transcripts in
+            # logs), and no secrets. Same print-based convention already used
+            # throughout this module ([live-nvda], [notifications], [ask-llm]).
+            path = (
+                f"llm:{grounded_answer.llm_model}"
+                if grounded_answer.used_llm
+                else "deterministic"
+            )
+            print(
+                f"[ask] user={user_id} entity={context.entity_id} path={path} "
+                f"grounded=True"
+            )
 
             if request.session_id:
                 append_ask_turn(user_id, request.session_id, clean_message, answer)

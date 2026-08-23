@@ -15,7 +15,7 @@ one of four statuses so a reader can tell what's actually true today from what's
 |-----|---------|
 | **CURRENT** | True of the repository right now, verifiable by reading the code. |
 | **LOCAL-DEV LIMITATION** | A gap that is acceptable *only* because Logan runs as a single-operator local process today. Not a decision anyone made on purpose — a consequence of not having built the alternative yet. |
-| **REQUIRED — TRUSTED ALPHA** | Must exist before Logan is run by anyone other than the single local operator, even a small group of trusted testers. Not built. Auth and multi-user persistence are explicitly excluded from V3.1.4 scope (see `docs/DECISIONS.md` and the V3.1.4 scope notes) — this table exists so the gap is documented, not so it gets built this release. |
+| **REQUIRED — TRUSTED ALPHA** | Must exist before Logan is run by anyone other than the single local operator, even a small group of trusted testers. **Updated Sprint 3.6.8 Block 2/4 (2026-08-23):** backend-side user-scoped *state isolation* now exists (see the Current State section and ADR-057/ADR-059) — one client-asserted `user_id` can no longer read or influence another's personalization, behavioral evidence, or conversation state. This is **not** authentication or authorization; nothing verifies that a caller sending a given `user_id` is actually that user. Real auth (below) remains entirely unbuilt and is not a smaller gap because isolation now exists — see the precise distinction drawn in the Current State section. |
 | **FUTURE — PRODUCTION** | Required before any public launch (App Store, public URL, real user data at scale). Legal review required regardless of technical readiness. |
 
 Nothing in this document should be read as a claim about what V3.1.4 shipped. See
@@ -33,7 +33,7 @@ product intends to honor once built, not a description of enforcement mechanisms
 2. **Linked account data is for intelligence only.** **FUTURE — PRODUCTION.** No account linking exists yet (`backend/app/` has no Plaid/OAuth integration; `logan_core/receptors/simulated.py` is the only receptor implementation).
 3. **No advertising.** **CURRENT** — there is no ad code, ad SDK, or ad-related data flow anywhere in the repository.
 4. **Privacy is a feature, not a checkbox.** Product value statement, not a control — no status tag applies.
-5. **User controls are real.** **REQUIRED — TRUSTED ALPHA** and beyond. Today there is exactly one implicit user (`LOCAL_FOUNDER_USER_ID = "demo_user"` in `logan_core/contracts/common.py`); there are no opt-in toggles, no deletion flow, and nothing for a "user control" to act on yet.
+5. **User controls are real.** **REQUIRED — TRUSTED ALPHA** and beyond. As of Sprint 3.6.8 Block 2, more than one `user_id` can exist and have correctly isolated state (see Current State below) — but there is still no login, no account concept, no opt-in toggles, no deletion flow, and nothing for a "user control" to act on. `LOCAL_FOUNDER_USER_ID = "demo_user"` (`logan_core/contracts/common.py`) remains the default identity every real client (the mobile app) actually uses today, since no client sends any other identity yet.
 
 For the complete statement of privacy values, see Principle 11 in `20_LOGAN_PRINCIPLES.md`.
 
@@ -41,16 +41,35 @@ For the complete statement of privacy values, see Principle 11 in `20_LOGAN_PRIN
 
 ## Current State (V3.1.4) — what's actually true today
 
-- **CURRENT:** Logan runs as a single local process on the operator's machine. `logan_core`'s
-  `MemoryRecord.user_id` and `ActiveContext.user_id` (ADR-033, V3.1.4 BATCH-2) are required, non-empty
-  fields — but the only value ever supplied in this codebase is the hardcoded `LOCAL_FOUNDER_USER_ID`
-  constant. There is no login, no session, no per-user isolation enforced beyond that constant string
-  matching itself, and no way for a second distinct user to exist.
-- **CURRENT:** `backend/app/`'s SQLite database (`logan_memory.db`) is a local file with OS-level
+- **CURRENT (updated Sprint 3.6.8 Block 2/4, 2026-08-23 — precise wording matters here, do not
+  overstate):** Logan runs as a single local process on the operator's machine. `logan_core`'s
+  `MemoryRecord.user_id` (ADR-033) is a required, non-empty field, and every stateful layer in
+  `logan_core` (`Orchestrator.run()`, `MemoryStore.query()`/`.all()`, `PrioritizationEngine`'s
+  `AttentionState`) is genuinely scoped by whatever `user_id` string it's given — this is real, tested
+  isolation (`backend/tests/test_multi_user_isolation.py`, `test_ask_conversation.py`,
+  `test_beta_hardening.py`), not just a naming convention. `backend/app/`'s FastAPI layer resolves
+  `user_id` per request from an `X-Stratus-User-Id` header (`backend/app/user_context.py`'s
+  `resolve_user_id()`, ADR-057) — absent, it defaults to `LOCAL_FOUNDER_USER_ID`, which is what every
+  real client (the mobile app) sends today, since no client currently sends anything else. Two important
+  things this genuinely is **not**:
+  1. **Not authentication.** `resolve_user_id()` trusts the header's value outright — nothing verifies
+     that the caller sending `X-Stratus-User-Id: some-user` actually is that user. Any process that can
+     reach the backend can claim to be any `user_id` and read/act as that identity; the isolation
+     described above protects two *honest, cooperating* identities from leaking into each other, not
+     against a malicious caller impersonating someone else. That remains a real authentication gap,
+     unchanged from before.
+  2. **Not multi-tenant production readiness.** There is still one shared backend process, one shared
+     SQLite file (or in-memory store), no per-tenant resource limits, and no account/login concept a real
+     second person could use to obtain their own `user_id` in the first place.
+  See ADR-057 (Sprint 3.6.8 Block 2) and ADR-059 (Sprint 3.6.8 Block 4) for the full decision record.
+- **CURRENT:** `backend/app/`'s SQLite database (`logan_memory.db`, and the newer optional
+  `backend/data/stratus_state.db` behind `STRATUS_PERSIST_MEMORY`) is a local file with OS-level
   filesystem permissions only — no database-level access control, no encryption at rest, no network
   exposure by default (it isn't reachable unless something binds the backend to a non-localhost address).
-- **CURRENT:** No authentication of any kind exists — no JWT, no session cookie, no API key. Any process
-  that can reach the local backend port can call it.
+- **CURRENT:** No authentication of any kind exists — no JWT, no session cookie, no verified API key or
+  identity token. The `X-Stratus-User-Id` header (above) is client-asserted identity, not a credential —
+  it is never checked against anything. Any process that can reach the local backend port can call it as
+  any user it likes.
 - **CURRENT:** No account linking exists (no Plaid, no brokerage/sportsbook/prediction-market OAuth). All
   receptor data is `logan_core/receptors/simulated.py` — synthetic, not real user financial data.
 - **CURRENT:** No encryption in transit is configured (local HTTP, not TLS) and none is needed for a
@@ -131,9 +150,12 @@ When a user fully deletes their account (target design):
 ## Authentication and Authorization — REQUIRED — TRUSTED ALPHA, not built
 
 **CURRENT: none of this exists.** There is no JWT issuance, no token store, no refresh flow, and no
-account-linking credential handling anywhere in `logan_core/` or `backend/app/`. Auth is explicitly
-excluded from V3.1.4 scope. The design below is preserved as the target shape for when auth work begins —
-implementing it is a dedicated future pass, not an incidental V3.1.4 change:
+account-linking credential handling anywhere in `logan_core/` or `backend/app/`. Sprint 3.6.8 Block 2 added
+a client-asserted `user_id` identity concept (`X-Stratus-User-Id` header, see the Current State section
+above) that backend state is now genuinely isolated by — **this is a state-isolation boundary, not an
+authentication or authorization system**, and must not be conflated with one: nothing verifies a caller's
+claimed `user_id`. Auth work itself remains entirely unbuilt. The design below is preserved as the target
+shape for when auth work begins — implementing it is a dedicated future pass, not an incidental change:
 
 **Target: JWT-based auth:**
 - Access tokens: 15-minute lifetime, RS256 signed
@@ -283,10 +305,15 @@ enforced today as a repo hygiene practice, independent of the infrastructure bel
 **Before any trusted-alpha distribution (TestFlight or otherwise) to anyone other than the operator,** at
 minimum: ship the advisory-only disclaimer copy above, confirm no real financial credentials can reach the
 app (none are wired up as of V3.1.4), and confirm testers understand this is local-dev-grade software with
-no auth, no encryption, and no data-deletion guarantees.
+no authentication, no encryption, and no data-deletion guarantees. As of Sprint 3.6.8 Block 2, backend
+state is genuinely isolated per client-asserted `user_id` — but that identity is unauthenticated (see
+Authentication and Authorization above), so this still does not mean testers' data is safe from each other
+if any tester could plausibly guess or send another tester's identifier; it only means honest, distinct
+testers using the app normally will not see or affect each other's data.
 
 ---
 
 *Logan Intelligence Security, Privacy & Compliance — v3.1.2 | 2026-08-03*
 *v3.1.2 changes: User Controls section added: opt-in controls table (account linking, cross-domain association, behavioral learning, domain toggles); account disconnect data deletion procedure added; cross-domain data deletion behavior documented. Data Classification table expanded: TriggerEvent performance data row added; cross-domain data associations row added. Principle 5 added to Core Privacy Principles: user controls are real. Cross-domain association consent and transparency language added to Consent and Transparency section. Compliance Status legal review item 4 added (cross-domain association disclosures). Version updated to 3.1.2.*
 *V3.1.4 BATCH-3 rewrite (2026-08-06, P0 gap-review item): entire document restructured to separate CURRENT / LOCAL-DEV LIMITATION / REQUIRED — TRUSTED ALPHA / FUTURE — PRODUCTION status for every control, principle, and table row. No target-design content was deleted — all prior v3.1.2 language is preserved, now explicitly labeled as target design rather than presented as built or enforced. New "Current State (V3.1.4)" section added describing what is actually true of the repository today (single local operator, no auth, no encryption, no account linking, simulated receptors only).*
+*Sprint 3.6.8 Block 4 correction (2026-08-23): the "exactly one implicit user, no way for a second distinct user to exist" claim was stale as of Sprint 3.6.8 Block 2 (ADR-057) and has been corrected precisely, not just softened. What actually changed: backend state (MemoryStore reads, UserModel, PrioritizationEngine's AttentionState, OpportunityContext cache, Ask STRATUS session/conversation state) is now genuinely scoped per client-asserted `X-Stratus-User-Id` header value, tested end-to-end (test_multi_user_isolation.py, test_ask_conversation.py, test_beta_hardening.py). What explicitly did not change and must not be conflated with the above: there is still no authentication of any kind -- the user_id header is never verified against anything, so this is a state-isolation boundary between honest/cooperating identities, not a security boundary against an adversarial caller impersonating another user. No client (including the real mobile app) sends any identity other than the default today. Updated: the REQUIRED — TRUSTED ALPHA tag description, Core Privacy Principle 5, the "Current State" section's user-identity bullets, the Authentication and Authorization section's opening CURRENT line, and the pre-trusted-alpha-distribution checklist. See docs/DECISIONS.md ADR-057 and ADR-059 for the full decision records.*

@@ -25,6 +25,7 @@ from backend.app.notifications import (
     dispatch_eligible_notifications,
     get_pending_push_event_ids,
     register_token,
+    reset_notification_state,
 )
 from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
@@ -485,3 +486,45 @@ def test_notification_body_is_short_enough_to_scan():
     items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     for item in items:
         assert len(_notification_body(item)) <= 80
+
+
+# --- Sprint 3.6.8 Block 4: per-user dispatch isolation on pipeline failure --
+
+
+def test_one_users_pipeline_failure_does_not_stop_dispatch_for_other_users():
+    """Beta-readiness hardening finding: dispatch_eligible_notifications()'s
+    docstring already claimed a failure for one user must not stop dispatch
+    for any other user -- but only the push-send itself was actually guarded
+    against that. get_alert_eligible_items(user_id) (which runs that user's
+    full pipeline) was not, so an exception there used to propagate straight
+    out of the per-user loop and silently skip every other registered user
+    for that entire poll cycle. This proves the fix: a failing user is
+    skipped, everyone else still gets dispatched, in the same call."""
+    from unittest.mock import patch
+
+    reset_notification_state()
+    register_token(
+        "failing-user",
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[fail]"),
+    )
+    register_token(
+        LOCAL_FOUNDER_USER_ID,
+        RegisterPushTokenRequest(expo_push_token="ExponentPushToken[ok]"),
+    )
+
+    real_get_alert_eligible_items = get_alert_eligible_items
+
+    def _flaky(user_id):
+        if user_id == "failing-user":
+            raise RuntimeError("simulated pipeline failure for this user only")
+        return real_get_alert_eligible_items(user_id)
+
+    with patch(
+        "backend.app.notifications.get_alert_eligible_items", side_effect=_flaky
+    ):
+        dispatched = dispatch_eligible_notifications(client=_mock_client())
+
+    # The founder's dispatch still happened despite failing-user's exception.
+    assert dispatched > 0
+    assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID)
+    assert get_pending_push_event_ids("failing-user") == set()

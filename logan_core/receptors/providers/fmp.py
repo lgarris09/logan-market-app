@@ -31,6 +31,22 @@ FMP_API_KEY_ENV_VAR = "FMP_API_KEY"
 # uncertainty in this implementation; see the Sprint 3.6.6B report.
 
 
+def _redact(text: str, secret: str) -> str:
+    """Sprint 3.6.8 Block 4 (beta-readiness hardening): the FMP API key is
+    sent as a URL query param (`apikey=...`), not an auth header -- some
+    APIs' error responses echo back an invalid credential verbatim in the
+    error message (e.g. "Invalid API KEY: <key>"). Every error message this
+    module builds from a real HTTP response body is passed through this
+    first, so a real key can never end up in a raised exception's message
+    (and therefore never in whatever a caller ends up logging/printing it
+    to). A no-op when the secret doesn't appear in the text, which is the
+    normal case.
+    """
+    if not secret:
+        return text
+    return text.replace(secret, "***REDACTED***")
+
+
 class FmpProviderError(Exception):
     """Raised for any FMP request that didn't produce usable data: network
     failure, non-2xx HTTP status (including rate limiting), or a response
@@ -94,12 +110,12 @@ class FmpEarningsProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching earnings for {entity_id!r} "
-                f"(HTTP 429): {response.text[:200]}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{response.text[:200]}"
+                f"{_redact(response.text[:200], self._api_key)}"
             )
 
         try:
@@ -225,12 +241,12 @@ class FmpMarketDataProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching quote for {entity_id!r} "
-                f"(HTTP 429): {response.text[:200]}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{response.text[:200]}"
+                f"{_redact(response.text[:200], self._api_key)}"
             )
 
         try:
@@ -294,12 +310,12 @@ class FmpMarketDataProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching grades for {entity_id!r} "
-                f"(HTTP 429): {response.text[:200]}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{response.text[:200]}"
+                f"{_redact(response.text[:200], self._api_key)}"
             )
 
         try:
