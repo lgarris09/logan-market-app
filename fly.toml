@@ -23,9 +23,17 @@ primary_region = "iad"
   STRATUS_PERSIST_MEMORY = "true"
   STRATUS_STATE_DB_PATH = "/data/stratus_state.db"
   STRATUS_LEGACY_MEMORY_DB_PATH = "/data/logan_memory.db"
-  # Uncomment and set once you've decided which tickers/capabilities this
-  # deployment should run with (see config.py for what each flag does):
-  # STRATUS_LIVE_STOCK_TICKERS = "NVDA,TSLA,AAPL"
+  # Sprint 3.6.9 Block 1 deployment pass (2026-08-23): enabled using the
+  # exact ticker set already live-verified against real FMP data in Sprint
+  # 3.6.8 Block 5 (ADR-060) -- not a new provider/domain decision, just
+  # turning on this deployment's use of an already-approved, already-tested
+  # capability so the hosted backend actually has live intelligence to serve
+  # (otherwise STRATUS_RUNTIME_MODE=beta's live-data-only mode would show an
+  # empty feed forever). See the deployment report for the full reasoning;
+  # flagged there for the owner to override if this should stay off.
+  STRATUS_LIVE_STOCK_TICKERS = "NVDA,TSLA,AAPL"
+  # STRATUS_LLM_ASK left off -- no ANTHROPIC_API_KEY exists locally to
+  # deploy; see the deployment report for what's needed to enable this.
   # STRATUS_LLM_ASK = "true"
   # STRATUS_CORS_ALLOWED_ORIGINS = "https://your-real-origin.example.com"
 
