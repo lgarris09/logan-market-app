@@ -1319,3 +1319,61 @@ install available in this environment to locally build the image — reviewed fo
 verified; `fly deploy`'s own remote builder does not require local Docker either, so this is not expected to
 block actual deployment. No Fly.io account, app, volume, or secret was created — see the Block 1 report for
 the exact remaining owner steps. No merge to main; commit not pushed pending review.
+
+# Session Notes — 2026-08-23 (Sprint 3.6.9 — Fly.io deployment + Remote STRATUS mobile closeout)
+
+## Fly.io deployment (owner had already created the account/payment; this session did the CLI work)
+
+Installed `flyctl`; interactive `fly auth login` could not complete through this session's non-interactive
+shell even via the `!` prefix (confirmed twice) — the owner authenticated via a Fly Personal Access Token
+instead, which doesn't need a browser callback. From there, executed end-to-end without further stops:
+created app `stratus-api` (org `personal`), created and attached a 1GB encrypted `stratus_data` volume in
+`iad`, imported `FMP_API_KEY` from `backend/.env` directly into `fly secrets import` via a shell pipe (never
+printed, never touched by this session's own output), and deployed via `fly deploy` (Fly's remote builder —
+no local Docker install needed or used). Enabled `STRATUS_LIVE_STOCK_TICKERS=NVDA,TSLA,AAPL` on the hosted
+config (Block 1's `fly.toml` had it commented out) — the exact set already live-verified in Sprint 3.6.8
+Block 5, not a new provider decision; without it, beta mode's live-data-only gate would have served an empty
+feed forever, defeating the whole point of the deployment. Committed as `15b1cff`, pushed.
+
+Verified against the real running app, not assumed: `/health` 200 over HTTPS; HTTP→HTTPS redirect (301);
+`/v1/opportunities` returned real NVDA (EPS 1.87 vs. 1.76) and AAPL (EPS 2.02 vs. 1.89) data identical to
+Block 5's local live-verification numbers, TSLA correctly absent (the documented MISS-doesn't-substitute
+gap, now proven hosted, not just local); CORS confirmed non-wildcard (no `Access-Control-Allow-Origin` for
+an arbitrary origin); deterministic Ask STRATUS confirmed both generic and contextually-grounded
+(`grounded: true` against a real NVDA event_id); push-token registration proven durable across a **real**
+`fly machine restart` (not simulated) — registered a token, restarted the machine, registered a second, got
+`token_count: 2`, directly proving the exact behavior the original notification-persistence bug fix exists
+for. Region/machine confirmed via `fly machine status`: `iad`, `shared-cpu-1x`, 512MB — matching the
+intended spec exactly, no Amsterdam, no 256MB.
+
+## Remote STRATUS mobile closeout
+
+Checked for an existing `ANTHROPIC_API_KEY` anywhere in this project's approved local config
+(`backend/.env`, `.env.*` files, current shell environment) without printing any value found — none exists.
+LLM-grounded Ask STRATUS stays disabled on the hosted deployment; this is a genuine owner-only secret input,
+not something this session could source itself. Deterministic Ask STRATUS (verified above) remains fully
+functional regardless, exactly as designed.
+
+Wired `mobile/eas.json`'s `preview`/`production` profiles to
+`EXPO_PUBLIC_API_BASE_URL=https://stratus-api.fly.dev` — `development` unchanged, still LAN-based, per the
+explicit invariant. Added a regression test (`config.test.ts`) that reads `eas.json` directly and asserts
+its configured release URLs pass `resolveApiBaseUrl()`/are never LAN-shaped, so a future accidental edit
+reintroducing a LAN address there is caught by the test suite, not discovered by a silently-broken build.
+Re-confirmed by direct grep that the LAN fallback constant in `constants/config.ts` is the *only* LAN/
+localhost reference anywhere in mobile code, and it is structurally unreachable once `EXPO_PUBLIC_APP_ENV`
+is `preview`/`production` (which `eas.json` now sets for both profiles).
+
+Ran a real, non-interactive `eas build --profile preview --platform ios`. Already-stored Apple distribution
+certificate (valid through 2027) and provisioning profile (already includes the founder's iPhone UDID) meant
+zero interactive Apple/2FA/certificate steps were needed — build succeeded in ~5 minutes. Install link:
+`https://expo.dev/accounts/garris-engineering-llc/projects/logan-market-mobile/builds/faa2fe54-2889-4be3-ace1-aee44198393d`.
+Build metadata confirms it picked up `EXPO_PUBLIC_APP_ENV`/`EXPO_PUBLIC_API_BASE_URL` from the edited
+`eas.json`. mobile Jest 125 → 127 (+2); `tsc --noEmit`/`eslint` clean.
+
+## Status at the end of this session
+
+Fly deployment and mobile release-URL wiring are both live and verified by direct inspection, not just
+tested in isolation. What remains is the physical-phone half of the acceptance procedure (install the build,
+leave the LAN, stop the dev-machine backend, confirm the feed/Ask/push flow) — an owner-performed step by
+nature, not something this session can execute itself. LLM Ask STRATUS on the hosted beta remains gated on
+the owner supplying a real `ANTHROPIC_API_KEY`. No merge to main.

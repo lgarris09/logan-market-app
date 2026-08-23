@@ -88,3 +88,18 @@ describe("resolveApiBaseUrl", () => {
     });
   });
 });
+
+// Sprint 3.6.9 Remote STRATUS mobile closeout: eas.json's own preview/production
+// EXPO_PUBLIC_API_BASE_URL values (now the real, deployed https://stratus-api.fly.dev)
+// must themselves pass this validation -- read directly from the committed file so a
+// future accidental edit reintroducing a LAN/local URL there is caught here, not just
+// discovered by a build silently failing.
+describe("eas.json's configured release API URLs", () => {
+  const easConfig = require("../../eas.json");
+
+  test.each(["preview", "production"])("%s profile's URL resolves without throwing", (profile) => {
+    const env = easConfig.build[profile].env;
+    expect(() => resolveApiBaseUrl(env.EXPO_PUBLIC_APP_ENV, env.EXPO_PUBLIC_API_BASE_URL)).not.toThrow();
+    expect(isLanOrLocalUrl(env.EXPO_PUBLIC_API_BASE_URL)).toBe(false);
+  });
+});

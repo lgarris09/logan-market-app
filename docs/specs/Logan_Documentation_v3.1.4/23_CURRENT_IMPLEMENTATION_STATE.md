@@ -87,10 +87,10 @@ Still the only thing actually deployed/running: `main.py`, `memory_engine.py`, `
 
 | Item | State | Notes |
 |------|-------|-------|
-| Database/hosting | NOT DECIDED (engine); hosting target chosen | ADR-006 (database engine) remains open — SQLite stays, on a durable Fly Volume for this beta stage (Sprint 3.6.9 Block 1, ADR-061). Hosting *provider* decided: Fly.io. |
+| Database/hosting | NOT DECIDED (engine); hosting target chosen and LIVE | ADR-006 (database engine) remains open — SQLite stays, on a durable Fly Volume for this beta stage (Sprint 3.6.9 Block 1, ADR-061). Hosting provider Fly.io: **deployed and running** — `stratus-api.fly.dev`, region `iad`, `shared-cpu-1x`/512MB, `stratus_data` 1GB encrypted volume. See the Sprint 3.6.9 Remote STRATUS deployment/mobile-closeout session notes for the full verification record. |
 | CI/CD | NOT BUILT | |
-| Cloud deployment | REPOSITORY READY, not deployed | `Dockerfile`/`fly.toml`/`.dockerignore` added (Sprint 3.6.9 Block 1, ADR-061) — no Fly account/app/volume/secret created yet; see the Block 1 session notes for the exact remaining owner steps. |
-| EAS build (mobile) | CONFIGURED, not executed | `eas.json` (development/preview/production profiles), `expo-dev-client` for Skia dev-client builds (ADR-028); bundle ID `com.garrisengineeringllc.loganmarketmobile` and EAS project ID present in `app.json`. Actual Apple-signed build (`eas build --profile development --platform ios`) requires interactive Apple ID auth this environment cannot perform — not attempted; see `V3.1.4_IMPLEMENTATION_SUMMARY.md` |
+| Cloud deployment | **LIVE** — `https://stratus-api.fly.dev` | Deployed (Sprint 3.6.9 Block 1 deployment pass, then the Remote STRATUS mobile closeout). Health check passing; real live NVDA/AAPL opportunities verified over HTTPS; durable notification-token persistence verified across a real machine restart; CORS confirmed non-wildcard. |
+| EAS build (mobile) | **EXECUTED** — real preview build produced | `eas.json`'s `preview`/`production` profiles now carry `EXPO_PUBLIC_API_BASE_URL=https://stratus-api.fly.dev` (Sprint 3.6.9 Remote STRATUS mobile closeout); `development` unchanged, still LAN-based. A real `eas build --profile preview --platform ios --non-interactive` succeeded using already-valid, already-provisioned Apple credentials (no interactive Apple step needed) — install link: `https://expo.dev/accounts/garris-engineering-llc/projects/logan-market-mobile/builds/faa2fe54-2889-4be3-ace1-aee44198393d`. Physical-phone acceptance (cellular/off-LAN, dev PC off) remains an owner-performed step. |
 
 ---
 
