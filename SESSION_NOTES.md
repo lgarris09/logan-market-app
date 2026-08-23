@@ -1158,3 +1158,83 @@ behavior-neutral). Combined 529 → 533. mypy/ruff/black clean (same pre-existin
 was required to complete this block's actual scope -- the two real beta-readiness blockers found (live-data
 coverage, `eas.json`'s missing `EXPO_PUBLIC_API_BASE_URL`) were both correctly *not* attempted, matching the
 standing instruction not to guess at new-vendor or hosting decisions, and are reported precisely instead.
+
+---
+
+# Session Notes — 2026-08-23 (Sprint 3.6.8 Block 5 — live-data transition foundation)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the Block 4 closeout commit
+`e1c24b5`. See ADR-060 (`docs/DECISIONS.md`) for the full decision record; this note covers the session
+narrative. Governed throughout by the owner's explicit live-data-first rule (confirmed and applied at the
+start of Block 4, restated as this block's own primary directive).
+
+## What was asked
+
+Remove the NVDA-only limitation from the already-approved FMP provider architecture and establish a
+reusable live equities runtime path, bringing NVDA/TSLA/AAPL onto real data without adding a new vendor.
+Establish an explicit production-vs-demo runtime boundary. Complete the fixture-backed runtime inventory
+Block 4 started. Do not choose providers for BTC/FED/NFL/MUSIC/POLY/macro/sports/prediction-markets.
+
+## The recon finding that made this block clean: the NVDA coupling was never architectural
+
+Before writing any code, traced every layer named in the recon list. The result was better than expected:
+`logan_core`'s entire receptor-mapping layer (`earnings_report_to_raw_signal`/`quote_to_raw_signal`/
+`grade_change_to_raw_signal`), `FmpEarningsProvider`/`FmpMarketDataProvider`, `StocksTriggerEvaluator`, and
+critically `StockConvergenceTracker` were already fully entity-generic -- a repo-wide grep for "NVDA" inside
+`logan_core/` found zero real hardcoded logic, only docstring comments and an unrelated ripple-connection
+map. `StockConvergenceTracker` was already internally keyed by `entity_id` (`_observations`/
+`_active_episode` dicts), meaning multi-stock convergence entity isolation required no code change at all --
+just a test proving it, since it was already correct by construction. The *entire* NVDA-only coupling was
+three private functions and one config flag, all inside `backend/app/logan_feed.py`/`config.py`. This
+significantly narrowed the actual scope of "generalize NVDA-only live stock handling" to something much
+smaller and safer than the block's own framing implied.
+
+## Two real bugs found while generalizing the wiring -- both the exact pattern the owner's rule forbids
+
+1. **TSLA's simulated corroboration signal was unconditionally appended**, regardless of whether TSLA's own
+   primary signal that poll was genuinely live. A real live TSLA earnings beat would have been silently
+   joined by a fabricated "Reuters confirms AI chip partnership" corroborating signal -- simulated
+   intelligence entering a live-labeled opportunity, exactly what the rule forbids. Fixed with a
+   `live_substituted` set tracking exactly which tickers went live this poll.
+2. **Price-move/analyst-grade fetches were gated only on the flag being on, not on whether earnings itself
+   went live that poll.** A live price-move signal could have been spliced onto a *simulated* primary
+   earnings signal when the live earnings fetch failed -- a genuinely blended simulated+live opportunity,
+   since World Model's narrative is driven by the first/primary signal in the raw_signals list. Fixed with
+   the same `live_substituted` gate: an opportunity is now always fully live or fully simulated, never a
+   blend. Both bugs pre-date this block (they existed in the original NVDA-only wiring too) -- found here
+   because generalizing to multiple tickers made the blast radius concrete enough to prioritize.
+
+## What got built (see ADR-060 for the full per-area record)
+
+1. `config.live_stock_tickers()` -- new `STRATUS_LIVE_STOCK_TICKERS`, backward-compatible with the original
+   `STRATUS_LIVE_NVDA_EARNINGS` flag (falls back to `("NVDA",)` when the new flag is unset).
+2. Three NVDA-hardcoded functions generalized to accept any ticker, exact same failure-mode discipline,
+   deliberately preserving the pre-Block-5 substitution semantics (only BEAT triggers substitution, not
+   MISS/IN_LINE -- see the real live-verified gap below).
+3. The two bug fixes above.
+4. `config.live_data_only_mode()` -- new `STRATUS_RUNTIME_MODE`, the production-vs-demo boundary. In
+   live-data-only mode, `fixtures` starts empty; an entity only appears if a genuine live fetch substituted
+   it. One small change makes every one of the block's live/demo requirements true at once.
+5. Data provenance: confirmed the existing `source_id` field (`"fmp"` vs. `"bloomberg_terminal"` etc.) and
+   the existing print-based observability convention already served this purpose completely -- nothing new
+   was built, no parallel metadata architecture invented.
+6. A generalized live-verification script, run for real against the real FMP API.
+
+## Live verification, run for real (2026-08-23)
+
+**NVDA** -- real earnings beat fired (1.87 vs. 1.76 consensus); price move (-0.98%) and analyst grade
+(maintain) correctly did not fire. **TSLA** -- real earnings *miss* fired (0.33 vs. 0.50) and real price move
+(+5.14%) fired; through the actual `_run_feed_pipeline()` wiring, this correctly did **not** go live,
+directly confirming the deliberate BEAT-only gap with real data, not a hypothetical. **AAPL** -- real
+earnings beat (2.02 vs. 1.89) and a real analyst downgrade both fired, combining into one coherent live
+opportunity. No convergence fired for any ticker (none reached 3 distinct signal types) -- honest, not
+forced. This is the first time this codebase's live-data path has been proven against more than one entity
+with real, current market data.
+
+## Status at the end of this session
+
+`backend` test count 227 → 267 (+40: `test_config_live_stocks.py` 17, `test_live_equities.py` 23).
+`logan_core` unchanged (306 -- the entire generalization lived in `backend/app/`, confirming logan_core was
+already entity-generic). Combined 533 → 573. mypy/ruff/black clean. Mobile: 100/100 Jest, `tsc --noEmit`,
+`eslint` clean with zero code changes. No owner-level architecture decision was encountered -- no new vendor
+was added or selected for any domain, matching the standing instruction precisely.

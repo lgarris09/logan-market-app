@@ -2312,3 +2312,139 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   5. Advisory-only disclaimer copy (already specified in `27_SECURITY_PRIVACY_COMPLIANCE.md`) has still not
      been added to any mobile screen — required before any non-operator sees the app, unrelated to this
      block's own scope but worth restating as a real pre-distribution blocker.
+
+## ADR-060: Sprint 3.6.8 Block 5 — live-data transition foundation: generalized live equities path, production-vs-demo runtime boundary
+
+- Date: 2026-08-23
+- Status: Accepted
+- Context: Block 4's own inventory found exactly one production fixture call site
+  (`_run_feed_pipeline()`'s `simulated_fixtures()`) and exactly one entity — NVDA — with any live-provider
+  path at all, hardcoded throughout `backend/app/logan_feed.py`. Governed by an explicit owner rule this
+  block operationalizes: production opportunity generation must be live-data-first; fixtures belong only in
+  tests/demo mode/acceptance scenarios; a provider failure or a non-qualifying condition must never be
+  silently dressed up as a real result. Recon confirmed the NVDA coupling was entirely a `backend/app/`
+  wiring artifact, not an architectural constraint: `logan_core`'s receptor-mapping layer
+  (`earnings_report_to_raw_signal`/`quote_to_raw_signal`/`grade_change_to_raw_signal`), `FmpEarningsProvider`/
+  `FmpMarketDataProvider`, `StocksTriggerEvaluator`, and `StockConvergenceTracker` were already fully
+  entity-generic (a repo-wide grep found zero hardcoded "NVDA" logic anywhere in `logan_core/`) —
+  `StockConvergenceTracker` in particular was already keyed internally by `entity_id` (`_observations`/
+  `_active_episode` dicts), so entity isolation for convergence required no code change, only a test proving
+  it under the newly-generalized multi-ticker path. `entity_registry.py` already had canonical display
+  metadata for TSLA/AAPL. The entire NVDA-only coupling was three private functions and one config flag in
+  `backend/app/logan_feed.py`/`config.py`.
+- Decision (by area):
+  1. **`config.live_stock_tickers()`, backward-compatible with the original single-ticker flag.** New
+     `STRATUS_LIVE_STOCK_TICKERS` (comma-separated, e.g. `"NVDA,TSLA,AAPL"`) is the new canonical
+     configuration surface — deterministic parsing, no network call, upper-cased/stripped/validated against
+     a plausible ticker shape (1-10 letters), invalid entries dropped with a log line rather than crashing
+     the whole list, duplicates silently de-duplicated. When unset (or parses to nothing), falls back to the
+     original `STRATUS_LIVE_NVDA_EARNINGS` flag exactly (`("NVDA",)` when true, `()` otherwise) — every
+     existing deployment/test using only the old flag is completely unaffected, verified by the full
+     pre-existing test suite passing unchanged with zero modifications. Setting the new flag at all takes
+     over entirely — no merging of both sources, one clear source of truth per configuration.
+  2. **Generalized the three NVDA-hardcoded functions to accept any ticker**, mirroring the receptor layer's
+     own existing genericism: `_live_nvda_raw_signal`/`_live_nvda_price_move_raw_signal`/
+     `_live_nvda_analyst_grade_raw_signal` → `_live_earnings_raw_signal(ticker, now)`/
+     `_live_price_move_raw_signal(ticker, now)`/`_live_analyst_grade_raw_signal(ticker, now)`. Same exact
+     failure-mode discipline as before (every `FmpProviderError` caught, never raised past this boundary; a
+     valid response is not itself an opportunity; log tag renamed `[live-nvda]` → `[live-stocks]` to reflect
+     what it now covers). Deliberately preserves the pre-Block-5 substitution semantics exactly — only
+     `STOCK_EARNINGS_BEAT` triggers substitution, not the also-real, also-registered `STOCK_EARNINGS_MISS`/
+     `STOCK_EARNINGS_IN_LINE` (ADR-045) — rather than silently broadening what "goes live" means as a
+     side effect of generalizing *which ticker* it applies to. See the deferred items below: this was found
+     to be a real, live-verified gap (TSLA genuinely missed its most recent earnings during this block's own
+     live verification — see Decision 6 — and correctly, honestly fell back to its simulated fixture rather
+     than surfacing the real miss), not a hypothetical one, but expanding the substitution condition is a
+     separate, deliberate decision, not an incidental one bundled into a ticker-generalization block.
+  3. **Two real bugs found and fixed while generalizing the `_run_feed_pipeline()` wiring — both instances of
+     exactly the "simulated intelligence silently entering a live-labeled opportunity" pattern the owner's
+     rule forbids.** (a) TSLA's simulated corroborating signal (`tesla_ai_partnership_corroboration`) was
+     previously appended unconditionally whenever `entity_id == "TSLA"`, regardless of whether TSLA's own
+     primary signal that poll was genuinely live — meaning a real live TSLA earnings beat would have been
+     silently joined by a fabricated "Reuters confirms AI chip partnership" corroborating signal. Fixed: the
+     guard is now `entity_id == "TSLA" and entity_id not in live_substituted` — the simulated corroboration
+     only ever joins a simulated primary signal, never a live one. (b) Price-move/analyst-grade fetches were
+     previously gated only on the *flag* being enabled for NVDA, independent of whether NVDA's own earnings
+     fetch that poll actually succeeded live — meaning a live price-move signal could have been spliced onto
+     a *simulated* primary earnings signal when the live earnings fetch failed or didn't qualify, producing a
+     genuinely blended simulated+live opportunity (World Model's narrative is driven by the first/primary
+     signal in the list). Fixed: gated on `entity_id in live_substituted` — an opportunity is now always
+     either fully live-sourced (primary signal live, any additional signals also live) or fully simulated
+     (primary signal simulated, TSLA's own simulated corroboration included where applicable), never a blend
+     of the two. `live_substituted: set[str]` (tracking exactly which tickers got a genuine live earnings
+     signal this poll) is the single source of truth both fixes share. Both bugs pre-date this block (they
+     existed in the original NVDA-only wiring too, just narrower in blast radius with only one ticker) —
+     found and fixed here because generalizing to multiple tickers made the risk concrete enough to
+     prioritize, matching the block's own "obvious bug fixes... fixture/live mode separation" pre-approved
+     category.
+  4. **`config.live_data_only_mode()` — the production-vs-demo runtime boundary, owner-approved concept,
+     implementation judged mechanical.** New `STRATUS_RUNTIME_MODE` (`live`/`beta`/`production`, treated
+     identically for now — this codebase does not yet distinguish trusted-beta from public production, see
+     `27_SECURITY_PRIVACY_COMPLIANCE.md`). Default (unset) is demo/development mode — `_run_feed_pipeline()`
+     seeds `fixtures` from the full simulated 11-entity set exactly as before, completely unchanged. In
+     live-data-only mode, `fixtures` starts **empty** — an entity only ever appears in that poll's results if
+     a genuine live fetch actually substituted it. This single, small change (`fixtures = {} if
+     live_data_only_mode() else simulated_fixtures(now)`) is what makes every one of the block's live/demo
+     requirements true simultaneously: unsupported domains (no live provider exists for them at all)
+     contribute nothing, honestly absent; a configured live ticker whose fetch fails or doesn't qualify is
+     *also* honestly absent (no fixture sitting there to fall back to); and demo mode's existing, intentional
+     fixture-rich behavior is completely undisturbed — fixtures were not deleted, isolated, or made
+     unreachable, only gated on which mode is active.
+  5. **Data provenance: the existing `source_id` field already served this purpose — nothing new was
+     built.** Confirmed by inspection: `RawSignal`/`TriggerEvent.source_id` already distinguishes live
+     (`FMP_SOURCE_ID = "fmp"`) from simulated (`"bloomberg_terminal"`, `"reuters_wire"`, etc.) end to end, and
+     the existing `print(f"[live-stocks] ...")` observability convention (Block 4) already surfaces, per
+     poll, which tickers went live vs. fell back — the log line's own text (`source=fmp` vs. `source=fixture`)
+     is now the audit trail this requirement asked for. No new parallel metadata architecture, no new
+     contract field, no mobile-facing exposure — server-side auditability only, exactly as scoped.
+  6. **Live verification, run for real, no threshold touched to manufacture a result.** New
+     `logan_core/live_verification/live_equities.py` generalizes the existing per-ticker verification
+     scripts into one that accepts any ticker list (default NVDA/TSLA/AAPL), run against the real FMP API
+     with a real `FMP_API_KEY`. Actual results, 2026-08-23: **NVDA** — real earnings beat fired
+     (EPS 1.87 vs. 1.76 consensus, confidence_contribution 0.22); real price move (-0.98%) and analyst grade
+     (maintain) both correctly did not fire. **TSLA** — real earnings *miss* fired (EPS 0.33 vs. 0.50
+     consensus) and real price move (+5.14%) fired; neither analyst-grade nor convergence fired (2 distinct
+     signal types, below the 3-source threshold). Through the real, unmodified `_run_feed_pipeline()` wiring
+     specifically (not just the standalone verification script), this miss correctly did **not** go live —
+     directly, empirically confirming Decision 2's documented, deliberate gap with real data, not a
+     hypothetical. **AAPL** — real earnings beat fired (EPS 2.02 vs. 1.89) and a real analyst downgrade
+     fired; combined correctly into one coherent live opportunity (2 real trigger events, confidence 0.595).
+     No convergence fired for any ticker (none reached 3 distinct qualifying signal types) — an honest
+     result, not forced. Confirms the generalized path works end-to-end against real, current market data,
+     not just fixtures.
+- Consequences: `backend/app/config.py` gains `live_stock_tickers()`/`live_data_only_mode()`.
+  `backend/app/logan_feed.py`'s three NVDA-specific functions generalized; `_get_orchestrator()`'s gate and
+  `_run_feed_pipeline()`'s wiring updated with the `live_substituted`-based fully-live-or-fully-simulated
+  guarantee. New `logan_core/live_verification/live_equities.py`. New tests: `test_config_live_stocks.py`
+  (17 — parsing/validation/backward-compatibility/runtime-mode), `test_live_equities.py` (23 — NVDA/TSLA/
+  AAPL individually and together, provider-failure isolation, the TSLA-corroboration-leak regression test,
+  live-mode absence semantics, convergence entity isolation, personalization separation, provenance).
+  `backend` test count 227 → 267 (+40). `logan_core` unchanged (306, no logan_core files touched — the
+  generalization lived entirely in `backend/app/`, confirming the recon finding that logan_core was already
+  fully entity-generic). Combined 533 → 573. mypy/ruff/black clean (one real new mypy fix: `Callable` instead
+  of bare `callable` as a type annotation in a new test helper). Mobile: 100/100 Jest, `tsc --noEmit`,
+  `eslint` re-run and confirmed clean with zero code changes (this block never touched the mobile-facing
+  contract). No merge to main; commit not pushed pending review.
+- Deferred / flagged for the owner — real, now live-verified gaps, not resolved here by design:
+  1. **`STOCK_EARNINGS_MISS`/`STOCK_EARNINGS_IN_LINE` do not yet trigger live substitution** — only
+     `STOCK_EARNINGS_BEAT` does, preserving exact pre-Block-5 semantics rather than silently broadening them.
+     Live-verified as a real, current gap (TSLA's actual most recent earnings report is a miss). Both are
+     already real, registered triggers (ADR-045) — closing this gap is parameterization of an existing
+     condition check, not a new vendor or a new threshold, but is a deliberate, separate decision, not
+     bundled into this block.
+  2. **Price-move/analyst-grade-only live opportunities (no live earnings trigger) are not currently
+     possible** — Decision 3(b)'s fix, while closing a real simulated/live blending bug, also means a ticker
+     whose earnings didn't go live never gets a live price-move/grade signal attached either, even though
+     that signal independently qualified. A real, deliberately narrower behavior than what was theoretically
+     possible before the fix; flagged as a candidate future enhancement, not silently dropped.
+  3. **Live coverage remains limited to NVDA/TSLA/AAPL (or whatever tickers are explicitly configured) among
+     stocks-domain entities** — MARKETS/OIL represent aggregate/commodity concepts, not single tickers, and
+     need a product decision about what real instrument each should track before any live wiring makes
+     sense; not addressed here.
+  4. **BTC/FED/NFL/MUSIC/POLY/AI_SECTOR remain entirely simulated** — no vendor was selected or added for
+     crypto, news/macro, sports, social/culture, or prediction markets, per the explicit instruction not to
+     choose providers for those domains autonomously. See the fixture-backed runtime inventory
+     (`23_CURRENT_IMPLEMENTATION_STATE.md`) for the complete, current-as-of-this-block picture.
+  5. **`STRATUS_RUNTIME_MODE` is not yet wired into any deployment** — the mechanism exists and is tested,
+     but no real beta/production deployment configuration exists yet (see Block 4's own flagged `eas.json`/
+     hosting gaps, unrelated to this block, still open).

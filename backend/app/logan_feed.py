@@ -56,7 +56,8 @@ from .ask_context import (  # noqa: E402
 )
 from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
-    live_nvda_earnings_enabled,
+    live_data_only_mode,
+    live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
 )
@@ -301,21 +302,30 @@ def _get_orchestrator() -> Orchestrator:
     global _orchestrator
     with _state_lock:
         if _orchestrator is None:
-            # Sprint 3.6.6C: trigger_detector is gated behind
-            # live_nvda_earnings_enabled(), not wired unconditionally.
-            # Orchestrator.run() adds a "trigger_detection" ExecutionTrace
-            # layer entry for *every* raw_signal whenever any detector is
-            # configured at all (see orchestrator/pipeline.py's run()) --
-            # unconditional wiring would therefore change the trace shape for
-            # every simulated entity even with the live path disabled,
-            # breaking the "disabled mode is byte-for-byte unchanged"
-            # requirement. Gating construction on the flag keeps disabled
-            # mode identical to pre-3.6.6C (no trigger_detector at all, same
-            # as every other existing Orchestrator() caller) while still
-            # giving the live NVDA path real trigger detection when enabled.
-            # Read once at construction time, matching config.py's own
-            # documented assumption that flipping this flag requires a clean
-            # backend restart, not a mid-process toggle.
+            # Sprint 3.6.6C: trigger_detector is gated behind whether any
+            # live stock ticker is configured at all, not wired
+            # unconditionally. Orchestrator.run() adds a "trigger_detection"
+            # ExecutionTrace layer entry for *every* raw_signal whenever any
+            # detector is configured at all (see orchestrator/pipeline.py's
+            # run()) -- unconditional wiring would therefore change the
+            # trace shape for every simulated entity even with the live path
+            # disabled, breaking the "disabled mode is byte-for-byte
+            # unchanged" requirement. Gating construction on the flag keeps
+            # disabled mode identical to pre-3.6.6C (no trigger_detector at
+            # all, same as every other existing Orchestrator() caller) while
+            # still giving the live stock path real trigger detection when
+            # enabled. Read once at construction time, matching config.py's
+            # own documented assumption that flipping this flag requires a
+            # clean backend restart, not a mid-process toggle.
+            #
+            # Sprint 3.6.8 Block 5: generalized from live_nvda_earnings_
+            # enabled() to live_stock_tickers() being non-empty -- the same
+            # gate, now covering any configured ticker (NVDA, TSLA, AAPL, or
+            # more), not just NVDA specifically. live_stock_tickers() itself
+            # falls back to the original single-ticker flag when the new one
+            # isn't set (see config.py), so this is a strict generalization,
+            # not a behavior change for existing STRATUS_LIVE_NVDA_EARNINGS
+            # deployments/tests.
             #
             # Sprint 3.6.7 Block 2: convergence_tracker is gated behind the
             # same flag, for the same reason -- it must be constructed once
@@ -343,7 +353,7 @@ def _get_orchestrator() -> Orchestrator:
                     convergence_tracker=StockConvergenceTracker(),
                     memory_store=memory_store,
                 )
-                if live_nvda_earnings_enabled()
+                if live_stock_tickers()
                 else PipelineDependencies(memory_store=memory_store)
             )
             _orchestrator = Orchestrator(deps=deps)
@@ -415,42 +425,47 @@ def _get_user_model(
         return _user_models[user_id]
 
 
-def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
-    """Sprint 3.6.6C: attempts to replace the simulated NVDA fixture with a
-    real FMP-driven earnings signal. Returns None on any failure -- FMP
-    unreachable, auth failure, malformed response, or genuinely no reported
-    earnings on file -- so the caller can fall back to the simulated
-    fixture. Never raises: every FmpProviderError is caught here so a live-
-    data hiccup can never take down /v1/opportunities (Phase "Honest
-    failure behavior" instruction). Never silently presents simulated data
-    as live either -- the caller only substitutes this return value in
-    place of the simulated fixture when it is not None; when it is None,
-    the simulated NVDA fixture already in `fixtures` is left untouched.
+def _live_earnings_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+    """Sprint 3.6.6C, generalized Sprint 3.6.8 Block 5 (was
+    `_live_nvda_raw_signal`, hardcoded to "NVDA"): attempts to replace a
+    configured ticker's simulated fixture with a real FMP-driven earnings
+    signal. Returns None on any failure -- FMP unreachable, auth failure,
+    malformed response, or genuinely no reported earnings on file -- so the
+    caller can fall back to the simulated fixture (in demo mode -- see
+    config.live_data_only_mode()) or leave the ticker honestly absent (in
+    live-data-only mode). Never raises: every FmpProviderError is caught
+    here so a live-data hiccup can never take down /v1/opportunities.
+    Never silently presents simulated data as live either -- the caller
+    only substitutes this return value in place of whatever it already had
+    for `ticker` when it is not None.
 
     Also returns None when a real report was fetched but does not satisfy
     STOCK_EARNINGS_BEAT. A valid provider response is not itself an
-    opportunity -- this 3.6.6C slice's intended semantics are that the real
-    NVDA opportunity surfaces only when the implemented TriggerEvent
+    opportunity -- surfacing only happens when the implemented TriggerEvent
     actually fires, not merely because FMP returned some usable data.
     Reuses evaluate_earnings_beat_condition (the same pure function
     StocksTriggerEvaluator.evaluate() calls) rather than re-deriving the
     fire condition, so this pre-check and the orchestrator's own later
-    trigger_detection layer can never disagree.
+    trigger_detection layer can never disagree. Deliberately does not also
+    check STOCK_EARNINGS_MISS/IN_LINE (both real, registered triggers as of
+    ADR-045) -- preserving the exact pre-Block-5 substitution semantics
+    rather than silently broadening them; see the Block 5 ADR's own
+    deferred-items list.
     """
     try:
         provider = FmpEarningsProvider()
     except FmpProviderError as exc:
-        print(f"[live-nvda] provider unavailable, using simulated NVDA: {exc}")
+        print(f"[live-stocks] {ticker}: provider unavailable, source=fixture: {exc}")
         return None
 
     try:
-        report = provider.fetch_latest_earnings("NVDA")
+        report = provider.fetch_latest_earnings(ticker)
     except FmpProviderError as exc:
-        print(f"[live-nvda] FMP fetch failed, using simulated NVDA: {exc}")
+        print(f"[live-stocks] {ticker}: FMP fetch failed, source=fixture: {exc}")
         return None
 
     if report is None:
-        print("[live-nvda] FMP has no reported NVDA earnings, using simulated NVDA")
+        print(f"[live-stocks] {ticker}: FMP has no reported earnings, source=fixture")
         return None
 
     fired, beat_pct, reason = evaluate_earnings_beat_condition(
@@ -458,103 +473,110 @@ def _live_nvda_raw_signal(now: datetime) -> RawSignal | None:
     )
     if not fired:
         print(
-            f"[live-nvda] real report fetched but STOCK_EARNINGS_BEAT did not "
-            f"fire ({reason}), using simulated NVDA"
+            f"[live-stocks] {ticker}: real report fetched but STOCK_EARNINGS_BEAT "
+            f"did not fire ({reason}), source=fixture"
         )
         return None
 
     print(
-        f"[live-nvda] using real FMP earnings report dated "
-        f"{report.report_timestamp.date()} for NVDA (source={report.source_id}, "
+        f"[live-stocks] {ticker}: using real FMP earnings report dated "
+        f"{report.report_timestamp.date()} (source={report.source_id}, "
         f"beat_pct={beat_pct:.2f})"
     )
     return earnings_report_to_raw_signal(report)
 
 
-def _live_nvda_price_move_raw_signal(now: datetime) -> RawSignal | None:
-    """Sprint 3.6.7 Block 2: wires Block 1's live STOCK_PRICE_MOVE_SIGNIFICANT
-    signal into the same live NVDA path as earnings -- an *additional*
-    raw_signal alongside earnings, not a replacement (unlike
-    `_live_nvda_raw_signal`, there is no simulated price-move fixture for
-    NVDA to fall back to). Now safe to add: Orchestrator.run() combines
-    multiple distinct-signal_type EnrichedEvents for one entity into one
-    coherent opportunity (see pipeline.py's `_merge_entity_events`) instead
-    of the last one silently dropping the others (ADR-051 finding 5).
-
-    Returns None on any provider failure or when the fetched quote does not
-    itself satisfy STOCK_PRICE_MOVE_SIGNIFICANT -- same "a valid response is
-    not itself an opportunity" discipline as `_live_nvda_raw_signal`. An
-    ordinary trading day contributes nothing extra, never a fabricated
-    non-event.
+def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+    """Sprint 3.6.7 Block 2, generalized Sprint 3.6.8 Block 5 (was
+    `_live_nvda_price_move_raw_signal`): wires the live
+    STOCK_PRICE_MOVE_SIGNIFICANT signal into the live equities path for a
+    configured ticker -- an *additional* raw_signal alongside earnings, not
+    a replacement. Returns None on any provider failure or when the fetched
+    quote does not itself satisfy STOCK_PRICE_MOVE_SIGNIFICANT -- same "a
+    valid response is not itself an opportunity" discipline as
+    `_live_earnings_raw_signal`. An ordinary trading day contributes
+    nothing extra, never a fabricated non-event.
     """
     try:
         provider = FmpMarketDataProvider()
     except FmpProviderError as exc:
         print(
-            f"[live-nvda] market-data provider unavailable, skipping price move: {exc}"
+            f"[live-stocks] {ticker}: market-data provider unavailable, "
+            f"skipping price move: {exc}"
         )
         return None
 
     try:
-        quote = provider.fetch_quote("NVDA")
+        quote = provider.fetch_quote(ticker)
     except FmpProviderError as exc:
-        print(f"[live-nvda] FMP quote fetch failed, skipping price move: {exc}")
+        print(
+            f"[live-stocks] {ticker}: FMP quote fetch failed, skipping price move: {exc}"
+        )
         return None
 
     if quote is None:
-        print("[live-nvda] FMP has no quote for NVDA, skipping price move")
+        print(f"[live-stocks] {ticker}: FMP has no quote, skipping price move")
         return None
 
     fired, change_pct, reason = evaluate_price_move_condition(quote.change_pct)
     if not fired:
         print(
-            f"[live-nvda] real quote fetched but STOCK_PRICE_MOVE_SIGNIFICANT did "
-            f"not fire ({reason}), skipping price move"
+            f"[live-stocks] {ticker}: real quote fetched but "
+            f"STOCK_PRICE_MOVE_SIGNIFICANT did not fire ({reason}), skipping price move"
         )
         return None
 
     print(
-        f"[live-nvda] using real FMP quote dated {quote.quote_timestamp.date()} for "
-        f"NVDA price move (source={quote.source_id}, change_pct={change_pct:.2f})"
+        f"[live-stocks] {ticker}: using real FMP quote dated "
+        f"{quote.quote_timestamp.date()} for price move "
+        f"(source={quote.source_id}, change_pct={change_pct:.2f})"
     )
     return quote_to_raw_signal(quote)
 
 
-def _live_nvda_analyst_grade_raw_signal(now: datetime) -> RawSignal | None:
-    """Sprint 3.6.7 Block 2: wires Block 1's live STOCK_ANALYST_UPGRADE/
-    STOCK_ANALYST_DOWNGRADE signal into the live NVDA path, on the same terms
-    as `_live_nvda_price_move_raw_signal` above (additional signal, not a
+def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+    """Sprint 3.6.7 Block 2, generalized Sprint 3.6.8 Block 5 (was
+    `_live_nvda_analyst_grade_raw_signal`): wires the live
+    STOCK_ANALYST_UPGRADE/STOCK_ANALYST_DOWNGRADE signal into the live
+    equities path for a configured ticker, on the same terms as
+    `_live_price_move_raw_signal` above (additional signal, not a
     replacement; None on any failure or non-qualifying result).
     """
     try:
         provider = FmpMarketDataProvider()
     except FmpProviderError as exc:
         print(
-            f"[live-nvda] market-data provider unavailable, skipping analyst grade: {exc}"
+            f"[live-stocks] {ticker}: market-data provider unavailable, "
+            f"skipping analyst grade: {exc}"
         )
         return None
 
     try:
-        grade = provider.fetch_latest_grade_change("NVDA")
+        grade = provider.fetch_latest_grade_change(ticker)
     except FmpProviderError as exc:
-        print(f"[live-nvda] FMP grades fetch failed, skipping analyst grade: {exc}")
+        print(
+            f"[live-stocks] {ticker}: FMP grades fetch failed, skipping analyst grade: {exc}"
+        )
         return None
 
     if grade is None:
-        print("[live-nvda] FMP has no analyst grade for NVDA, skipping analyst grade")
+        print(
+            f"[live-stocks] {ticker}: FMP has no analyst grade, skipping analyst grade"
+        )
         return None
 
     trigger_code, reason = evaluate_analyst_grade_condition(grade.action)
     if trigger_code is None:
         print(
-            f"[live-nvda] real grade fetched but no analyst trigger fired "
-            f"({reason}), skipping analyst grade"
+            f"[live-stocks] {ticker}: real grade fetched but no analyst trigger "
+            f"fired ({reason}), skipping analyst grade"
         )
         return None
 
     print(
-        f"[live-nvda] using real FMP grade dated {grade.action_date.date()} for NVDA "
-        f"analyst grade (source={grade.source_id}, action={grade.action})"
+        f"[live-stocks] {ticker}: using real FMP grade dated "
+        f"{grade.action_date.date()} for analyst grade "
+        f"(source={grade.source_id}, action={grade.action})"
     )
     return grade_change_to_raw_signal(grade)
 
@@ -842,20 +864,41 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
 
     orchestrator = _get_orchestrator()
     user_model = _get_user_model(orchestrator, user_id, now)
-    fixtures = simulated_fixtures(now)
 
-    # Sprint 3.6.6C: replaces (never adds alongside) the simulated NVDA
-    # fixture with a real FMP-driven one when explicitly enabled and FMP
-    # actually returns usable data -- `fixtures` is keyed by entity_id, so
-    # this dict assignment is what guarantees exactly one NVDA entry either
-    # way, never a duplicate. Every other simulated entity is untouched.
-    # Falls back to the simulated NVDA fixture already in `fixtures` (no
-    # code path removes it) on any failure -- see _live_nvda_raw_signal's
-    # own docstring for the exact failure modes this covers.
-    if live_nvda_earnings_enabled():
-        live_nvda_signal = _live_nvda_raw_signal(now)
-        if live_nvda_signal is not None:
-            fixtures["NVDA"] = live_nvda_signal
+    # Sprint 3.6.8 Block 5 (ADR-060): the production-vs-demo runtime
+    # boundary. Demo/development mode (config.live_data_only_mode() ==
+    # False, the default -- every pre-Block-5 caller/test) seeds `fixtures`
+    # from the full simulated 11-entity set, exactly as before. Live-data-
+    # only mode starts with nothing at all -- an entity only ever appears
+    # this poll if a real live fetch below actually substitutes it. This is
+    # what makes "unsupported domains do NOT quietly receive simulated
+    # opportunities" and "provider failure does NOT substitute a fixture"
+    # true in that mode: there is no simulated fallback sitting in `fixtures`
+    # to fall back to in the first place.
+    fixtures = {} if live_data_only_mode() else simulated_fixtures(now)
+
+    # Sprint 3.6.6C, generalized Sprint 3.6.8 Block 5: replaces (never adds
+    # alongside) each configured live ticker's fixture with a real
+    # FMP-driven earnings signal when FMP actually returns usable, qualifying
+    # data -- `fixtures` is keyed by entity_id, so this dict assignment is
+    # what guarantees exactly one entry per ticker either way, never a
+    # duplicate. Every other simulated entity (in demo mode) is untouched.
+    # `live_substituted` tracks exactly which tickers got a genuine live
+    # signal this poll -- the single source of truth the rest of this
+    # function uses to guarantee an opportunity is either fully live-sourced
+    # or fully simulated, never a blend of the two (see the guards below).
+    live_tickers = live_stock_tickers()
+    live_substituted: set[str] = set()
+    for ticker in live_tickers:
+        live_earnings_signal = _live_earnings_raw_signal(ticker, now)
+        if live_earnings_signal is not None:
+            fixtures[ticker] = live_earnings_signal
+            live_substituted.add(ticker)
+        # else: on failure/non-qualifying result, demo mode leaves whatever
+        # simulated_fixtures() already put in `fixtures[ticker]` untouched
+        # (the pre-Block-5 fallback behavior, unchanged); live-data-only
+        # mode has nothing there to begin with, so the ticker is honestly
+        # absent from this poll's results -- never a fabricated substitute.
 
     # One lock for the whole request's pipeline run, not just per-call: two
     # concurrent requests interleaving their individual entity.run() calls
@@ -866,28 +909,48 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
         results = []
         for entity_id, raw_signal in fixtures.items():
             raw_signals = [raw_signal]
-            if entity_id == "TSLA":
+            # Sprint 3.6.8 Block 5 fix: this simulated corroborating signal
+            # must never be glued onto a *real* live TSLA earnings signal --
+            # only ever added when TSLA's own primary signal this poll is
+            # also simulated (entity_id not in live_substituted). Before
+            # this guard existed, a live TSLA opportunity would have
+            # silently gained a fabricated "Reuters confirms..." corroborating
+            # signal alongside genuine live data -- exactly the kind of
+            # simulated-into-live leak this block's governing rule forbids.
+            if entity_id == "TSLA" and entity_id not in live_substituted:
                 raw_signals.append(tesla_ai_partnership_corroboration(now))
 
-            # Sprint 3.6.7 Block 2: layers Block 1's live price-move/
-            # analyst-grade signals in alongside NVDA's earnings signal
-            # (live or simulated) now that Orchestrator.run() combines
-            # multiple distinct-signal_type EnrichedEvents for one entity
-            # into one coherent opportunity instead of the last one
-            # silently dropping the others (ADR-051 finding 5). Each fetch
-            # is independently gated on its own trigger actually firing --
-            # see _live_nvda_price_move_raw_signal/
-            # _live_nvda_analyst_grade_raw_signal's own docstrings -- so a
-            # quiet trading day/no rating change contributes nothing extra.
-            # StockConvergenceTracker only ever emits
-            # STOCK_CONVERGENCE_MULTI_SOURCE once genuinely ≥3 distinct
-            # signal_types have fired within its window; it is never forced
-            # here.
-            if entity_id == "NVDA" and live_nvda_earnings_enabled():
-                live_price_signal = _live_nvda_price_move_raw_signal(now)
+            # Sprint 3.6.7 Block 2, generalized Sprint 3.6.8 Block 5: layers
+            # live price-move/analyst-grade signals in alongside a ticker's
+            # earnings signal now that Orchestrator.run() combines multiple
+            # distinct-signal_type EnrichedEvents for one entity into one
+            # coherent opportunity instead of the last one silently dropping
+            # the others (ADR-051 finding 5). Each fetch is independently
+            # gated on its own trigger actually firing -- see
+            # _live_price_move_raw_signal/_live_analyst_grade_raw_signal's
+            # own docstrings -- so a quiet trading day/no rating change
+            # contributes nothing extra. StockConvergenceTracker only ever
+            # emits STOCK_CONVERGENCE_MULTI_SOURCE once genuinely ≥3 distinct
+            # signal_types have fired within its window, per entity (it is
+            # never forced here, and one entity's observations can never
+            # contribute to a different entity's convergence -- see
+            # StockConvergenceTracker's own per-entity_id keying).
+            #
+            # Deliberately gated on `live_substituted`, not just
+            # `live_tickers`: attempting these only after earnings has
+            # already gone live for this ticker this poll guarantees the
+            # same "fully live or fully simulated, never blended" property
+            # as the TSLA guard above -- a ticker whose earnings fetch fell
+            # back to simulated never gets a live price-move/grade signal
+            # spliced onto that simulated primary signal either. A
+            # price-move/grade-only live opportunity (earnings not firing)
+            # is a real, deliberately deferred capability -- see the Block 5
+            # ADR's own consequences.
+            if entity_id in live_substituted:
+                live_price_signal = _live_price_move_raw_signal(entity_id, now)
                 if live_price_signal is not None:
                     raw_signals.append(live_price_signal)
-                live_grade_signal = _live_nvda_analyst_grade_raw_signal(now)
+                live_grade_signal = _live_analyst_grade_raw_signal(entity_id, now)
                 if live_grade_signal is not None:
                     raw_signals.append(live_grade_signal)
 
