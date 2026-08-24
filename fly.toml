@@ -32,9 +32,12 @@ primary_region = "iad"
   # empty feed forever). See the deployment report for the full reasoning;
   # flagged there for the owner to override if this should stay off.
   STRATUS_LIVE_STOCK_TICKERS = "NVDA,TSLA,AAPL"
-  # STRATUS_LLM_ASK left off -- no ANTHROPIC_API_KEY exists locally to
-  # deploy; see the deployment report for what's needed to enable this.
-  # STRATUS_LLM_ASK = "true"
+  # Sprint 3.6.9 Remote STRATUS closeout (2026-08-23/24): the owner supplied
+  # a real ANTHROPIC_API_KEY (imported via `fly secrets import`, never
+  # committed here). Enabling the LLM-grounded Ask STRATUS path per the
+  # existing Sprint 3.6.8 Block 1 design (ADR-056) -- the deterministic path
+  # remains the automatic fallback on any LLM failure, unchanged.
+  STRATUS_LLM_ASK = "true"
   # STRATUS_CORS_ALLOWED_ORIGINS = "https://your-real-origin.example.com"
 
 # Durable state lives here -- MemoryStore's SQLite file, the legacy

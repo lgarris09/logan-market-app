@@ -2638,3 +2638,31 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   reconnaissance-first usage measurement before assuming this same cache design/TTL choices transfer
   directly — the numbers here are specific to FMP's specific free-tier limit and this specific 3-ticker
   configuration, not a general rule.
+
+## ADR-063: Sprint 3.6.9 Remote STRATUS closeout — hosted LLM-grounded Ask STRATUS enabled
+
+- Date: 2026-08-24
+- Status: Accepted
+- Context: The hosted `stratus-api` deployment (ADR-061) launched with `STRATUS_LLM_ASK` unset (no
+  `ANTHROPIC_API_KEY` existed anywhere locally at the time — confirmed by an exhaustive search across the
+  repo, every git worktree, and likely PC backup locations, none found). The owner subsequently created a
+  new key via the Anthropic Console and placed it in `backend/.env` locally (gitignored, never committed).
+  No redesign of Ask STRATUS: this activates the existing Sprint 3.6.8 Block 1 design (ADR-056) unchanged —
+  same provider (Anthropic), same official SDK, same model configuration, same provider abstraction, same
+  deterministic-fallback-on-any-failure behavior.
+- Decision: `ANTHROPIC_API_KEY` imported into Fly via `fly secrets import`, piped directly from
+  `backend/.env` (never printed, never appeared in any command text or tool output). `fly.toml`'s
+  `STRATUS_LLM_ASK` uncommented to `"true"`; redeployed. Confirmed via the hosted app's own
+  `startup_config_summary()` log line: `llm_ask=True`. Confirmed zero occurrences of the word "anthropic" or
+  an Anthropic key prefix anywhere in Fly logs.
+- Verification status: health check and the deterministic (non-contextual) Ask STRATUS path were confirmed
+  working post-deploy. **Full verification of the contextual, LLM-grounded path (a real multi-turn
+  conversation against a live opportunity) is blocked, not skipped** — FMP's real daily quota, exhausted
+  during this same session's pre-cache-fix testing (see ADR-062), had not yet reset at deploy time, so
+  `/v1/opportunities` was returning an honest empty feed with no live `event_id` to ground a contextual
+  question against. The contextual Ask path structurally requires a real, currently-cached
+  `OpportunityContext`, which requires live opportunity data — there is no way to exercise it without live
+  data without fabricating a context, which the standing rules forbid. This will be completed once FMP's
+  quota resets and a live opportunity is available again.
+- Consequences: `fly.toml`'s `STRATUS_LLM_ASK` line uncommitted→committed as `"true"`. No application code
+  changed — this is a secrets/config-only activation of already-shipped, already-tested functionality.
