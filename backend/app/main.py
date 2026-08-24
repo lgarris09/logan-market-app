@@ -58,6 +58,7 @@ from .user_context import resolve_user_id
 # to bound automated/scripted abuse, not to throttle real usage.
 _OPPORTUNITIES_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
 _ASK_RATE_LIMIT = (20, 300.0)  # 20 requests / 5 minutes
+_NOTIFICATIONS_REGISTER_RATE_LIMIT = (10, 60.0)  # 10 requests / 60s
 
 
 async def _notification_poll_loop() -> None:
@@ -198,7 +199,19 @@ def register_push_token(
     2 scopes token storage per `user_id` (see notifications.py); a durable
     per-user store surviving a restart remains an explicitly separate,
     not-yet-made decision.
+
+    Sprint 3.6.9 (hosted attack-surface re-review): rate-limited per
+    user_id, same pattern as /v1/opportunities and /v1/ask (see
+    rate_limit.py) -- reusing the existing limiter rather than a new
+    subsystem. Real usage registers once per app launch (mobile/lib/
+    notifications.ts calls this unconditionally on every start, idempotent
+    for an already-known token), so this limit is generous relative to that
+    -- it exists to bound mass fake-token registration under one spoofed/
+    anonymous identity, not to affect normal use.
     """
+    check_rate_limit(
+        "notifications-register", user_id, *_NOTIFICATIONS_REGISTER_RATE_LIMIT
+    )
     return register_token(user_id, request)
 
 

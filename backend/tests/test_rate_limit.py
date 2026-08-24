@@ -111,3 +111,37 @@ def test_ask_route_returns_429_once_exceeded(monkeypatch):
         ).status_code
 
     assert last_status == 429
+
+
+def test_notifications_register_returns_429_once_exceeded():
+    """Sprint 3.6.9 hosted attack-surface re-review: /v1/notifications/register
+    was previously left unlimited; reused the existing limiter rather than a
+    new subsystem, per the owner's explicit instruction."""
+    reset_rate_limits()
+
+    headers = {"X-Stratus-User-Id": "rate-limit-register-test-user"}
+    last_status = None
+    for i in range(15):  # over the 10/60s limit
+        last_status = client.post(
+            "/v1/notifications/register",
+            json={"expo_push_token": f"ExponentPushToken[test-{i}]"},
+            headers=headers,
+        ).status_code
+
+    assert last_status == 429
+
+
+def test_notifications_register_normal_app_launch_pattern_unaffected():
+    """Real usage: registers once per app launch, idempotent for an
+    already-known token -- a handful of registrations (e.g. a few quick
+    restarts) must never be throttled."""
+    reset_rate_limits()
+
+    headers = {"X-Stratus-User-Id": "rate-limit-register-normal-user"}
+    for _ in range(5):
+        response = client.post(
+            "/v1/notifications/register",
+            json={"expo_push_token": "ExponentPushToken[same-token]"},
+            headers=headers,
+        )
+        assert response.status_code == 200

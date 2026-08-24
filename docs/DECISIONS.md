@@ -2761,3 +2761,35 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   4. **The currently-installed phone build does not yet send the new identity header** — it requires a new
      EAS build to pick up this block's mobile changes; until then, real phone traffic still resolves via the
      mode-aware fallback (harmlessly, post-fix) rather than a real per-install identity.
+
+## ADR-065: Sprint 3.6.9 — hosted remote validation pass: redeploy gap found, notification rate limit added
+
+- Date: 2026-08-24
+- Status: Accepted
+- Context: A hosted verification pass (requested to prove ADR-064's identity/security work against the real
+  `stratus-api.fly.dev` deployment, not just local tests) found that `d702ba8` — the commit containing the
+  entire founder-fallback fix and rate limiter — had been committed and pushed to git but **never actually
+  deployed to Fly**. The running image (`deployment-01M0RJMQ2PNB348BYMNYP1X0TE`) was still the one from the
+  Anthropic-enable step, predating the security fix entirely — confirmed directly (`fly status`'s image tag)
+  before assuming otherwise. This meant the real, live-exploitable exposure ADR-064 documents was still live
+  in production at the moment this verification pass began, despite the code fix already existing.
+- Decision: redeployed immediately (`fly deploy`, new image `deployment-01M0V1M0HJDTNA9FHG45GHEBD3`).
+  Re-verified directly against the now-current hosted app: an explicit `X-Stratus-User-Id: demo_user` header
+  and a missing header both now return the generic, non-founder-seeded opportunity framing (confirmed via
+  the real response text — "Nothing in your current holdings..." rather than the founder-only "You're
+  tracking a holding connected to NVDA..."), where before the redeploy both had still returned the
+  founder-seeded response. `/v1/opportunities` and `/v1/ask` rate limits verified with bounded, safe request
+  bursts (31 and 21 requests respectively, single test identities) — both correctly return `429` exactly past
+  their configured thresholds (30/60s, 20/300s), with clean, non-leaking response bodies; `/health` confirmed
+  unaffected. Separately, reassessed `/v1/notifications/register` per the owner's explicit instruction: added
+  the same existing `check_rate_limit()` utility (10 requests/60s) rather than a new subsystem — real usage
+  registers once per app launch, so this only bounds mass fake-token registration under one spoofed identity.
+- Consequences: `backend/app/main.py` gains `_NOTIFICATIONS_REGISTER_RATE_LIMIT` and a `check_rate_limit()`
+  call on that route; `backend/tests/test_rate_limit.py` gains 2 tests (normal-use-unaffected,
+  exceeds-then-429). Redeployed to Fly a second time this session to include this change. `backend`/
+  `logan_core` 627 → 629.
+- **Process lesson, worth stating plainly**: "committed and pushed" is not "deployed" — this session had been
+  treating a git push as if it closed the loop on a hosted fix, and it does not. Any future hosted-security
+  or hosted-behavior claim in this project should be verified against the actual running Fly image
+  (`fly status`'s image tag, or a fresh `fly deploy` immediately before verifying), not inferred from local
+  git state.
