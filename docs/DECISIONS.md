@@ -2666,3 +2666,98 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   quota resets and a live opportunity is available again.
 - Consequences: `fly.toml`'s `STRATUS_LLM_ASK` line uncommitted→committed as `"true"`. No application code
   changed — this is a secrets/config-only activation of already-shipped, already-tested functionality.
+
+## ADR-064: Sprint 3.6.9 — Persistent Mobile Identity + Beta Security Boundary
+
+- Date: 2026-08-24
+- Status: Accepted
+- Context: The formal post-3.6.8 gap analysis and the Remote STRATUS work that followed it both flagged the
+  same standing gap: `X-Stratus-User-Id` provides real per-request *isolation*, never *authentication* — no
+  client-supplied value is verified against anything. This was a documented, accepted limitation while the
+  backend was local-only. Two things changed that calculus this sprint: the backend is now a real, hosted,
+  internet-reachable service (ADR-061), and the mobile app never sent this header at all (every real request
+  silently fell back to the backend's own default). Reconnaissance for this block, done before writing any
+  code, found that default was worse than merely "no identity" — `LOCAL_FOUNDER_USER_ID` resolves to the
+  fixed, publicly-visible string `"demo_user"` (`logan_core/contracts/common.py`), so *any* caller of the
+  hosted API, with no guessing required, could either omit the header or set
+  `X-Stratus-User-Id: demo_user` explicitly and receive the founder's own real, personalized data — actual
+  holdings, interests, and behavioral history. This was a real information-disclosure exposure, not a
+  theoretical one, the moment the backend became reachable from outside the founder's own machine. Full
+  authentication (a real login, verified sessions, a third-party identity vendor) remains explicitly out of
+  scope for this block — the owner's own instructions drew the line at "vendor-neutral groundwork," reserving
+  any paid/external auth vendor decision for a future, explicit owner call.
+- Decision (by area):
+  1. **Persistent per-install mobile identity.** New `mobile/lib/identity.ts`: a random UUID (`expo-crypto`'s
+     `randomUUID()`), generated once and persisted via `expo-secure-store` (iOS Keychain / Android
+     Keystore-backed encrypted storage) — first-party Expo packages, no new account, no new vendor, no new
+     paid service. Explicitly real *identity*, not authentication: nothing verifies this value belongs to a
+     specific person, it only gives the backend a stable, non-guessable per-install identifier to scope data
+     to, which is materially better than the prior state (no identity sent at all).
+  2. **Centralized propagation, not per-call-site wiring.** `mobile/lib/apiClient.ts`'s `fetchJson()` — already
+     the single, established choke point every backend call already goes through (V3.1.4 BATCH-5) — now
+     attaches `X-Stratus-User-Id` to every request automatically. One change point, not threading identity
+     through each of the many individual screens/hooks that call `fetchJson()`. Fails open, not closed: if
+     identity resolution throws (SecureStore unavailable, a rare real-device edge case), the request still
+     proceeds without the header rather than blocking the app — the backend's own mode-aware fallback (below)
+     handles that case safely either way.
+  3. **The founder-fallback exposure, closed at the resolution boundary.** `backend/app/user_context.py`'s
+     `resolve_user_id()` is now mode-aware: demo/development mode (the default, matching every existing local
+     caller/test) is completely unchanged — missing header still resolves to `LOCAL_FOUNDER_USER_ID`, an
+     explicit header is still honored as-is, including the founder constant itself (several existing tests
+     deliberately pass it). Beta/production mode (`config.live_data_only_mode()`) never resolves to the
+     founder constant from a client-supplied header under any circumstance — not via an absent header (the
+     old default), and not via a header that explicitly claims to *be* `"demo_user"` (the sharper,
+     previously-open half of the exposure). Both cases resolve to a new, distinct `BETA_ANONYMOUS_USER_ID`
+     constant instead — seeded exactly like any other non-founder `user_id` (ADR-057's "new-user seeding is
+     genuinely blank" rule, unchanged), so these callers get a shared, harmless, blank-slate bucket, never the
+     founder's real data. A real, currently-live per-install identity (the mobile app's own UUID, once a
+     rebuilt binary is installed) is honored as-is in beta mode, same as demo mode.
+  4. **Header-length cap, defense-in-depth.** `resolve_user_id()` also caps accepted values at 128 characters
+     (a real UUID is 36) — an oversized header is treated exactly like an absent one, in both modes. Bounds a
+     minor resource-abuse vector (an oversized value propagating into SQLite rows, in-memory dict keys, and
+     rate-limit counters) at negligible cost.
+  5. **Minimal, in-memory, vendor-neutral rate limiting.** New `backend/app/rate_limit.py`: a fixed-window
+     counter per `(route, user_id)`, process-lifetime, no new infrastructure (no Redis, no external
+     rate-limiting service) — found during this block's hosted attack-surface review that the API had zero
+     request throttling anywhere. Applied to the two most cost-sensitive routes:
+     `/v1/opportunities` (30 requests/60s — a full pipeline run per call) and, the sharpest concrete risk,
+     `/v1/ask` (20 requests/5 minutes — a grounded question can trigger a real, metered Anthropic API call,
+     enabled on the hosted beta this same session, ADR-063). Both limits are generous enough that no
+     legitimate single mobile client is ever affected (the app's own foreground poll is far below either
+     ceiling) — they exist to bound automated/scripted abuse, particularly real external cost via `/v1/ask`,
+     not to throttle real usage. Keyed by the already-resolved `user_id`, which pairs naturally with Decision
+     3: anonymous/spoofed/no-identity traffic collectively shares one throttled bucket (`BETA_ANONYMOUS_USER_ID`),
+     while distinct real installs each get their own independent budget.
+  6. **Hosted attack-surface review, remaining findings (documented, not all requiring code changes).**
+     CORS already locked to a safe empty allowlist in beta mode (ADR-061); FMP API key redaction (Block 4) and
+     the Anthropic key (ADR-063) both independently confirmed to never appear in logs; `internal_rank_score`
+     never serialized (ADR-029); no debug-mode stack-trace leakage (FastAPI's default, `debug=True` never set);
+     every SQLite write throughout this codebase already uses parameterized queries (no SQL-injection surface
+     via `user_id` or any other client-controlled value). Full authentication remains the standing, correctly
+     out-of-scope gap — isolation, not verified identity — reserved for an explicit future owner decision on an
+     auth approach/vendor, per this block's own instructions.
+- Consequences: `mobile/lib/identity.ts` (new), `mobile/lib/apiClient.ts` (identity header attachment),
+  `mobile/package.json`/`app.json` gain `expo-secure-store`/`expo-crypto`. `backend/app/user_context.py`
+  (mode-aware `resolve_user_id()`, new `BETA_ANONYMOUS_USER_ID`), `backend/app/rate_limit.py` (new),
+  `backend/app/main.py` (rate-limit wiring on two routes). New tests: `test_user_context.py` (14 — pure
+  function coverage across both modes plus two full end-to-end route-level proofs that a spoofed/missing
+  header in beta mode never receives founder-seeded personalization), `test_rate_limit.py` (8 — limiter unit
+  coverage plus real 429s through both wired routes), mobile `identity.test.ts` (4), `apiClient.test.ts`
+  gains 3 identity-propagation tests. `backend`/`logan_core` combined 605 → 627 (+22: `test_user_context.py`
+  14, `test_rate_limit.py` 8); mobile Jest 127 → 134 (+7: `identity.test.ts` 4, `apiClient.test.ts` +3).
+  mypy/ruff/black clean; `tsc --noEmit`/`eslint` clean.
+- Deferred / flagged for the owner:
+  1. **Full authentication remains not implemented** — a real login/session/verified-identity system, or a
+     third-party auth vendor, is a deliberate future decision, not made here. This block closes the sharpest
+     concrete *exposure* (the founder-data leak) without pretending the underlying isolation-not-authentication
+     boundary itself has changed.
+  2. **`/v1/notifications/register` has no rate limit** — lower-priority than `/v1/opportunities`/`/v1/ask`
+     (a cheap SQLite insert, not a metered external call), but an unbounded number of fake tokens could still
+     be registered under one spoofed/anonymous `user_id` over time. Flagged, not fixed, in this pass.
+  3. **The rate limiter and the founder-fallback fix are both process-memory-only** — consistent with this
+     codebase's existing precedent (AttentionState, notification dedup) and proportionate at current beta
+     scale; a restart resets both, which is acceptable here (worst case, a brief re-opened window) but would
+     need reconsideration at materially larger scale.
+  4. **The currently-installed phone build does not yet send the new identity header** — it requires a new
+     EAS build to pick up this block's mobile changes; until then, real phone traffic still resolves via the
+     mode-aware fallback (harmlessly, post-fix) rather than a real per-install identity.

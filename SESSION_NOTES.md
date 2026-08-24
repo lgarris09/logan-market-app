@@ -1434,3 +1434,64 @@ FMP caching implemented, tested, and ready to deploy. Anthropic hosted-Ask work 
 creating a new `ANTHROPIC_API_KEY` (the previously-referenced Sprint 3.6.8 key was searched for exhaustively
 across the repo, all git worktrees, and likely backup locations on the PC -- confirmed genuinely never
 existed anywhere findable, not merely misplaced). No merge to main.
+
+# Session Notes — 2026-08-24 (Sprint 3.6.9 — hosted Anthropic Ask enabled + Persistent Mobile Identity + Beta Security Boundary)
+
+## Hosted Anthropic Ask STRATUS: enabled, verification partially blocked (see ADR-063)
+
+Owner supplied a real `ANTHROPIC_API_KEY` in `backend/.env` (a first attempt genuinely hadn't saved --
+caught by checking the file's own mtime/size before trusting it, rather than assuming). Imported into Fly
+the same secret-safe way as `FMP_API_KEY` (piped directly, never printed), `STRATUS_LLM_ASK=true` set in
+`fly.toml`, redeployed. Confirmed via the app's own startup log (`llm_ask=True`) and a log grep for
+"anthropic"/the Anthropic key prefix (zero matches). Full contextual/grounded verification remains blocked
+by FMP's real daily quota (exhausted during this session's own pre-cache-fix testing) not having reset yet
+-- explicitly left open for next session per the owner's instruction not to keep polling FMP or fabricate a
+live opportunity just to force a test.
+
+## Persistent Mobile Identity + Beta Security Boundary (see ADR-064 for the full record)
+
+The next large block, worked fully autonomously overnight per the owner's explicit authorization.
+
+**The real finding that shaped this whole block:** reconnaissance (done before writing any code) found the
+founder-fallback default was worse than "no identity" -- `LOCAL_FOUNDER_USER_ID` resolves to the fixed,
+publicly-visible string `"demo_user"`. Since `X-Stratus-User-Id` was entirely client-asserted with zero
+verification, *any* caller of the now-hosted, internet-reachable API could set
+`X-Stratus-User-Id: demo_user` explicitly, or simply send no header at all, and receive the founder's own
+real, personalized data. Harmless when this backend only ever ran locally; a real information-disclosure
+exposure the moment Sprint 3.6.9 Block 1 put it on the internet.
+
+**What got built:**
+1. `mobile/lib/identity.ts` -- a real per-install UUID (`expo-crypto`), persisted via `expo-secure-store`
+   (Keychain/Keystore-backed). Real identity, explicitly still not authentication.
+2. `mobile/lib/apiClient.ts` -- the app's single existing centralized fetch choke point now attaches
+   `X-Stratus-User-Id` to every request automatically; fails open (proceeds without the header) if identity
+   resolution throws, never blocks the app.
+3. `backend/app/user_context.py`'s `resolve_user_id()` made mode-aware: demo/development mode completely
+   unchanged (every existing local caller/test unaffected); beta/production mode never resolves to the
+   founder constant from a client-supplied header under any circumstance -- neither an absent header nor one
+   explicitly spoofing `"demo_user"` -- both now resolve to a new, distinct `BETA_ANONYMOUS_USER_ID`, seeded
+   exactly as blank as any other non-founder user. Also caps accepted header values at 128 characters
+   (defense-in-depth against an oversized value propagating into storage/rate-limit keys).
+4. A hosted attack-surface review surfaced one more real gap: zero request throttling anywhere. New
+   `backend/app/rate_limit.py` -- a minimal, in-memory, vendor-neutral fixed-window limiter, no new
+   infrastructure. Applied to `/v1/opportunities` (30/60s) and, the sharpest concrete risk, `/v1/ask`
+   (20/5min) -- a grounded question can trigger a real, metered Anthropic call now that it's enabled on the
+   hosted beta. Keyed by the already-resolved `user_id`, so anonymous/spoofed traffic collectively shares one
+   throttled bucket while real distinct installs each get their own budget.
+
+**Proven end-to-end, not just at the unit level:** two integration tests hit the real `/v1/opportunities`
+route with a spoofed founder header and with no header at all, in beta mode, and assert the resulting
+personalization bucket has zero founder-only seeding (no NVDA holding, no AI_SECTOR interest) -- the converse
+test proves demo mode is completely untouched.
+
+**Explicitly out of scope, per the owner's own instructions:** full authentication (a real login, verified
+sessions, or a third-party auth vendor) was not built -- that's a deliberate future owner decision, not
+something to back into here. This block closes the sharpest concrete *exposure*, not the underlying
+isolation-not-authentication boundary itself.
+
+## Status at the end of this session
+
+`backend`/`logan_core` combined: 605 → 627 (+22: `test_user_context.py` 14, `test_rate_limit.py` 8). mobile
+Jest: 127 → 134 (+7: `identity.test.ts` 4, `apiClient.test.ts` +3). mypy/ruff/black clean; `tsc --noEmit`/
+`eslint` clean. Anthropic full grounded-Ask verification remains the one explicitly open item for next
+session, pending FMP's quota reset -- not a blocker to anything else. No merge to main.

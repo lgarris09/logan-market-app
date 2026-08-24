@@ -2,7 +2,13 @@
 // screen called `fetch()` directly with no timeout, no retry, and no way to cancel
 // an in-flight request when the screen unmounted or the user navigated away mid-
 // request -- this is the single place that behavior lives now.
+//
+// Sprint 3.6.9: also the single, centralized place this install's persistent
+// identity (see lib/identity.ts) gets attached to every request, via the
+// X-Stratus-User-Id header -- one change point rather than threading it
+// through each of the many individual call sites across the app.
 import { API_BASE_URL } from "../constants/config";
+import { getOrCreateDeviceId } from "./identity";
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RETRIES = 2;
@@ -50,6 +56,20 @@ export async function fetchJson<T>(
     ...fetchOptions
   } = options;
 
+  // Sprint 3.6.9: never blocks the request if identity storage is
+  // unavailable (rare) -- proceeds without the header, and the backend's
+  // own resolve_user_id() has a safe mode-aware fallback either way (see
+  // backend/app/user_context.py).
+  let deviceId: string | null = null;
+  try {
+    deviceId = await getOrCreateDeviceId();
+  } catch {
+    deviceId = null;
+  }
+  const identityHeaders: Record<string, string> = deviceId
+    ? { "X-Stratus-User-Id": deviceId }
+    : {};
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (callerSignal?.aborted) {
       return { status: "aborted" };
@@ -63,6 +83,10 @@ export async function fetchJson<T>(
     try {
       const response = await fetch(`${API_BASE_URL}${path}`, {
         ...fetchOptions,
+        headers: {
+          ...fetchOptions.headers,
+          ...identityHeaders,
+        },
         signal: timeoutController.signal,
       });
 

@@ -47,7 +47,17 @@ from .notifications import (
     register_token,
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
+from .rate_limit import check_rate_limit
 from .user_context import resolve_user_id
+
+# Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
+# fixed-window limits for this API's two most expensive/cost-sensitive
+# routes (see rate_limit.py's own module docstring for the full reasoning).
+# Generous enough that no legitimate single mobile client is ever affected
+# (the app's own foreground poll is far below either limit) -- these exist
+# to bound automated/scripted abuse, not to throttle real usage.
+_OPPORTUNITIES_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
+_ASK_RATE_LIMIT = (20, 300.0)  # 20 requests / 5 minutes
 
 
 async def _notification_poll_loop() -> None:
@@ -151,7 +161,10 @@ def opportunities(
     header (see user_context.resolve_user_id), defaulting to the founder
     constant when absent -- every pre-Block-2 caller (which sends no such
     header) gets byte-for-byte the same response as before.
+
+    Sprint 3.6.9: rate-limited per user_id -- see rate_limit.py.
     """
+    check_rate_limit("opportunities", user_id, *_OPPORTUNITIES_RATE_LIMIT)
     response = run_opportunities(user_id)
     if category is None:
         return response
@@ -319,7 +332,12 @@ def ask_logan(
     (LLM or deterministic fallback -- both are true, non-fabricated answers)
     is appended to history exactly once; an unresolved event_id or an empty
     message never reaches that point at all.
+
+    Sprint 3.6.9: rate-limited per user_id -- see rate_limit.py. The
+    sharpest motivating risk for this specific route: a grounded question
+    can trigger a real, metered Anthropic API call (STRATUS_LLM_ASK).
     """
+    check_rate_limit("ask", user_id, *_ASK_RATE_LIMIT)
     clean_message = request.message.strip()
     if not clean_message:
         return AskResponse(

@@ -1,4 +1,14 @@
 import { fetchJson } from "../apiClient";
+import { getOrCreateDeviceId } from "../identity";
+
+// Sprint 3.6.9: apiClient now attaches this install's identity to every
+// request (see lib/identity.ts) -- mocked here at the module boundary
+// rather than the underlying expo-secure-store/expo-crypto native modules,
+// so these tests stay focused on fetchJson's own retry/timeout/abort
+// behavior and don't depend on identity.ts's internals.
+jest.mock("../identity", () => ({
+  getOrCreateDeviceId: jest.fn().mockResolvedValue("test-device-id-1234"),
+}));
 
 // Mocks a fetch that respects its AbortSignal, the way the real one does --
 // resolves/rejects immediately on demand, or hangs until aborted (simulating a
@@ -123,5 +133,54 @@ describe("fetchJson", () => {
     const result = await fetchJson("/v1/opportunities", { retries: 0 });
 
     expect(result).toEqual({ status: "error", message: "Network request failed" });
+  });
+
+  describe("identity propagation (Sprint 3.6.9)", () => {
+    it("attaches X-Stratus-User-Id from getOrCreateDeviceId to every request", async () => {
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({}))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await fetchJson("/v1/opportunities");
+
+      const [, init] = fetchSpy.mock.calls[0];
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers["X-Stratus-User-Id"]).toBe("test-device-id-1234");
+    });
+
+    it("preserves caller-supplied headers alongside the identity header", async () => {
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({}))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await fetchJson("/v1/notifications/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const [, init] = fetchSpy.mock.calls[0];
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers["Content-Type"]).toBe("application/json");
+      expect(headers["X-Stratus-User-Id"]).toBe("test-device-id-1234");
+    });
+
+    it("still makes the request, without the identity header, if identity resolution fails", async () => {
+      (getOrCreateDeviceId as jest.Mock).mockRejectedValueOnce(
+        new Error("SecureStore unavailable")
+      );
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({ ok: true }))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const result = await fetchJson<{ ok: boolean }>("/v1/opportunities");
+
+      expect(result).toEqual({ status: "success", data: { ok: true } });
+      const [, init] = fetchSpy.mock.calls[0];
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers["X-Stratus-User-Id"]).toBeUndefined();
+    });
   });
 });

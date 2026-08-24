@@ -32,12 +32,15 @@ def _reset_logan_feed_pipeline_state():
     """
     from backend.app.logan_feed import reset_pipeline_state
     from backend.app.notifications import reset_notification_state
+    from backend.app.rate_limit import reset_rate_limits
     from logan_core.receptors.providers.fmp import reset_fmp_cache
 
     reset_pipeline_state()
     reset_notification_state()
     reset_fmp_cache()
+    reset_rate_limits()
     yield
     reset_pipeline_state()
     reset_notification_state()
     reset_fmp_cache()
+    reset_rate_limits()
