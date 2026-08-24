@@ -1495,3 +1495,47 @@ isolation-not-authentication boundary itself.
 Jest: 127 → 134 (+7: `identity.test.ts` 4, `apiClient.test.ts` +3). mypy/ruff/black clean; `tsc --noEmit`/
 `eslint` clean. Anthropic full grounded-Ask verification remains the one explicitly open item for next
 session, pending FMP's quota reset -- not a blocker to anything else. No merge to main.
+
+# Session Notes — 2026-08-24 (Sprint 3.6.9 — hosted remote validation: identity/security proven live, real redeploy gap found)
+
+## The most important finding: a fix that was pushed was not the same as a fix that was deployed
+
+Started this block to verify the previous session's identity/security work against the real hosted API. First
+real check (spoofing `X-Stratus-User-Id: demo_user` against `stratus-api.fly.dev`) still returned the
+founder-seeded response -- the fix should have blocked this. Checked `fly status`'s image tag before assuming
+the code was wrong: the running image was still the one from the Anthropic-enable deploy, predating
+`d702ba8` (the entire founder-fallback fix + rate limiter) entirely. The commit had been pushed to git, but
+`fly deploy` was never re-run afterward. Redeployed immediately; re-verified directly against the now-current
+app -- spoofed and missing identity both correctly return the generic, non-founder-seeded framing now. See
+ADR-065 for the full record and the process lesson: verify hosted claims against the actual running image,
+not local git state.
+
+## Full remote verification, all against the real hosted app, not local
+
+- **Founder-fallback protection**: confirmed live -- explicit `demo_user` spoof, missing header, and a
+  whitespace-only header all resolve to the generic anonymous bucket, never founder-seeded personalization. A
+  real distinct device UUID gets a normal 200 response.
+- **Rate limiting**: bounded, safe verification (not load testing) -- 31 requests to `/v1/opportunities`
+  (limit 30/60s) and 21 to `/v1/ask` (limit 20/300s) both correctly return 429 exactly past their thresholds,
+  with clean, non-leaking response bodies. `/health` unaffected.
+- **`/v1/notifications/register`**: reassessed and rate-limited (10/60s, reusing the existing limiter) -- real
+  app-launch registration confirmed unaffected, mass registration correctly blocked at request 11.
+- **Hosted Anthropic Ask, fully verified** (FMP quota had naturally reset by this point): a real single-turn
+  grounded question, a real multi-turn follow-up correctly resolving conversational context, and -- the
+  standout result -- a third follow-up ("what would make you more confident?") where the model correctly
+  **declined to speculate**, explicitly stating that logic lives in STRATUS's deterministic pipeline rather
+  than inventing an answer. All three logged as `path=llm:claude-sonnet-5 grounded=True`, confirming the real
+  LLM path fired, not fallback. Deterministic fallback re-confirmed separately (the generic, non-contextual
+  path).
+- **New EAS preview build** (`f61ac332-e112-4b16-bbb5-c85a7b83b773`), confirmed built from `d702ba8` (the
+  identity/security fix commit) via the build's own git-commit metadata -- carries persistent mobile identity
+  and centralized header propagation onto the founder's next physical install.
+- **No server secret in the mobile bundle** -- grepped mobile source for both secret env var names and known
+  Anthropic/other key-prefix shapes, zero matches.
+
+## Status at the end of this session
+
+`backend`/`logan_core`: 629 passing. mobile: 134 passing. mypy/ruff/black and `tsc --noEmit`/`eslint` clean.
+Two commits this block (`d702ba8` already existed; `c1a1fe1` new), both pushed, both actually deployed to Fly
+this time (verified via image tag both times). Hosted app healthy, correctly configured
+(`runtime_mode=live-data-only`, `llm_ask=True`, `cors_origins=[]`). No merge to main.
