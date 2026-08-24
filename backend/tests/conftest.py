@@ -21,12 +21,23 @@ def _reset_logan_feed_pipeline_state():
     test functions and even test files, depending on execution order. Reset
     before every test, not just the ones that obviously touch the pipeline --
     cheap, and removes an entire class of order-dependent flakiness.
+
+    Sprint 3.6.9 Remote STRATUS closeout: also resets logan_core's shared
+    FmpEarningsProvider/FmpMarketDataProvider TTL cache (see
+    receptors/providers/fmp.py's FmpResponseCache) -- that cache is a
+    process-lifetime module singleton, so without this reset, one test's
+    live-FMP-path result (real or mocked) could silently leak into another
+    test's expectations for the same ticker, in this file's suite or
+    logan_core's, whichever ran first in this process.
     """
     from backend.app.logan_feed import reset_pipeline_state
     from backend.app.notifications import reset_notification_state
+    from logan_core.receptors.providers.fmp import reset_fmp_cache
 
     reset_pipeline_state()
     reset_notification_state()
+    reset_fmp_cache()
     yield
     reset_pipeline_state()
     reset_notification_state()
+    reset_fmp_cache()

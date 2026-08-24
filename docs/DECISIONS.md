@@ -2572,3 +2572,69 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      no such client exists yet; the policy is designed correctly by inspection (native mobile is unaffected
      regardless) but has only been exercised by unit tests against the pure config function, not an actual
      cross-origin browser request against a hosted deployment.
+
+## ADR-062: Sprint 3.6.9 Remote STRATUS closeout — FMP provider-level TTL cache
+
+- Date: 2026-08-23
+- Status: Accepted
+- Context: Physical acceptance testing plus this session's own verification traffic against the newly-hosted
+  `stratus-api.fly.dev` produced real `HTTP 429` rate-limit errors from FMP within ~25 minutes of the
+  background notification poller running, confirmed directly from Fly logs, not projected. Root cause,
+  confirmed by inspection: `backend/app/logan_feed.py` constructs a fresh `FmpEarningsProvider`/
+  `FmpMarketDataProvider` instance on every single call (the background poller every 60s, *and* every direct
+  `/v1/opportunities` request — mobile foreground polling, testing, the dev-diagnostics screen) with zero
+  caching anywhere in the path. Measured steady-state cost from the poller alone: ~10,080 FMP calls/day
+  against a 250/day free-tier limit — roughly 40x over. Owner decision: optimize first, do not purchase or
+  upgrade the FMP plan.
+- Decision: a process-lifetime, shared `FmpResponseCache` (`logan_core/receptors/providers/fmp.py`)
+  wrapping only the raw HTTP fetch inside `FmpEarningsProvider.fetch_latest_earnings`/
+  `FmpMarketDataProvider.fetch_quote`/`fetch_latest_grade_change` — trigger evaluation, qualification,
+  confidence, and convergence are completely unaware a cache exists; a cache hit and a fresh fetch produce
+  byte-identical downstream `RawSignal`/`TriggerEvent` behavior. Endpoint-appropriate TTLs, not one blanket
+  value, per the owner's explicit guidance: `EARNINGS_CACHE_TTL_SECONDS` = 6 hours (earnings data changes
+  quarterly), `GRADE_CACHE_TTL_SECONDS` = 2 hours (analyst grades change infrequently),
+  `QUOTE_CACHE_TTL_SECONDS` = 30 minutes (the one genuinely freshness-sensitive path). Cache key is
+  `(endpoint, entity_id)`, so tickers and endpoint types never collide. Only a real, successful provider
+  response is ever cached — including a real "no data" `None`, which is a legitimate response, not an error
+  — `FmpProviderError` always propagates uncached, so a transient failure is retried on the very next call
+  rather than being remembered as "no data" for a full TTL window; this also means the cache never serves a
+  stale-disguised-as-fresh result during a live outage, preserving the "no valid live data → no live
+  opportunity" invariant exactly. Each provider's `__init__` gained an optional `cache:
+  Optional[FmpResponseCache] = None` parameter, defaulting to one shared module-level singleton
+  (`_shared_fmp_cache`) — this is what makes the background poller and every direct `/v1/opportunities`
+  request genuinely share one cache despite each constructing its own fresh provider instance, with zero
+  changes needed to `backend/app/logan_feed.py`'s existing call pattern. Tests inject an isolated
+  `FmpResponseCache` instance with a fake, controllable clock for deterministic expiry testing; a new
+  autouse fixture in both `backend/tests/conftest.py` and `logan_core/tests/conftest.py` resets the shared
+  singleton between every test (this cache is itself a process-lifetime singleton, and without the reset,
+  one test's cached FMP response could silently leak into another test expecting a different mocked result
+  for the same ticker).
+- Expected usage after this change, calculated (not guessed) from the TTLs above and the current
+  three-ticker (NVDA/TSLA/AAPL) configuration: earnings = 3 tickers × 4 refreshes/day = 12 calls/day.
+  Grades/quotes are conditional on a ticker currently showing a live earnings substitution — at the current
+  real state (NVDA and AAPL both qualify, TSLA does not, per ADR-060's own documented BEAT-only gap):
+  grades = 2 × 12/day = 24, quotes = 2 × 48/day = 96, for a **current-state total of 132 calls/day**. Worst
+  case, if all three tickers were simultaneously qualifying: grades = 3 × 12 = 36, quotes = 3 × 48 = 144, for
+  a **worst-case total of 192 calls/day**. Both are comfortably under FMP's 250/day free-tier limit (53% and
+  77% utilization respectively), with headroom for the one-time burst a process restart causes (the
+  in-memory cache is not persisted — a restart starts cold, at most 7 calls to refill it, a one-time cost,
+  not a recurring one). **Conclusion: the free FMP plan remains viable for the current NVDA/TSLA/AAPL
+  configuration; no paid-plan upgrade is needed.**
+- Consequences: `logan_core/receptors/providers/fmp.py` gains `FmpResponseCache`, `_shared_fmp_cache`,
+  `reset_fmp_cache()`, `EARNINGS_CACHE_TTL_SECONDS`/`GRADE_CACHE_TTL_SECONDS`/`QUOTE_CACHE_TTL_SECONDS`; both
+  `FmpEarningsProvider`/`FmpMarketDataProvider` gain an optional `cache` constructor parameter; each
+  provider's three fetch methods become thin cache-checking wrappers around an unchanged, renamed
+  `_..._uncached` implementation — zero change to parsing, error handling, or the public Protocol shape.
+  Re-exported from `logan_core/receptors/providers/__init__.py`. New `logan_core/tests/test_fmp_cache.py`
+  (15 tests: cache hits, expiry per endpoint, ticker/endpoint separation, errors never cached, the
+  legitimate-empty-response-is-still-cached distinction, cross-instance shared-cache proof matching the real
+  production topology, and a live/demo-integrity check that a cached response feeds trigger evaluation
+  identically to a fresh one). `backend`/`logan_core` combined test count 590 → 605 (+15). mypy/ruff/black
+  clean.
+- Deferred / flagged for the owner: this cache is process-memory only, not persisted to the durable Fly
+  Volume — a deliberate scope match to the owner's "provider/infrastructure-oriented, contained" instruction,
+  not an oversight; a restart's one-time refill burst is negligible at current scale. If a future domain
+  expansion (Sports/Odds) adds its own external provider, that provider should get its own
+  reconnaissance-first usage measurement before assuming this same cache design/TTL choices transfer
+  directly — the numbers here are specific to FMP's specific free-tier limit and this specific 3-ticker
+  configuration, not a general rule.

@@ -1,10 +1,102 @@
 import os
+import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
 from .base import EarningsReport, GradeChange, Quote
+
+# Sprint 3.6.9 Remote STRATUS closeout -- provider-level TTL cache.
+#
+# Reconnaissance against the real hosted deployment (2026-08-23) measured
+# ~10,080 real FMP calls/day from the background notification poller alone
+# (3 tickers x an unconditional earnings check every 60s, plus quote/grade
+# checks for any ticker currently showing a live earnings substitution) --
+# already producing real HTTP 429s against FMP's 250-call/day free tier
+# within ~25 minutes of the poller running, confirmed directly from logs.
+# backend/app/logan_feed.py constructs a fresh FmpEarningsProvider/
+# FmpMarketDataProvider instance on every single call (no persistent
+# provider instance, unlike e.g. the shared Orchestrator) and had zero
+# caching of any kind -- both the poller and every direct /v1/opportunities
+# request independently re-fetched from FMP every time.
+#
+# Deliberately infrastructure-only, per the owner's explicit instruction:
+# this wraps the raw HTTP fetch and nothing else -- trigger evaluation,
+# qualification, confidence, and convergence never know a cache exists, and
+# a cache hit produces byte-identical downstream behavior to a fresh fetch.
+# Endpoint-appropriate TTLs, not one blanket value, per the owner's explicit
+# guidance: earnings data changes quarterly (long TTL is free), analyst
+# grades change infrequently (medium TTL), quotes are the one genuinely
+# freshness-sensitive path (shorter TTL, still a large reduction from "every
+# single call"). Only ever caches a real, successful provider response
+# (including a real "no data" None -- see fetch_latest_earnings's own
+# docstring on why that's not an error) -- FmpProviderError always
+# propagates uncached, so a transient failure is retried on the very next
+# call rather than being remembered as "no data" for a full TTL window.
+EARNINGS_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours -- quarterly-cadence data
+GRADE_CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours -- infrequent-change data
+QUOTE_CACHE_TTL_SECONDS = 30 * 60  # 30 minutes -- the freshness-sensitive path
+
+
+class _FmpCacheEntry:
+    __slots__ = ("value", "cached_at")
+
+    def __init__(self, value: object, cached_at: float) -> None:
+        self.value = value
+        self.cached_at = cached_at
+
+
+class FmpResponseCache:
+    """Process-lifetime TTL cache, shared across every FmpEarningsProvider/
+    FmpMarketDataProvider instance by default (see `_shared_fmp_cache` below)
+    -- this is what makes the background poller and direct /v1/opportunities
+    requests genuinely share one cache rather than each maintaining their
+    own, since backend/app/logan_feed.py constructs a fresh provider
+    instance per call. `clock` is injectable (real callers use
+    `time.monotonic`; tests inject a fake, controllable clock) so cache
+    expiry is deterministically testable without real sleeping.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._entries: dict[tuple[str, str], _FmpCacheEntry] = {}
+        self._clock = clock
+
+    def get_or_fetch(
+        self,
+        endpoint: str,
+        entity_id: str,
+        ttl_seconds: float,
+        fetch: Callable[[], object],
+    ) -> object:
+        key = (endpoint, entity_id)
+        now = self._clock()
+        entry = self._entries.get(key)
+        if entry is not None and (now - entry.cached_at) < ttl_seconds:
+            return entry.value
+
+        # Deliberately not try/except-wrapped: a raised FmpProviderError
+        # propagates straight out, uncached, so it is never mistaken for a
+        # real "no data" response and never poisons the cache for other
+        # callers sharing it.
+        value = fetch()
+        self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
+        return value
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+_shared_fmp_cache = FmpResponseCache()
+
+
+def reset_fmp_cache() -> None:
+    """Test-only (and general-purpose "start over") hook, mirroring this
+    codebase's existing reset_pipeline_state()/reset_notification_state()
+    convention for process-lifetime state.
+    """
+    _shared_fmp_cache.clear()
+
 
 # Sprint 3.6.6B — the first live market-data provider. Financial Modeling
 # Prep's "stable" per-symbol earnings endpoint: historical earnings reports
@@ -74,6 +166,7 @@ class FmpEarningsProvider:
         api_key: Optional[str] = None,
         base_url: str = FMP_BASE_URL,
         client: Optional[httpx.Client] = None,
+        cache: Optional[FmpResponseCache] = None,
     ) -> None:
         # API key comes only from environment configuration (explicit
         # `api_key` param is for tests to inject a fake one -- never a
@@ -95,8 +188,25 @@ class FmpEarningsProvider:
         # transport -- see test_fmp_provider.py); defaults to a real client
         # with a bounded timeout so a hung connection can't block forever.
         self._client = client or httpx.Client(timeout=10.0)
+        # Sprint 3.6.9 Remote STRATUS closeout: defaults to the shared,
+        # process-lifetime module cache (see FmpResponseCache's own
+        # docstring) -- every production caller gets real cross-instance
+        # sharing without doing anything special. Tests inject an isolated
+        # instance (often with a fake clock) so cache state/expiry never
+        # leaks between test cases.
+        self._cache = cache if cache is not None else _shared_fmp_cache
 
     def fetch_latest_earnings(self, entity_id: str) -> Optional[EarningsReport]:
+        return self._cache.get_or_fetch(
+            "earnings",
+            entity_id,
+            EARNINGS_CACHE_TTL_SECONDS,
+            lambda: self._fetch_latest_earnings_uncached(entity_id),
+        )  # type: ignore[return-value]
+
+    def _fetch_latest_earnings_uncached(
+        self, entity_id: str
+    ) -> Optional[EarningsReport]:
         try:
             response = self._client.get(
                 f"{self._base_url}/earnings",
@@ -213,6 +323,7 @@ class FmpMarketDataProvider:
         api_key: Optional[str] = None,
         base_url: str = FMP_BASE_URL,
         client: Optional[httpx.Client] = None,
+        cache: Optional[FmpResponseCache] = None,
     ) -> None:
         resolved_key = (
             api_key if api_key is not None else os.environ.get(FMP_API_KEY_ENV_VAR)
@@ -226,8 +337,18 @@ class FmpMarketDataProvider:
         self._api_key = resolved_key
         self._base_url = base_url
         self._client = client or httpx.Client(timeout=10.0)
+        # See FmpEarningsProvider.__init__'s identical comment above.
+        self._cache = cache if cache is not None else _shared_fmp_cache
 
     def fetch_quote(self, entity_id: str) -> Optional[Quote]:
+        return self._cache.get_or_fetch(
+            "quote",
+            entity_id,
+            QUOTE_CACHE_TTL_SECONDS,
+            lambda: self._fetch_quote_uncached(entity_id),
+        )  # type: ignore[return-value]
+
+    def _fetch_quote_uncached(self, entity_id: str) -> Optional[Quote]:
         try:
             response = self._client.get(
                 f"{self._base_url}/quote",
@@ -297,6 +418,16 @@ class FmpMarketDataProvider:
         )
 
     def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
+        return self._cache.get_or_fetch(
+            "grades",
+            entity_id,
+            GRADE_CACHE_TTL_SECONDS,
+            lambda: self._fetch_latest_grade_change_uncached(entity_id),
+        )  # type: ignore[return-value]
+
+    def _fetch_latest_grade_change_uncached(
+        self, entity_id: str
+    ) -> Optional[GradeChange]:
         try:
             response = self._client.get(
                 f"{self._base_url}/grades",

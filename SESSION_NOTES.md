@@ -1377,3 +1377,60 @@ tested in isolation. What remains is the physical-phone half of the acceptance p
 leave the LAN, stop the dev-machine backend, confirm the feed/Ask/push flow) — an owner-performed step by
 nature, not something this session can execute itself. LLM Ask STRATUS on the hosted beta remains gated on
 the owner supplying a real `ANTHROPIC_API_KEY`. No merge to main.
+
+# Session Notes — 2026-08-23 (Sprint 3.6.9 Remote STRATUS closeout — physical acceptance + FMP caching)
+
+## Physical acceptance test: passed
+
+Owner confirmed, over cellular with home Wi-Fi off: the iOS preview build loaded the expected two live
+opportunity cards from the hosted backend, and deterministic Ask STRATUS worked (correctly still only
+reframing card content, since the hosted LLM path was not yet enabled at that point). `iPhone → cellular →
+Fly.io → live STRATUS backend` confirmed working end-to-end, physically, not just via API testing from this
+session.
+
+## A real, already-occurring production problem found while measuring FMP usage (not projected)
+
+Instructed to measure real FMP call volume before any capacity decision. Found actual `HTTP 429` rate-limit
+errors already appearing in the hosted app's logs within ~25 minutes of the poller running -- not a
+projection. Root cause, confirmed by inspection: `backend/app/logan_feed.py` constructs a fresh FMP provider
+instance on every call (poller every 60s, plus every direct `/v1/opportunities` request) with zero caching
+anywhere. Measured steady-state cost from the poller alone: ~10,080 calls/day against FMP's 250/day free
+limit -- ~40x over.
+
+Reported this, with the real math, before touching any code -- the owner's explicit decision was "optimize
+first, do not upgrade the FMP plan."
+
+## FMP provider-level TTL cache (see ADR-062 for the full record)
+
+Implemented a shared, process-lifetime `FmpResponseCache` in `logan_core/receptors/providers/fmp.py`,
+wrapping only the raw HTTP fetch inside each of the three FMP call methods -- trigger evaluation,
+qualification, confidence, and convergence never know it exists. Endpoint-appropriate TTLs per the owner's
+explicit guidance (earnings 6h, grades 2h, quotes 30min, reflecting how often each kind of data actually
+changes) rather than one blanket value. Defaults to one shared module-level singleton, so the background
+poller and every direct request genuinely share one cache despite each constructing a fresh provider
+instance -- zero changes needed to `logan_feed.py`'s existing call pattern. Only real, successful responses
+are ever cached (including a legitimate empty "no data" result, which is not an error); a raised
+`FmpProviderError` always propagates uncached, so a transient failure retries next call rather than being
+remembered as "no data" for a full TTL window -- this also means the live-data invariant ("no valid live
+data -> no live opportunity, never a stale-disguised-as-fresh substitute") holds exactly as before.
+
+Found and fixed a real test-isolation risk while implementing this: since the cache is a process-lifetime
+module singleton, two different test functions fetching the same ticker through different mocks would have
+the second one silently receive the first one's cached result. Added an autouse `reset_fmp_cache()` fixture
+to both `backend/tests/conftest.py` and `logan_core/tests/conftest.py`, mirroring the existing
+`reset_pipeline_state()`/`reset_notification_state()` convention.
+
+**Calculated (not guessed) expected usage after the fix:** current real state (NVDA + AAPL both showing a
+live earnings beat, TSLA does not) = 132 calls/day. Worst case, all three tickers qualifying simultaneously
+= 192 calls/day. Both comfortably under the 250/day free-tier limit -- **the free FMP plan stays viable, no
+upgrade needed.**
+
+New `logan_core/tests/test_fmp_cache.py` (15 tests). `backend`/`logan_core` combined 590 → 605 (+15).
+mypy/ruff/black clean.
+
+## Status at the end of this session
+
+FMP caching implemented, tested, and ready to deploy. Anthropic hosted-Ask work paused pending the owner
+creating a new `ANTHROPIC_API_KEY` (the previously-referenced Sprint 3.6.8 key was searched for exhaustively
+across the repo, all git worktrees, and likely backup locations on the PC -- confirmed genuinely never
+existed anywhere findable, not merely misplaced). No merge to main.
