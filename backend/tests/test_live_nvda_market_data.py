@@ -226,6 +226,8 @@ def test_live_market_data_response_has_no_internal_or_secret_fields(monkeypatch)
     assert "internal_rank_score" not in flat
     assert "priority_score" not in flat
     assert "test-key-not-real" not in flat
+    # Sprint 3.6.9 (Stock Opportunity Logic V2) added the six lifecycle_*
+    # fields below deliberately -- see docs/DECISIONS.md's Sprint 3.6.9 ADR.
     nvda_payload = _nvda_item(payload)
     assert set(nvda_payload.keys()) == {
         "event_id",
@@ -241,4 +243,10 @@ def test_live_market_data_response_has_no_internal_or_secret_fields(monkeypatch)
         "connected_event_ids",
         "is_new_for_user",
         "signal_type",
+        "lifecycle_state",
+        "is_updated",
+        "meaningful_change_type",
+        "lifecycle_reason",
+        "last_meaningful_change_at",
+        "thesis_age_hours",
     }

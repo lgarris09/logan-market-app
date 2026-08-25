@@ -1539,3 +1539,62 @@ not local git state.
 Two commits this block (`d702ba8` already existed; `c1a1fe1` new), both pushed, both actually deployed to Fly
 this time (verified via image tag both times). Hosted app healthy, correctly configured
 (`runtime_mode=live-data-only`, `llm_ask=True`, `cors_origins=[]`). No merge to main.
+
+# Session Notes — 2026-08-24/25 (Stock Opportunity Logic V2 — Opportunity Lifecycle + Meaningful Change Detection)
+
+## The audit found two precise, code-verified root causes for "the same card looks the same forever"
+
+Traced the real code path (not docs) end to end before writing anything: `WorldModel.process()`'s dedup
+window is measured against each signal's own `captured_at`, which for an earnings/grade signal is set once
+to the real report/action date and never advances -- meaning the dedup window (1 hour) can never expire for
+a fixed historical report, so the same event_id stays "the same event" with `is_new=False` forever after
+first observation. Separately, `PrioritizationEngine.prioritize()`'s `changed_since_view` parameter --
+exactly what its own cooldown logic depends on -- is never actually computed by any real caller;
+`Orchestrator.run()` calls `prioritize()` with no such argument, so every real call silently used the
+hardcoded default `True`. Cooldown has been fully implemented and tested in isolation this whole time, and
+structurally unreachable through the real pipeline. Confirmed the one existing time-decay mechanism
+(EvidenceTrust's `recency_score`) had already fully decayed to ~0 for the real May 2026 earnings data by the
+time this audit ran, by hand-deriving the exact observed `confidence_score=0.595` from the formula --
+invisible to the user and not strong enough alone to move lifecycle/surface/notification state.
+
+## Built: OpportunityLifecycleTracker, mirroring StockConvergenceTracker's own proven pattern exactly
+
+New `logan_core/opportunity_lifecycle/` package -- an opt-in PipelineDependency, wired between the
+`opportunity` and `policy` steps, entity-keyed for shared/objective world facts (confidence, trigger_codes),
+with a lightweight per-`(user_id, entity_id)` personal-relevance index kept deliberately separate. Seven
+bounded states (new/developing/high_attention/monitoring/cooling/stale/expired), signal-specific decay
+windows (earnings 72h/240h/720h, price moves 6h/24h/72h, analyst actions 48h/168h/360h, convergence
+24h/72h/168h -- reasoned per signal semantics, not one blanket timeout), and a `LifecycleDelta` that finally
+gives `changed_since_view` real data -- proven end-to-end through the completely unmodified downstream
+pipeline. Notification eligibility redesigned so "opportunity qualifies as alert" is no longer, by itself,
+"send a notification" -- a repeated poll of unchanged live NVDA data is alert-eligible once, then correctly
+not again, while the card stays visible throughout.
+
+Durable persistence (`backend/app/lifecycle_store.py`, mirroring `notification_store.py` exactly) proven
+across a real simulated restart at both the tracker and full backend-wiring level, including the deliberate
+converse test (persistence off legitimately does reset to NEW) proving the persistence test isn't a false
+positive.
+
+LLM-assisted delta-aware interpretation reuses 100% of the existing Sprint 3.6.8 Block 1 provider
+infrastructure -- five additive `OpportunityContext` fields, a new "Lifecycle" system-prompt section only
+rendered when tracking is active, explicitly instructing delta-oriented answers over restating the card and
+forbidding invented changes. The deterministic tracker remains the sole author of every lifecycle fact; the
+LLM only narrates a delta it was already handed.
+
+## FMP capability audit: no new provider needed
+
+Classified every plausible stock signal type against the three FMP endpoints actually in use
+(`/earnings`, `/quote`, `/grades`). Everything Stock Opportunity Logic V2 actually depends on (confidence,
+trigger_codes, personal_relevance) is already fully served -- lifecycle tracking makes zero additional FMP
+calls, preserving the prior session's cache work completely intact. Volume/volatility are the one
+near-term-plausible gap (likely already in FMP's quote response, just not read into this codebase's
+contracts yet) -- flagged for a future block, not needed for anything built here.
+
+## Status at the end of this session
+
+`backend`/`logan_core`: 629 → 666 (+37 across 4 new test files). 2 pre-existing tests updated (exact-field-
+set allowlists, both real intentional additions, not leaks). mypy/ruff/black clean throughout, including a
+lambda-closure `Optional` narrowing fix in `orchestrator/pipeline.py` and a bracket-mismatch syntax error
+caught and fixed before any commit. See docs/DECISIONS.md ADR-066 for the full decision record, including
+the complete FMP capability table and the reference-implementation pattern documented for future domains.
+No merge to main.

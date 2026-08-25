@@ -24,6 +24,7 @@ from logan_core.contracts import (
     ExecutionTrace,
     FeedbackSignal,
     InteractionType,
+    LifecycleDelta,
     MemoryWrite,
     MentalModel,
     NormalizedSignal,
@@ -42,6 +43,7 @@ from logan_core.memory import MemoryStore
 from logan_core.mental_model import MentalModelEngine
 from logan_core.normalization import Normalizer
 from logan_core.opportunity import OpportunityEngine
+from logan_core.opportunity_lifecycle import OpportunityLifecycleTracker
 from logan_core.policy import PolicyEngine
 from logan_core.presentation import PresentationEngine
 from logan_core.prioritization import PrioritizationEngine
@@ -110,6 +112,16 @@ class PipelineDependencies:
     # window to observe anything real -- see StockConvergenceTracker's own
     # docstring and backend/app/logan_feed.py's process-lifetime Orchestrator.
     convergence_tracker: Optional[StockConvergenceTracker] = None
+    # Sprint 3.6.9 Stock Opportunity Logic V2 -- None by default, identical
+    # opt-in discipline to trigger_detector/convergence_tracker above: every
+    # existing caller/test that doesn't wire one in gets byte-for-byte
+    # unchanged behavior (no "opportunity_lifecycle" trace layer, no
+    # lifecycle_delta on PipelineResult, changed_since_view keeps defaulting
+    # to prioritize()'s own pre-existing True). Must be constructed once and
+    # reused across calls (like world_model/convergence_tracker) -- its
+    # entity-keyed history is meaningless if reconstructed per call. See
+    # docs/DECISIONS.md's Sprint 3.6.9 Stock Opportunity Logic V2 ADR.
+    lifecycle_tracker: Optional[OpportunityLifecycleTracker] = None
 
     def __post_init__(self) -> None:
         self.learning_engine = LearningEngine(self.memory_store)
@@ -132,6 +144,9 @@ class PipelineResult:
     prioritized_item: PrioritizedItem
     delivered_item: DeliveredItem
     trace: ExecutionTrace
+    # Sprint 3.6.9 Stock Opportunity Logic V2 -- None whenever no
+    # lifecycle_tracker was wired in (every pre-existing caller/test).
+    lifecycle_delta: Optional[LifecycleDelta] = None
 
 
 def _collapse_duplicate_event_ids(events: list[EnrichedEvent]) -> list[EnrichedEvent]:
@@ -532,6 +547,36 @@ class Orchestrator:
             ),
             event_id=event.event_id,
         )
+
+        # Sprint 3.6.9 Stock Opportunity Logic V2: compares this poll's
+        # authoritative facts (confidence, active trigger_codes, this user's
+        # personal_relevance) against the last stored snapshot for this
+        # entity, before Prioritization runs -- this is what finally gives
+        # `changed_since_view` real data instead of the hardcoded default
+        # `True` every pre-existing caller left it at (see
+        # PrioritizationEngine.prioritize()'s own signature and the Sprint
+        # 3.6.9 audit in docs/DECISIONS.md). Only runs when a caller
+        # explicitly wired a lifecycle_tracker in, mirroring
+        # trigger_detector/convergence_tracker's identical opt-in gating
+        # above -- every pre-existing caller/test is byte-for-byte
+        # unaffected.
+        lifecycle_delta = None
+        lifecycle_tracker = self.deps.lifecycle_tracker
+        if lifecycle_tracker is not None:
+            lifecycle_delta = self._execute(
+                trace,
+                "opportunity_lifecycle",
+                lambda: lifecycle_tracker.observe(
+                    entity_id=event.entities[0].entity_id,
+                    confidence_score=confidence.confidence_score,
+                    trigger_codes=[t.trigger_code for t in event.trigger_events],
+                    user_id=user_id,
+                    personal_relevance=recommendation.dimensions.personal_relevance,
+                    now=datetime.now(timezone.utc),
+                ),
+                event_id=event.event_id,
+            )
+
         policy_result = self._execute(
             trace,
             "policy",
@@ -542,7 +587,15 @@ class Orchestrator:
             trace,
             "prioritization",
             lambda: self.deps.prioritization_engine.prioritize(
-                user_id, domain, policy_result, recommendation
+                user_id,
+                domain,
+                policy_result,
+                recommendation,
+                changed_since_view=(
+                    lifecycle_delta.is_meaningful
+                    if lifecycle_delta is not None
+                    else True
+                ),
             ),
             event_id=event.event_id,
         )
@@ -575,6 +628,7 @@ class Orchestrator:
             prioritized_item=prioritized_item,
             delivered_item=delivered_item,
             trace=trace,
+            lifecycle_delta=lifecycle_delta,
         )
 
     def run_feedback_loop(

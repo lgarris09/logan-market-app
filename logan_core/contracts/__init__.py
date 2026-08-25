@@ -18,6 +18,12 @@ from .community import CommunitySignal
 from .confidence import ConclusionConfidence
 from .feedback import FeedbackSignal, InferredIntent, InteractionType, OutcomeRecord
 from .learning import MemoryWrite
+from .lifecycle import (
+    LifecycleDelta,
+    LifecycleSnapshot,
+    LifecycleState,
+    MeaningfulChangeType,
+)
 from .memory import MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
 from .opportunity import AttentionRecommendation, Dimensions
@@ -102,4 +108,8 @@ __all__ = [
     "InferredIntent",
     "OutcomeRecord",
     "MemoryWrite",
+    "LifecycleState",
+    "MeaningfulChangeType",
+    "LifecycleSnapshot",
+    "LifecycleDelta",
 ]

@@ -28,6 +28,7 @@ from logan_core.contracts import (  # noqa: E402
 )
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.memory import MemoryStore  # noqa: E402
+from logan_core.opportunity_lifecycle import OpportunityLifecycleTracker  # noqa: E402
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     earnings_report_to_raw_signal,
@@ -56,12 +57,14 @@ from .ask_context import (  # noqa: E402
 )
 from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
+    lifecycle_store_db_path,
     live_data_only_mode,
     live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
 )
 from .entity_registry import resolve  # noqa: E402
+from .lifecycle_store import LifecycleStore  # noqa: E402
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
@@ -91,6 +94,16 @@ from .entity_registry import resolve  # noqa: E402
 # in-memory dicts.
 _state_lock = threading.Lock()
 _orchestrator: Orchestrator | None = None
+# Stock Opportunity Logic V2: the same process-lifetime instance wired into
+# _orchestrator's PipelineDependencies below -- kept as its own module
+# reference (not just reached through _orchestrator.deps) so
+# _run_feed_pipeline() can export/persist an entity's updated snapshot right
+# after each orchestrator.run() call without reaching into the Orchestrator's
+# internals. _lifecycle_store is None unless memory_persistence_enabled() --
+# disabled mode (the default, and every pre-Sprint-3.6.9 test) keeps
+# lifecycle tracking purely in-memory, same discipline as memory_store.
+_lifecycle_tracker: OpportunityLifecycleTracker | None = None
+_lifecycle_store: LifecycleStore | None = None
 # user_ids whose very first `/v1/opportunities` request has already been
 # processed -- lets that first response stay notification-silent (nothing is
 # "new" relative to a user who's never seen anything yet) without treating
@@ -347,10 +360,35 @@ def _get_orchestrator() -> Orchestrator:
                 if memory_persistence_enabled()
                 else MemoryStore()
             )
+
+            # Stock Opportunity Logic V2: gated behind the same
+            # live_stock_tickers() flag as trigger_detector/
+            # convergence_tracker immediately above, for the identical
+            # reason -- Orchestrator.run() adds an "opportunity_lifecycle"
+            # ExecutionTrace layer entry whenever a lifecycle_tracker is
+            # wired at all, so unconditional wiring would change the trace
+            # shape (and, more importantly, start engaging
+            # changed_since_view-driven cooldown) for every simulated
+            # fixture too, not just the live stocks path this block is
+            # actually about. Demo-mode (no live tickers configured) stays
+            # byte-for-byte the pre-Sprint-3.6.9 behavior. Persisted the
+            # same way memory_store is, independently of the live-data gate
+            # -- see lifecycle_store.py.
+            global _lifecycle_tracker, _lifecycle_store
+            _lifecycle_tracker = None
+            _lifecycle_store = None
+            if live_stock_tickers():
+                _lifecycle_tracker = OpportunityLifecycleTracker()
+                if memory_persistence_enabled():
+                    _lifecycle_store = LifecycleStore(lifecycle_store_db_path())
+                    for snapshot in _lifecycle_store.load_all():
+                        _lifecycle_tracker.load_snapshot(snapshot)
+
             deps = (
                 PipelineDependencies(
                     trigger_detector=StocksTriggerEvaluator(),
                     convergence_tracker=StockConvergenceTracker(),
+                    lifecycle_tracker=_lifecycle_tracker,
                     memory_store=memory_store,
                 )
                 if live_stock_tickers()
@@ -589,7 +627,7 @@ def reset_pipeline_state() -> None:
     deliberate cross-request persistence) should call this between runs -- see
     backend/tests/test_opportunities_api.py and test_logan_feed.py.
     """
-    global _orchestrator
+    global _orchestrator, _lifecycle_tracker, _lifecycle_store
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -599,7 +637,11 @@ def reset_pipeline_state() -> None:
             # (every test in a persistence-focused suite) would leak one
             # open connection to the same file per reset.
             _orchestrator.deps.memory_store.close()
+        if _lifecycle_store is not None:
+            _lifecycle_store.close()
         _orchestrator = None
+        _lifecycle_tracker = None
+        _lifecycle_store = None
         _baseline_established.clear()
         _user_models.clear()
         _opportunity_context_caches.clear()
@@ -770,6 +812,46 @@ class FeedItem(BaseModel):
     # the pipeline, and fabricating one client-side would violate this
     # project's "don't fake capabilities" rule.
     signal_type: str
+
+    # Stock Opportunity Logic V2 (see docs/DECISIONS.md's Sprint 3.6.9 ADR).
+    # All default to None/False and are additive -- an entity with no active
+    # lifecycle tracking (demo mode, no live tickers configured) simply
+    # reports lifecycle_state=None rather than a fabricated value; the
+    # mobile layer treats absence as "lifecycle metadata not available for
+    # this item," not an error.
+    #
+    # lifecycle_state: the current bounded state (new/developing/
+    # high_attention/monitoring/cooling/stale/expired) -- see
+    # logan_core/contracts/lifecycle.py's LifecycleState.
+    lifecycle_state: str | None = None
+    # is_updated: true iff this specific poll produced a *meaningful* change
+    # (LifecycleDelta.is_meaningful) -- deliberately a different concept
+    # from is_new_for_user above (that's about whether *this user* has
+    # reviewed this event_id; this is about whether the underlying
+    # opportunity itself has genuinely changed since STRATUS last evaluated
+    # it, independent of whether any particular user has looked at it yet).
+    is_updated: bool = False
+    # meaningful_change_type: what kind of change this was (e.g.
+    # "confidence_increased", "aged_to_cooling", "none") -- see
+    # MeaningfulChangeType. Present even when is_updated is False (value
+    # "none"), so the mobile layer never has to special-case its absence.
+    meaningful_change_type: str | None = None
+    # lifecycle_reason: one human-readable sentence explaining the current
+    # lifecycle_state/meaningful_change_type -- serves both "why is this
+    # still being shown" (a monitoring/cooling/stale explanation) and "why
+    # does this deserve your attention now" (a strengthening/reactivation
+    # explanation), whichever currently applies. One field, not two
+    # separately-maintained ones, since exactly one of those framings is
+    # ever true for a given poll.
+    lifecycle_reason: str | None = None
+    last_meaningful_change_at: datetime | None = None
+    # Hours since STRATUS itself first surfaced this opportunity --
+    # deliberately measured from first observation, not from the underlying
+    # signal's own real-world event date (which, for something like an
+    # earnings report, is frequently already old by the time it's first
+    # detected and would misrepresent how long this has actually been
+    # sitting in the user's Attention Field unchanged -- see the ADR).
+    thesis_age_hours: float | None = None
 
 
 class DemoFeedResponse(BaseModel):
@@ -963,6 +1045,18 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
             )
             results.append((entity_id, result))
 
+            # Stock Opportunity Logic V2: write-through persistence -- if
+            # this entity's lifecycle snapshot changed at all (it always has
+            # a snapshot once lifecycle tracking is active; observe() always
+            # updates last_evaluated_at even on a "none" change), persist it
+            # immediately so a restart/redeploy right after this poll never
+            # loses it. Mirrors notification_store.py's own write-through-
+            # on-mutation discipline.
+            if _lifecycle_store is not None and _lifecycle_tracker is not None:
+                snapshot = _lifecycle_tracker.export_snapshot(entity_id)
+                if snapshot is not None:
+                    _lifecycle_store.save(snapshot)
+
         # Connections: two events are "rippled" to each other if the entities either one
         # touches (directly or via World Model's downstream mapping) overlap.
         touched: dict[UUID, set[str]] = {
@@ -1035,6 +1129,32 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                     # only fixture with a second, corroborating signal, and
                     # both share the same underlying signal_type.
                     signal_type=r.normalized_signals[0].signal_type,
+                    # Stock Opportunity Logic V2 -- all None/False whenever
+                    # r.lifecycle_delta is None (lifecycle tracking not
+                    # active for this call; see _get_orchestrator()'s own
+                    # live_stock_tickers() gate).
+                    lifecycle_state=(
+                        r.lifecycle_delta.new_state if r.lifecycle_delta else None
+                    ),
+                    is_updated=(
+                        r.lifecycle_delta.is_meaningful if r.lifecycle_delta else False
+                    ),
+                    meaningful_change_type=(
+                        r.lifecycle_delta.change_type if r.lifecycle_delta else None
+                    ),
+                    lifecycle_reason=(
+                        r.lifecycle_delta.reason if r.lifecycle_delta else None
+                    ),
+                    last_meaningful_change_at=(
+                        r.lifecycle_delta.last_meaningful_change_at
+                        if r.lifecycle_delta
+                        else None
+                    ),
+                    thesis_age_hours=(
+                        r.lifecycle_delta.thesis_age_hours
+                        if r.lifecycle_delta
+                        else None
+                    ),
                 )
             )
             # Sprint 3.6.7 Block 4: retains a richer slice of this same
@@ -1062,10 +1182,22 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
         # silencing above -- a first-ever poll after a backend restart can
         # still be alert-eligible for push purposes even though the in-app
         # badge intentionally starts quiet.
+        # Stock Opportunity Logic V2: "opportunity qualifies as alert" is no
+        # longer, by itself, "send a notification" -- when lifecycle
+        # tracking is active for this entity, a notification additionally
+        # requires the poll's own LifecycleDelta to be notification-worthy
+        # (a real, evidence-backed transition -- see
+        # opportunity_lifecycle/tracker.py's own NOTIFICATION_WORTHY set).
+        # r.lifecycle_delta is None whenever lifecycle tracking isn't active
+        # for this call (demo mode, no live tickers configured) -- that case
+        # keeps the exact pre-Sprint-3.6.9 behavior unchanged, matching the
+        # gating precedent live_stock_tickers() already established for
+        # trigger_detector/convergence_tracker above.
         alert_event_ids = [
             r.event.event_id
             for _, r in results
             if r.prioritized_item.interruption == "alert"
+            and (r.lifecycle_delta is None or r.lifecycle_delta.is_notification_worthy)
         ]
 
     return items, now, alert_event_ids

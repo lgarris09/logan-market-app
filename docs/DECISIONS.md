@@ -2793,3 +2793,223 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   or hosted-behavior claim in this project should be verified against the actual running Fly image
   (`fly status`'s image tag, or a fresh `fly deploy` immediately before verifying), not inferred from local
   git state.
+
+## ADR-066: Stock Opportunity Logic V2 — Opportunity Lifecycle, Meaningful Change Detection, LLM-Assisted Interpretation
+
+- Date: 2026-08-24/25
+- Status: Accepted
+- Context — the audit, done before any design work: the owner's product observation was that the same
+  NVDA/AAPL cards could remain visible with essentially unchanged framing across days, with no sense of
+  whether the underlying opportunity was strengthening, stable, cooling, or no longer worth attention. A
+  full trace of the real code path (not documentation) found the exact, precise root causes:
+  1. **`WorldModel.process()`'s dedup window (`world_model/model.py`, `DEDUP_WINDOW = timedelta(hours=1)`) is
+     measured against each signal's own `captured_at`, not wall-clock arrival time.** For an earnings signal,
+     `captured_at` is set once to `report.report_timestamp` (the real report's date, e.g. `2026-05-20`) and
+     never advances on later corroboration (confirmed by reading `world_model/model.py`'s corroboration
+     branch — `occurred_at`/`captured_at` are deliberately excluded from that `model_copy(update={...})`).
+     Because that value never changes between polls, `(signal.captured_at - recent[0])` is *exactly* `0`
+     forever once first observed — the dedup window can never expire for a fixed historical report, so the
+     event_id stays permanently "the same event," with `is_new=False` on every subsequent poll indefinitely.
+     Analyst-grade signals (`captured_at=grade.action_date`) have the identical property; quote signals
+     (`captured_at=quote.quote_timestamp`) do not, since FMP's own quote timestamp genuinely advances.
+  2. **`PrioritizationEngine.prioritize()`'s `changed_since_view` parameter — the exact mechanism its own
+     cooldown logic (`in_cooldown = cooldown is not None and not changed_since_view`) depends on — defaults
+     to `True` and is never actually computed by any real caller.** `Orchestrator.run()` (`orchestrator/
+     pipeline.py`) calls `prioritize(user_id, domain, policy_result, recommendation)` with no
+     `changed_since_view` argument at all, meaning every real call uses the hardcoded default. Cooldown is
+     fully implemented, tested-in-isolation, and structurally unreachable through the real pipeline — a
+     second, independent root cause layered on top of the first.
+  3. **Every layer from World Model through Presentation recomputes its output fresh from the current poll
+     alone.** Confirmed by reading `OpportunityEngine.evaluate()`, `EvidenceTrustEngine.evaluate()`,
+     `ConclusionConfidenceEngine.evaluate()`, and `PresentationEngine.deliver()` in full: none of them read or
+     store a prior snapshot. `EvidenceTrust`'s own `recency_score` (an `exp(-hours_elapsed/6.0)` decay against
+     `event.occurred_at`) is the *only* time-awareness anywhere in the existing pipeline, and by the time this
+     audit ran it had already fully decayed toward ~0 for both NVDA's and AAPL's real May 2026 earnings
+     reports (confirmed by hand-deriving `confidence_score=0.595` from the exact formula and matching the
+     real, repeatedly-observed value) — meaning even that one decay mechanism was already "used up" and
+     invisible, not something the user could see change, and not strong enough alone to move `lifecycle`
+     state, surface, or notification eligibility, none of which read it directly.
+  - **Conclusion: the missing architectural piece is a component that persists a *prior* snapshot per
+    opportunity and computes a structured diff against it — nothing in the existing 18-layer pipeline needs
+    to be redesigned to add this; it slots in as one new, opt-in, additive layer, mirroring
+    `StockConvergenceTracker`'s own already-proven pattern exactly.**
+- Decision (by area):
+  1. **`OpportunityLifecycleTracker`, a new `logan_core/opportunity_lifecycle/` package** — an opt-in
+     `PipelineDependency` (`Optional[OpportunityLifecycleTracker] = None`, identical opt-in discipline to
+     `trigger_detector`/`convergence_tracker`), wired into `Orchestrator.run()` between the `opportunity` and
+     `policy` steps. Every pre-existing caller/test that doesn't wire one in is byte-for-byte unaffected — no
+     `"opportunity_lifecycle"` trace layer, `lifecycle_delta` stays `None`, `changed_since_view` stays at its
+     pre-existing hardcoded `True`. Entity-keyed (shared across users, matching World Model's own event
+     identity) for objective world facts (confidence, active trigger_codes); a lightweight secondary
+     `(user_id, entity_id)` index for personal-relevance-change detection, kept intentionally separate — two
+     users must always see the identical objective lifecycle state for the same real-world opportunity, and
+     personalization must never change that, only how much it matters to a given user.
+  2. **Seven-state bounded lifecycle** (`logan_core/contracts/lifecycle.py`'s `LifecycleState`): `new` →
+     `developing`/`high_attention` (strengthening) → `monitoring` (stable, unchanged) → `cooling` → `stale` →
+     `expired`, plus `reactivated` as a transition (not a resting state) back into `developing`/
+     `high_attention`. `high_attention`'s confidence floor (0.6) and the personal-relevance threshold (0.6)
+     both reuse existing anchors (`PrioritizationEngine`'s own `visibility="primary"` bar,
+     `opportunity/engine.py`'s own explicit-connection bump) rather than inventing new numbers.
+  3. **Signal-specific decay windows, not one blanket timeout** (`_MONITORING_WINDOW_HOURS`/
+     `_STALE_WINDOW_HOURS`/`_EXPIRE_WINDOW_HOURS` dicts, keyed by trigger_code): earnings 72h/240h/720h
+     (quarterly-cadence data, a real reaction plays out over days), analyst actions 48h/168h/360h, price moves
+     6h/24h/72h (the genuinely fast-moving signal), convergence 24h/72h/168h (the strongest single signal,
+     longer than any one alone). When multiple trigger_codes are active on one opportunity, the *most
+     generous* active window governs — an earnings signal still active alongside a price-move signal is
+     governed by earnings' own longer window, not forced onto the price move's much shorter schedule (proven
+     directly by `test_earnings_plus_price_move_uses_the_longer_earnings_window`). These are declared,
+     reasoned constants, not learned — the same threshold-setting discipline this codebase already applies
+     everywhere else (`FATIGUE_LIMIT`, `COOLDOWN_WINDOW`, `CONVERGENCE_WINDOW`).
+  4. **`LifecycleDelta` — a structured answer to "what changed, when, why it matters, is it enough to update
+     the card, is it enough to notify."** `is_meaningful` (confidence delta ≥0.05, or any new trigger_code
+     appearing, or a first-time state-boundary crossing, or a personal-relevance delta ≥0.1/threshold
+     crossing) feeds `PrioritizationEngine.prioritize()`'s previously-inert `changed_since_view` parameter
+     directly — this is the literal fix for the root cause found above, proven end-to-end through the real,
+     completely unmodified downstream pipeline (World Model → Evidence Trust → Reasoning → Opportunity →
+     Policy → Prioritization) in `test_pipeline_lifecycle.py`. `is_notification_worthy` is a strictly
+     narrower subset — aging alone (the natural `cooling`/`stale`/`expired` transitions) is never
+     notification-worthy even though it *is* meaningful (updates the card, correctly, per the owner's own
+     "an opportunity remains in the Attention Field only while there is a defensible reason" invariant); a
+     modest confidence decrease is meaningful-but-not-notifying, while a *major* decrease (≥0.15, "real
+     invalidation," a stricter bar than the base 0.05 threshold) does notify — a deliberate asymmetry: routine
+     confidence noise updates the card silently, a genuine weakening interrupts, aging never does.
+  5. **Notification eligibility redesigned**: `backend/app/logan_feed.py`'s `alert_event_ids` (the gate
+     `dispatch_eligible_notifications()`/badge logic reads) now requires *both*
+     `prioritized_item.interruption == "alert"` *and* (`lifecycle_delta is None or
+     lifecycle_delta.is_notification_worthy`) — "opportunity qualifies as alert" is no longer, by itself,
+     "send a notification." Proven directly against the real dispatch path: a repeated poll of unchanged live
+     NVDA earnings data is alert-eligible on the first poll and correctly not on the second
+     (`test_repeated_poll_of_unchanged_live_data_is_not_alert_eligible`), while the opportunity itself remains
+     visible in `/v1/opportunities` throughout (`test_repeated_poll_still_returns_the_opportunity_just_not_
+     alert_eligible`) — existence and notification-worthiness are now genuinely decoupled. The existing
+     durable dispatch dedup (`_dispatched_event_ids`, ADR-061) remains as a second, independent protection
+     layer, not the only one, per the owner's explicit instruction.
+  6. **Durable persistence, `backend/app/lifecycle_store.py`'s `LifecycleStore`** — mirrors
+     `notification_store.py`'s exact pattern: a separate SQLite file (`lifecycle_state.db`, sibling of
+     `stratus_state.db`/`notifications.db` under the same durable volume), gated behind the same
+     `STRATUS_PERSIST_MEMORY` flag (one operator decision, not a new toggle), load-on-first-use,
+     write-through on every mutation. Deliberately compact per the owner's explicit instruction — stores only
+     `LifecycleSnapshot`'s own small field set (confidence_score, trigger_code set, lifecycle_state, three
+     timestamps), never raw provider payloads or full signal history. Scoped to `entity_id` only — the
+     shared, objective world-fact state; per-user personal-relevance tracking remains process-memory-only, a
+     deliberate, documented, bounded gap matching this codebase's existing `AttentionState` precedent
+     (fatigue/cooldown are not durable either). Proven end-to-end through a real simulated restart at both the
+     tracker level (`test_export_and_load_snapshot_round_trips_state`,
+     `test_restart_simulated_tracker_reload_does_not_treat_known_entity_as_new`) and the full backend wiring
+     level (`test_lifecycle_state_survives_a_simulated_restart`, `test_no_duplicate_notification_after_
+     restart`, plus the deliberate converse `test_without_persistence_restart_does_reset_lifecycle_to_new`
+     proving the persistence test isn't a false positive).
+  7. **Gated behind `live_stock_tickers()`, the same flag as `trigger_detector`/`convergence_tracker`, not
+     wired unconditionally.** `Orchestrator.run()` adds an `"opportunity_lifecycle"` trace layer whenever a
+     tracker is wired at all — unconditional wiring would change trace shape (and start engaging
+     `changed_since_view`-driven cooldown) for every simulated fixture across every domain, not just the live
+     stocks path this block is actually about. Demo mode (no live tickers configured) stays byte-for-byte the
+     pre-Sprint-3.6.9 behavior — confirmed, zero regressions, across the full pre-existing 654-test suite
+     before any lifecycle-specific tests were even added.
+  8. **API contract, additive, six new `FeedItem` fields, all `None`/`False` when lifecycle tracking isn't
+     active**: `lifecycle_state`, `is_updated` (a different concept from the pre-existing `is_new_for_user` —
+     that's about whether *this user* reviewed this event_id; this is about whether the opportunity itself
+     genuinely changed), `meaningful_change_type`, `lifecycle_reason` (one field serving both "why still
+     shown" and "why does this deserve attention now," whichever currently applies, rather than two
+     separately-maintained fields with overlapping content), `last_meaningful_change_at`, `thesis_age_hours`
+     — deliberately measured from `first_seen_at` (when STRATUS itself first surfaced the opportunity), never
+     from the signal's own real-world `occurred_at`, which for something like an already-months-old earnings
+     report would misrepresent how long the *card itself* has actually been sitting unchanged in the user's
+     Attention Field. Two pre-existing tests (`test_live_nvda_response_has_no_internal_or_secret_fields`,
+     `test_live_market_data_response_has_no_internal_or_secret_fields`) needed their exact-field-set
+     allowlists updated to include these six real, intentional, non-secret fields — the only two real test
+     changes this block required anywhere in the pre-existing suite, both updates rather than weakenings.
+  9. **LLM-assisted delta-aware interpretation, reusing 100% of the existing Sprint 3.6.8 Block 1 provider
+     infrastructure — no new LLM subsystem.** `OpportunityContext` (`ask_context.py`, already the single
+     grounding object every Ask STRATUS call uses) gains five additive lifecycle fields, populated in
+     `build_opportunity_context()` directly from the same `PipelineResult.lifecycle_delta` that already
+     produced the card. `build_system_prompt()` (`ask_llm_provider.py`) renders a "Lifecycle" section only
+     when present, explicitly instructing the model to prefer a delta-oriented answer over restating the
+     original headline when nothing meaningful changed, and to never invent a change beyond the authoritative
+     fields given — proven directly (`test_system_prompt_instructs_delta_oriented_answer_not_restating_card`,
+     `test_system_prompt_never_fabricates_a_change_type_beyond_context`) and end-to-end through a real
+     pipeline run whose resulting `OpportunityContext` was handed to a real (fixture) provider call
+     (`test_real_pipeline_lifecycle_delta_reaches_the_llm_provider_call`). The deterministic
+     `OpportunityLifecycleTracker` remains the sole author of every lifecycle fact — the LLM only ever
+     narrates a delta it was already handed; there is no code path by which a model response could alter
+     `lifecycle_state`, `confidence_score`, or any other authoritative field. Deterministic fallback
+     (`answer_question()`) is completely untouched by this change and remains fully functional on any LLM
+     failure, exactly as Sprint 3.6.8 Block 1 established.
+- FMP capability audit (owner-required before building logic that depends on unavailable data) — classified
+  against the three endpoints this codebase actually calls today (`/earnings`, `/quote`, `/grades` on FMP's
+  `stable` API surface, confirmed by reading `logan_core/receptors/providers/fmp.py` directly) plus the
+  broader signal types Stock Opportunity Logic V2 could plausibly use:
+
+  | Signal / data type | Status | Notes |
+  |---|---|---|
+  | Earnings actual vs. consensus | **1 — available, in use** | `/earnings`, live-verified repeatedly this session |
+  | Earnings timing/recency | **1 — available, in use** | `report_timestamp`, drives `first_seen_at`/decay windows |
+  | Live/delayed quotes, price change | **1 — available, in use** | `/quote`, `change_pct` drives `STOCK_PRICE_MOVE_SIGNIFICANT` |
+  | Analyst upgrades/downgrades | **1 — available, in use** | `/grades`, action-classified, no direction inference needed |
+  | Historical prices | **5 — unnecessary right now** | V2's design only needs the current quote + the tracker's own prior snapshot, not a historical series; no current trigger/lifecycle logic reads it |
+  | Volume / average volume | **3 — unavailable from this integration today** | Not read anywhere in the current `Quote` contract (`receptors/providers/base.py`) even though FMP's quote payload likely carries it; would need a real contract/receptor extension, not just a new field read — a genuine, if small, implementation gap, not a data-availability gap |
+  | Volatility inputs | **3 — unavailable from this integration today** | Same as volume — not currently modeled anywhere in this codebase's signal types |
+  | Analyst consensus (aggregate rating) | **4 — available but not the right shape for this use** | FMP's `/grades` returns individual rating *actions* (a specific firm's upgrade/downgrade), which is exactly what `STOCK_ANALYST_UPGRADE`/`DOWNGRADE` already uses; an aggregate consensus figure is a different, unused endpoint |
+  | Estimate revisions | **3 — unavailable from this integration today** | No endpoint call exists for this; would be new provider surface |
+  | Price targets | **3 — unavailable from this integration today** | Same |
+  | Sector/industry classification | **5 — unnecessary right now** | No current trigger/lifecycle logic is sector-relative |
+  | Sector/index relative performance | **5 — unnecessary right now** | Same |
+  | Company news/catalysts | **3 — unavailable from this integration today** | No news endpoint integrated; the closest existing concept, `TRIGGER_REGISTRY_GLOBAL.md`'s macro/news triggers, remains entirely unimplemented (pre-existing gap, not new) |
+  | Market/macro context | **5 — unnecessary right now** | Out of Stock Opportunity Logic V2's actual scope |
+  | Insider/institutional activity | **3 — unavailable from this integration today** | No endpoint integrated |
+  | Options activity | **3 — unavailable from this integration today** | No endpoint integrated; ADR-045 already rejected `STOCK_OPTIONS_FLOW_SURGE` for lack of provider data, unchanged finding |
+  | Short interest | **3 — unavailable from this integration today** | No endpoint integrated |
+
+  **Conclusion: FMP's free plan, exactly as currently integrated, is sufficient for everything Stock
+  Opportunity Logic V2 actually needed to build this block.** Every signal this design depends on
+  (confidence_score, trigger_codes, personal_relevance) is already fully served by the three existing
+  endpoints — lifecycle tracking is a pure consumer of already-computed pipeline outputs and makes **zero**
+  additional FMP calls of any kind, preserving ADR-062's FMP-cache work completely intact (confirmed: no
+  change to `logan_core/receptors/providers/fmp.py` or the cache TTLs in this block). Volume/volatility are
+  the one *near-term-plausible* gap (data likely exists in FMP's existing quote response, just not yet read
+  into this codebase's contracts) — worth a small, contained follow-up if a future block wants
+  volatility-aware lifecycle windows, but not required for anything built here. **No new provider or paid
+  plan is needed for Stock Opportunity Logic V2 as scoped.**
+- Reference implementation pattern for future domains (Sports/Odds, Prediction Markets — not implemented
+  this block, per explicit instruction): `real event → qualification (trigger_detection) → opportunity
+  (OpportunityEngine) → lifecycle (OpportunityLifecycleTracker, entity-keyed, signal-specific decay windows)
+  → meaningful delta (LifecycleDelta) → user relevance (personal-relevance-crossing detection, same tracker)
+  → attention transition (PrioritizationEngine, now genuinely fed by changed_since_view) → notification
+  decision (is_notification_worthy, a strict subset of is_meaningful) → LLM interpretation (delta-aware
+  OpportunityContext, additive, deterministic-authoritative) → expiration (signal-specific windows, never one
+  blanket timeout)`. Every piece of this proven-on-stocks pattern is domain-agnostic by construction — the
+  tracker itself has no stocks-specific logic beyond the `_MONITORING_WINDOW_HOURS`/etc. dictionaries, which
+  gracefully default for any trigger_code they don't recognize. A future domain needs only its own
+  trigger_detection module and its own reasoned decay-window table; the lifecycle/delta/notification/LLM
+  machinery is already generic and ready.
+- Consequences: new `logan_core/contracts/lifecycle.py`, `logan_core/opportunity_lifecycle/` package,
+  `backend/app/lifecycle_store.py`; `logan_core/orchestrator/pipeline.py` (opt-in `lifecycle_tracker`
+  dependency + wiring), `backend/app/config.py` (`lifecycle_store_db_path()`), `backend/app/logan_feed.py`
+  (construction/persistence/notification-eligibility wiring, six new `FeedItem` fields),
+  `backend/app/ask_context.py`/`ask_llm_provider.py` (delta-aware grounding, additive). New tests:
+  `test_opportunity_lifecycle.py` (20 — tracker unit coverage across every lifecycle transition/threshold),
+  `test_pipeline_lifecycle.py` (5 — real Orchestrator wiring, the `changed_since_view` fix proven end-to-end),
+  `test_lifecycle_integration.py` (7 — backend wiring: notification suppression, API contract exposure,
+  restart persistence, the converse no-persistence case), `test_ask_lifecycle_grounding.py` (5 — LLM
+  grounding contract, real pipeline delta reaching a real provider call). 2 pre-existing tests updated
+  (exact-field-set allowlists), 0 pre-existing tests weakened. `backend`/`logan_core` combined 629 → 666
+  (+37: 20 + 5 + 7 + 5 across the four new test files above). mypy/ruff/black clean throughout,
+  including two real fixes caught by mypy during this block (a lambda-closure `Optional` narrowing issue in
+  `orchestrator/pipeline.py`, matching this file's own established `lambda x=y: ...` capture-by-value
+  convention once identified) and a bracket-mismatch syntax error introduced and immediately caught while
+  editing `ask_llm_provider.py` (fixed before any commit).
+- Deferred / flagged for the owner:
+  1. **Volume/volatility-aware lifecycle windows** — the one near-term-plausible FMP capability gap found by
+     the audit; not required for anything built this block, worth a small contained follow-up if a future
+     block wants it.
+  2. **Per-user personal-relevance history remains process-memory-only** — a deliberate, bounded, documented
+     scope choice (matching `AttentionState`'s own existing precedent), not an oversight; self-heals within
+     one poll after any restart.
+  3. **Sports/Odds/Prediction Markets remain entirely unimplemented** — the reference pattern above is
+     documented and proven on stocks specifically per the explicit instruction not to build another domain
+     this block.
+  4. **A live, real-market demonstration of every lifecycle transition (cooling/stale/expired specifically)
+     was not attempted** — these require real elapsed time on the order of days to weeks against real market
+     data to observe naturally; deterministic tests (with an injected clock) are the correct, and only
+     practical, way to verify this logic, matching the owner's own explicit instruction ("Use deterministic
+     tests for scenarios that cannot be guaranteed in live markets").

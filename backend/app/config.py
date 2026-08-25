@@ -201,6 +201,21 @@ def notification_store_db_path() -> Path:
     return memory_store_db_path().parent / "notifications.db"
 
 
+def lifecycle_store_db_path() -> Path:
+    """Stock Opportunity Logic V2: the durable SQLite file backing
+    OpportunityLifecycleTracker's per-entity_id snapshots (see
+    lifecycle_store.py) when memory_persistence_enabled() is true --
+    mirrors notification_store_db_path()'s identical pattern: a separate
+    file from memory_store_db_path(), same durable directory, own
+    independent schema. Defaults to a sibling `lifecycle_state.db`;
+    overridable via STRATUS_LIFECYCLE_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_LIFECYCLE_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "lifecycle_state.db"
+
+
 def cors_allowed_origins() -> list[str]:
     """Sprint 3.6.9 Block 1: environment-configurable CORS policy, replacing
     the previous hardcoded `allow_origins=["*"]`. Reads

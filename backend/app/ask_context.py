@@ -64,6 +64,22 @@ class OpportunityContext(BaseModel):
     connection_basis: str
     is_new_for_user: bool
 
+    # Stock Opportunity Logic V2 (see docs/DECISIONS.md's Sprint 3.6.9 ADR).
+    # All None/False when lifecycle tracking isn't active for this call
+    # (demo mode, no live tickers configured) -- additive, never required.
+    # This is what lets a grounded LLM answer describe a *delta* ("no
+    # material change since the earnings beat -- still monitoring") instead
+    # of restating the original card every time, per the ADR's explicit
+    # repeated-card product fix; build_system_prompt (ask_llm_provider.py)
+    # is the only place these are ever turned into model-facing text, and
+    # only ever as authoritative, already-computed facts -- the model never
+    # decides any of these values itself.
+    lifecycle_state: Optional[str] = None
+    meaningful_change_type: Optional[str] = None
+    lifecycle_reason: Optional[str] = None
+    thesis_age_hours: Optional[float] = None
+    is_meaningful_update: bool = False
+
 
 def build_opportunity_context(
     entity_id: str,
@@ -71,6 +87,7 @@ def build_opportunity_context(
     result: "PipelineResult",
     is_new_for_user: bool,
 ) -> OpportunityContext:
+    delta = result.lifecycle_delta
     trigger_codes = sorted({t.trigger_code for t in result.event.trigger_events})
 
     convergence_sources: list[str] = []
@@ -107,6 +124,11 @@ def build_opportunity_context(
         personal_relevance=result.recommendation.dimensions.personal_relevance,
         connection_basis=connection_basis,
         is_new_for_user=is_new_for_user,
+        lifecycle_state=delta.new_state if delta else None,
+        meaningful_change_type=delta.change_type if delta else None,
+        lifecycle_reason=delta.reason if delta else None,
+        thesis_age_hours=delta.thesis_age_hours if delta else None,
+        is_meaningful_update=delta.is_meaningful if delta else False,
     )
 
 
