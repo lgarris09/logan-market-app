@@ -23,6 +23,7 @@ from .lifecycle import (
     LifecycleSnapshot,
     LifecycleState,
     MeaningfulChangeType,
+    OpportunityRevision,
 )
 from .memory import MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
@@ -112,4 +113,5 @@ __all__ = [
     "MeaningfulChangeType",
     "LifecycleSnapshot",
     "LifecycleDelta",
+    "OpportunityRevision",
 ]

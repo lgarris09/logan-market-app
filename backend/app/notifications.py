@@ -37,7 +37,7 @@ from uuid import UUID
 import httpx
 
 from .config import memory_persistence_enabled, notification_store_db_path
-from .logan_feed import FeedItem, get_alert_eligible_items
+from .logan_feed import FeedItem, get_alert_eligible_items, mark_user_notified
 from .models import RegisterPushTokenRequest, RegisterPushTokenResponse
 from .notification_store import NotificationStore
 
@@ -305,6 +305,17 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
                 store = _get_store()
                 if store is not None:
                     store.save_dispatched(user_id, dispatched_item_ids)
+                # Stock Opportunity Logic V2.1 (User Sync Gap): the only
+                # place last_notified_revision ever advances -- exactly here,
+                # immediately after a real successful Expo dispatch, never at
+                # "alert eligible" computation time (see
+                # get_alert_eligible_items -- eligibility alone is not a
+                # send). A no-op per item when opportunity_revision is None
+                # (lifecycle/revision tracking not active for that entity).
+                for item in eligible:
+                    mark_user_notified(
+                        user_id, item.entity_id, item.opportunity_revision
+                    )
                 total_dispatched += len(eligible)
             except Exception as exc:  # noqa: BLE001 -- see comment above
                 print(

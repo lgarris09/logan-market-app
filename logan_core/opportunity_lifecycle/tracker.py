@@ -179,6 +179,7 @@ class OpportunityLifecycleTracker:
                 last_meaningful_change_at=now,
                 last_notification_worthy_at=now,
                 last_evaluated_at=now,
+                revision=1,
             )
             return LifecycleDelta(
                 entity_id=entity_id,
@@ -196,6 +197,8 @@ class OpportunityLifecycleTracker:
                 evaluated_at=now,
                 last_meaningful_change_at=now,
                 thesis_age_hours=0.0,
+                previous_revision=1,
+                new_revision=1,
             )
 
         confidence_delta = confidence_score - prior.confidence_score
@@ -346,6 +349,30 @@ class OpportunityLifecycleTracker:
             now if is_meaningful else prior.last_meaningful_change_at
         )
 
+        # Stock Opportunity Logic V2.1 (User Sync Gap): the revision counter
+        # is the *global*, objective/shared meaningful-change history --
+        # deliberately narrower than the card-update `is_meaningful` flag
+        # above, which also (correctly, for V2's own scope) folds in this
+        # call's personal_relevance signal. A revision must never advance
+        # from one user's personal relevance crossing alone: two users must
+        # see the identical global revision number for the same real-world
+        # opportunity, and personalization must only change how much a given
+        # revision matters to them, never manufacture a new one (see the
+        # V2.1 ADR's explicit "keep global vs personal state separate"
+        # requirement). `change_type` is only ever "personal_relevance_*"
+        # when this poll's meaningful flag was driven purely by personal
+        # relevance (the elif chain above only reaches that branch when
+        # world_meaningful and every aging threshold are both false) -- every
+        # other meaningful change_type (new_signal_appeared,
+        # confidence_increased/decreased, convergence_formed, reactivated,
+        # aged_to_cooling/stale/expired) is a real, objective world-fact
+        # change and does advance the counter.
+        is_global_meaningful = is_meaningful and change_type not in (
+            "personal_relevance_increased",
+            "personal_relevance_decreased",
+        )
+        new_revision = prior.revision + 1 if is_global_meaningful else prior.revision
+
         self._snapshots[entity_id] = LifecycleSnapshot(
             entity_id=entity_id,
             lifecycle_state=new_state,
@@ -357,6 +384,7 @@ class OpportunityLifecycleTracker:
                 now if is_notification_worthy else prior.last_notification_worthy_at
             ),
             last_evaluated_at=now,
+            revision=new_revision,
         )
 
         return LifecycleDelta(
@@ -375,4 +403,6 @@ class OpportunityLifecycleTracker:
             evaluated_at=now,
             last_meaningful_change_at=last_meaningful_change_at,
             thesis_age_hours=thesis_age_hours,
+            previous_revision=prior.revision,
+            new_revision=new_revision,
         )

@@ -186,6 +186,27 @@ def build_system_prompt(context: OpportunityContext) -> str:
                 "plainly.",
             ]
         )
+    # Stock Opportunity Logic V2.1 (User Sync Gap, see docs/DECISIONS.md):
+    # grounds the model in what THIS user specifically already knows, so a
+    # "what changed since I last looked?" question gets an answer scoped to
+    # this user's own knowledge state, not just the objective delta above.
+    # Deterministically computed by compute_user_sync_delta() -- the model
+    # never decides sync status itself, only narrates it.
+    if context.user_sync_status is not None:
+        lines.extend(
+            [
+                f"User sync status: {context.user_sync_status}",
+                f"Sync summary: {context.sync_summary}",
+                "",
+                "If the user asks what changed 'since I last looked' or similar, ground",
+                "your answer in the sync summary above, not just the objective lifecycle",
+                "state. If User sync status is UP_TO_DATE, say plainly that nothing has",
+                "changed since they last saw it -- do not manufacture novelty. If it is",
+                "NOTIFIED_BUT_UNSEEN, you may mention they were notified but had not yet",
+                "opened it. Never invent a specific revision count or change beyond what",
+                "is stated here.",
+            ]
+        )
     lines.extend(
         [
             "",

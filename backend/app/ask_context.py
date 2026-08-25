@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from logan_core.contracts import Domain  # noqa: E402
 from logan_core.convergence import STOCK_CONVERGENCE_MULTI_SOURCE  # noqa: E402
+from logan_core.opportunity_lifecycle import UserSyncDelta  # noqa: E402
 from logan_core.orchestrator.pipeline import PipelineResult  # noqa: E402
 
 
@@ -80,12 +81,46 @@ class OpportunityContext(BaseModel):
     thesis_age_hours: Optional[float] = None
     is_meaningful_update: bool = False
 
+    # Stock Opportunity Logic V2.1 (User Sync Gap, see docs/DECISIONS.md).
+    # None/False whenever revision tracking isn't active for this call --
+    # additive, same discipline as the V2 fields above. This is what lets a
+    # grounded LLM answer distinguish "current opportunity state" from "what
+    # this specific user already knows," instead of only ever describing the
+    # objective delta the way the V2 fields alone allow.
+    current_revision: Optional[int] = None
+    last_seen_revision: Optional[int] = None
+    user_sync_status: Optional[str] = None
+    # A short, deterministic, plain-language summary of the sync state --
+    # computed here (never by the LLM) so build_system_prompt can hand the
+    # model one authoritative sentence instead of making it infer meaning
+    # from raw revision integers.
+    sync_summary: Optional[str] = None
+
+
+def _sync_summary(delta: "UserSyncDelta") -> str:
+    if delta.status == "UP_TO_DATE":
+        return "This user has already seen the latest update -- nothing is new since they last looked."
+    if delta.status == "NEW_TO_USER":
+        return "This user has never seen this opportunity before -- it is new to them."
+    if delta.status == "UPDATED_SINCE_SEEN":
+        return (
+            f"This user last saw revision {delta.last_seen_revision}; the "
+            f"opportunity has since moved to revision {delta.current_revision} "
+            "-- something meaningful changed since they last looked."
+        )
+    # NOTIFIED_BUT_UNSEEN
+    return (
+        f"STRATUS notified this user about revision {delta.last_notified_revision}, "
+        "but they have not opened or seen it yet."
+    )
+
 
 def build_opportunity_context(
     entity_id: str,
     display_name: str,
     result: "PipelineResult",
     is_new_for_user: bool,
+    sync_delta: Optional["UserSyncDelta"] = None,
 ) -> OpportunityContext:
     delta = result.lifecycle_delta
     trigger_codes = sorted({t.trigger_code for t in result.event.trigger_events})
@@ -129,6 +164,10 @@ def build_opportunity_context(
         lifecycle_reason=delta.reason if delta else None,
         thesis_age_hours=delta.thesis_age_hours if delta else None,
         is_meaningful_update=delta.is_meaningful if delta else False,
+        current_revision=sync_delta.current_revision if sync_delta else None,
+        last_seen_revision=sync_delta.last_seen_revision if sync_delta else None,
+        user_sync_status=sync_delta.status if sync_delta else None,
+        sync_summary=_sync_summary(sync_delta) if sync_delta else None,
     )
 
 

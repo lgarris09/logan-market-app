@@ -216,6 +216,35 @@ def lifecycle_store_db_path() -> Path:
     return memory_store_db_path().parent / "lifecycle_state.db"
 
 
+def revision_store_db_path() -> Path:
+    """Stock Opportunity Logic V2.1 (User Sync Gap): the durable SQLite file
+    backing each entity's meaningful-revision history (see
+    revision_store.py) when memory_persistence_enabled() is true -- mirrors
+    lifecycle_store_db_path()'s identical pattern: a separate file, same
+    durable directory, own independent schema. Defaults to a sibling
+    `opportunity_revisions.db`; overridable via STRATUS_REVISIONS_DB_PATH
+    for test isolation.
+    """
+    override = os.environ.get("STRATUS_REVISIONS_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "opportunity_revisions.db"
+
+
+def user_knowledge_store_db_path() -> Path:
+    """Stock Opportunity Logic V2.1 (User Sync Gap): the durable SQLite file
+    backing per-`(user_id, entity_id)` knowledge pointers (see
+    user_knowledge_store.py) when memory_persistence_enabled() is true --
+    same pattern as the other Sprint 3.6.9+ stores. Defaults to a sibling
+    `user_opportunity_knowledge.db`; overridable via
+    STRATUS_USER_KNOWLEDGE_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_USER_KNOWLEDGE_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "user_opportunity_knowledge.db"
+
+
 def cors_allowed_origins() -> list[str]:
     """Sprint 3.6.9 Block 1: environment-configurable CORS policy, replacing
     the previous hardcoded `allow_origins=["*"]`. Reads

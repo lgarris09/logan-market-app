@@ -176,3 +176,105 @@ def test_real_pipeline_lifecycle_delta_reaches_the_llm_provider_call(monkeypatch
     assert context_2 is not None
     assert context_2.meaningful_change_type == "none"
     assert context_2.is_meaningful_update is False
+
+
+# --- Stock Opportunity Logic V2.1 (User Sync Gap) -- sync-aware grounding --
+
+
+def test_system_prompt_omits_sync_section_when_not_tracked():
+    context = _context()  # user_sync_status defaults to None
+    prompt = build_system_prompt(context)
+    assert "User sync status:" not in prompt
+
+
+def test_system_prompt_includes_sync_section_and_grounds_up_to_date():
+    context = _context(
+        current_revision=2,
+        last_seen_revision=2,
+        user_sync_status="UP_TO_DATE",
+        sync_summary="This user has already seen the latest update -- nothing is new since they last looked.",
+    )
+    prompt = build_system_prompt(context)
+    assert "User sync status: UP_TO_DATE" in prompt
+    assert "already seen the latest update" in prompt
+    assert "do not manufacture novelty" in prompt
+
+
+def test_system_prompt_grounds_notified_but_unseen():
+    context = _context(
+        current_revision=1,
+        user_sync_status="NOTIFIED_BUT_UNSEEN",
+        sync_summary=(
+            "STRATUS notified this user about revision 1, but they have not "
+            "opened or seen it yet."
+        ),
+    )
+    prompt = build_system_prompt(context)
+    assert "NOTIFIED_BUT_UNSEEN" in prompt
+    assert "notified this user about revision 1" in prompt
+
+
+def test_real_pipeline_sync_status_reaches_the_llm_provider_call(monkeypatch):
+    """Full vertical proof: a real UserSyncDelta computed from actual
+    knowledge pointers ends up on the OpportunityContext the LLM provider
+    receives -- proving "what changed since I last looked" can be answered
+    from a real, authoritative field, not just the objective V2 delta."""
+    monkeypatch.setenv("STRATUS_LIVE_STOCK_TICKERS", "NVDA")
+    monkeypatch.delenv("STRATUS_LIVE_NVDA_EARNINGS", raising=False)
+    monkeypatch.delenv("STRATUS_RUNTIME_MODE", raising=False)
+    earnings_entries = {
+        "NVDA": [
+            {
+                "symbol": "NVDA",
+                "date": "2026-05-20",
+                "epsActual": 1.87,
+                "epsEstimated": 1.76,
+            }
+        ]
+    }
+    transport = httpx.MockTransport(_entries_for(earnings_entries))
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpEarningsProvider",
+        lambda *a, **kw: FmpEarningsProvider(
+            api_key="test-key-not-real", client=client
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpMarketDataProvider",
+        lambda *a, **kw: FmpMarketDataProvider(
+            api_key="test-key-not-real",
+            client=httpx.Client(transport=httpx.MockTransport(_entries_for({}))),
+        ),
+    )
+    reset_pipeline_state()
+
+    from backend.app.logan_feed import get_opportunity_context, record_interaction
+
+    first = run_demo_feed(LOCAL_FOUNDER_USER_ID)
+    nvda_event_id = next(i.event_id for i in first.items if i.entity_id == "NVDA")
+    context = get_opportunity_context(LOCAL_FOUNDER_USER_ID, nvda_event_id)
+    assert context is not None
+    assert context.user_sync_status == "NEW_TO_USER"  # never seen yet
+
+    record_interaction(
+        user_id=LOCAL_FOUNDER_USER_ID,
+        event_id=nvda_event_id,
+        entity_id="NVDA",
+        domain="stocks",
+        interaction_type="view",
+        duration_ms=9000,
+    )
+    second = run_demo_feed(LOCAL_FOUNDER_USER_ID)
+    nvda_event_id_2 = next(i.event_id for i in second.items if i.entity_id == "NVDA")
+    context_2 = get_opportunity_context(LOCAL_FOUNDER_USER_ID, nvda_event_id_2)
+    assert context_2 is not None
+    assert context_2.user_sync_status == "UP_TO_DATE"
+
+    provider = FixtureAskLlmProvider(
+        answer="Nothing has changed since you last looked."
+    )
+    result = provider.generate(context_2, "What changed since yesterday?")
+    assert result.text == "Nothing has changed since you last looked."
+    passed_context = provider.calls[0][0]
+    assert passed_context.user_sync_status == "UP_TO_DATE"

@@ -104,8 +104,14 @@ def test_enabled_mode_dispatch_dedup_survives_restart_no_duplicate_push(
 
     class _FakeItem:
         event_id = fake_event_id
+        entity_id = "NVDA"
         display_name = "NVDA"
         ticker = "NVDA"
+        # Stock Opportunity Logic V2.1 (User Sync Gap): None here means
+        # dispatch_eligible_notifications' mark_user_notified() call is a
+        # no-op for this fake item -- lifecycle/revision tracking isn't
+        # under test in this dedup-focused test.
+        opportunity_revision = None
 
         class delivered_item:  # noqa: N801 -- mirrors the real FeedItem shape
             headline = "NVDA: earnings beat"

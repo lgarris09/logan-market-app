@@ -3013,3 +3013,125 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      data to observe naturally; deterministic tests (with an injected clock) are the correct, and only
      practical, way to verify this logic, matching the owner's own explicit instruction ("Use deterministic
      tests for scenarios that cannot be guaranteed in live markets").
+- **Addendum, 2026-08-24 (recovery pass)**: the session that produced this ADR was cut off before it could
+  record one more fact — it had already deployed this block to the hosted `stratus-api` Fly app (release
+  `v7`, ~2026-08-24T20:09 ET, immediately after commit `146dcbe`). A recovery pass the same evening confirmed
+  via a live, read-only `curl https://stratus-api.fly.dev/v1/opportunities` that the hosted deployment was
+  already returning all six new fields (`lifecycle_state`, `is_updated`, `meaningful_change_type`,
+  `lifecycle_reason`, `last_meaningful_change_at`, `thesis_age_hours`) on real NVDA/AAPL cards, correctly
+  showing `"monitoring"` rather than resetting to `"new"` on repeated polls. This addendum exists solely to
+  make the written record match production reality — no behavior changed, nothing was redeployed as part of
+  recording this.
+
+---
+
+## ADR-067: Stock Opportunity Logic V2.1 — User Sync Gap (per-user knowledge state)
+
+- Date: 2026-08-24
+- Status: Accepted
+- Context: ADR-066 (V2) answered "has the opportunity meaningfully changed since STRATUS last evaluated it?"
+  — an objective, entity-keyed question, identical for every user. It deliberately left a second, genuinely
+  different question unanswered: "has the opportunity meaningfully changed since *this specific user* last
+  knew about it?" Without an answer, STRATUS could not distinguish nothing-changed from
+  changed-but-already-seen from changed-and-still-unseen for a given user — the next-highest-leverage gap
+  once V2 closed the "same card forever" problem.
+- Decision (by area):
+  1. **Global meaningful revisions, not every poll.** `LifecycleSnapshot` (and `LifecycleDelta`) gained a
+     `revision` counter, bumped by `OpportunityLifecycleTracker.observe()` exactly when this poll produced an
+     *objective* meaningful change (`is_global_meaningful`) — a new, deliberately narrower gate than V2's own
+     `is_meaningful`, which also (correctly, for V2's own card-update scope) folds in personal-relevance
+     crossing. A personal-relevance-only change updates the card (`is_meaningful=True`) but must never
+     manufacture a new *global* revision — two users must see the identical revision number for the same
+     real-world opportunity; personalization changes how much a revision matters to a user, never whether one
+     occurred. `change_type in ("personal_relevance_increased", "personal_relevance_decreased")` is the exact,
+     already-existing signal used to exclude that case — no new classification logic was needed. A durable,
+     append-only `OpportunityRevision` row (`logan_core/contracts/lifecycle.py`, stored via new
+     `backend/app/revision_store.py`, mirroring `lifecycle_store.py`'s SQLite pattern) is written only when
+     `new_revision != previous_revision` — the common "none" or personal-only poll writes nothing. Typed/
+     queryable core columns (`lifecycle_state`, `confidence_score`, `change_type`, `reason`), not an opaque
+     blob; `trigger_codes` is the one JSON-serialized list field, matching `LifecycleSnapshot`'s own existing
+     precedent. `entity_id` remains the stable opportunity identity across every revision — revision is a
+     version number on that identity, not a new identity scheme.
+  2. **Per-user knowledge state, compact and UPSERT-only.** New `UserOpportunityKnowledge`
+     (`logan_core/opportunity_lifecycle/sync.py`), keyed `(user_id, entity_id)`, three optional high-water
+     marks — `last_seen_revision`, `last_notified_revision`, `last_opened_revision` — updated in place via a
+     single `_advance_user_knowledge()` upsert path in `backend/app/logan_feed.py` (never one row per
+     interaction). Pointers only ever move forward (a `_max_opt` None-safe max). Durable via new
+     `backend/app/user_knowledge_store.py`, same SQLite/`STRATUS_PERSIST_MEMORY`-gated pattern as every other
+     Sprint 3.6.9+ store.
+  3. **Exact seen/notified/opened semantics, chosen from what the app can already honestly tell apart.**
+     `last_notified_revision` advances in exactly one place: `notifications.py`'s
+     `dispatch_eligible_notifications()`, immediately *after* a real successful Expo send — never at "alert
+     eligible" computation time (`get_alert_eligible_items()` alone is not a send). `last_seen_revision`
+     advances in exactly one place: `record_interaction()`, for *any* real `interaction_type` reaching it,
+     including `"impression"` — reusing Sprint 3.6.7 Block 3's own existing distinction
+     (`useImpressionTracking.ts`'s docstring is explicit that serialization into an API response alone is NOT
+     an impression; only the card becoming the field's focused vessel is) rather than inventing a new
+     exposure signal. `last_opened_revision` advances only on `"view"` (the existing real card-disclosure/
+     dwell-tracking interaction) — a strictly stronger signal, tracked separately per the explicit product
+     requirement. Critically, **`_run_feed_pipeline()`/the GET `/v1/opportunities` path never advances any
+     pointer** — computing `UserSyncDelta` there is a pure read, enforcing "fetching a feed does not imply
+     seen" structurally, not by convention.
+  4. **`compute_user_sync_delta()` — one pure, deterministic function**, not a class with state
+     (`logan_core/opportunity_lifecycle/sync.py`). Four statuses: `NEW_TO_USER` (never seen, never notified),
+     `UPDATED_SINCE_SEEN` (seen an earlier revision; current one is newer; no unseen notification pointing at
+     it), `NOTIFIED_BUT_UNSEEN` (a notified revision this user's seen-pointer hasn't caught up to — takes
+     priority over the other three: "you have an unopened notification" is the more actionable, specific
+     fact), `UP_TO_DATE` (seen-pointer matches the current revision and no unseen notification). Never alters
+     objective lifecycle, confidence, or market truth — purely a comparison of two already-durable pointers,
+     computed fresh on every read.
+  5. **Feed/API contract, additive.** Two new `FeedItem` fields, both `None` unless lifecycle/revision
+     tracking is active: `opportunity_revision` (the objective, shared current revision number) and
+     `user_sync_status` (this user's own `SyncStatus`). Deliberately not a broader copy-generation rewrite of
+     `DeliveredItem`'s narrative text — per the owner's explicit "avoid broad visual redesign, focus on the
+     intelligence/API contract and minimal presentation support" instruction, exposing the field is the proof
+     of behavior; personalized card copy is left to a future presentation pass.
+  6. **Ask STRATUS extended, not replaced.** `OpportunityContext` gained `current_revision`,
+     `last_seen_revision`, `user_sync_status`, and a deterministic `sync_summary` sentence (computed in
+     `ask_context.py`, never by the model). `build_system_prompt()` renders a "Sync" section only when
+     tracked, instructing the model to ground a "what changed since I last looked" question in this summary
+     specifically — including explicitly saying nothing changed when `UP_TO_DATE`, never manufacturing
+     novelty. The deterministic sync computation remains the sole author of every fact; the LLM only narrates
+     it, exactly matching V2's own LLM-role discipline.
+  7. **Gating**: identical two-condition gate as V2's own lifecycle store — revision/user-knowledge stores
+     are constructed only when `live_stock_tickers()` is configured *and* `memory_persistence_enabled()` is
+     true; the in-memory tracker-level `revision` counter and process-lifetime knowledge cache work regardless
+     of persistence (matching every other in-memory-only capability in this backend). Demo mode (no live
+     tickers) is byte-for-byte unaffected — both new `FeedItem` fields stay `None`.
+  8. **Migration**: `lifecycle_store.py`'s `lifecycle_snapshots` table gained an additive `revision INTEGER
+     NOT NULL DEFAULT 1` column via a guarded `ALTER TABLE` (checked against `PRAGMA table_info` first, since
+     `ADD COLUMN` errors if already present) — safe against the already-live hosted Fly volume's pre-V2.1
+     database file (see ADR-066's addendum above): the column simply appears with every existing row starting
+     at revision 1 the first time the updated binary runs against it, no manual migration step required.
+- Consequences: new `logan_core/opportunity_lifecycle/sync.py`, `backend/app/revision_store.py`,
+  `backend/app/user_knowledge_store.py`; `logan_core/contracts/lifecycle.py` (`revision` fields,
+  `OpportunityRevision`), `logan_core/opportunity_lifecycle/tracker.py` (`is_global_meaningful` revision
+  gate), `backend/app/lifecycle_store.py` (migration), `backend/app/config.py` (two new path helpers),
+  `backend/app/logan_feed.py` (stores/cache wiring, `_advance_user_knowledge`/`mark_user_notified`, two new
+  `FeedItem` fields, seen/opened advancement in `record_interaction()`), `backend/app/notifications.py`
+  (notified-pointer advancement on real dispatch), `backend/app/ask_context.py`/`ask_llm_provider.py`
+  (sync-aware grounding). New tests: `logan_core/tests/test_user_sync.py` (12 — pure tracker-revision and
+  `compute_user_sync_delta` coverage, including the global-vs-personal separation and the
+  same-revision-different-users acceptance scenario), `backend/tests/test_user_sync_integration.py` (8 —
+  real interaction/dispatch/restart wiring), plus 4 new sync-grounding tests appended to
+  `test_ask_lifecycle_grounding.py`. 2 pre-existing tests updated (exact-field-set allowlists, extended for
+  the two new fields) and one pre-existing notification-dedup test's fake item fixture extended
+  (`entity_id`/`opportunity_revision`) — both real, intentional updates, not weakenings.
+  `backend`/`logan_core` combined 666 → 690 (+24). mypy/ruff/black clean throughout.
+- Acceptance: STRATUS can now reliably answer "is this meaningful change new to this specific user" — proven
+  end-to-end (real interaction recording, real Expo dispatch, real simulated restart) via
+  `test_user_sync_integration.py`, not just at the pure-function level.
+- Deferred / flagged for the owner:
+  1. **Personalized card/notification copy using sync status** (e.g. rendering "No material change since you
+     last looked" client-side) was not built — the field is exposed and proven; the presentation layer that
+     would consume it for user-facing copy is a follow-up, per the explicit "minimal presentation support"
+     scope for this block.
+  2. **Ask STRATUS's "what changed since you last looked" answer is bounded to the two boundary facts**
+     (last-seen revision number, current state/reason) rather than a full per-revision diff across every
+     revision the user missed — a deliberate scope choice to avoid an unrequested history-diff framework;
+     `OpportunityRevisionStore.history_for_entity()` exists and could back a richer multi-revision answer
+     later if wanted.
+  3. **`last_opened_revision` has no dedicated read API yet** — durable and tracked correctly, but nothing
+     currently distinguishes "opened" from "seen" in the feed/Ask STRATUS surface; both currently drive the
+     same `UP_TO_DATE`/`UPDATED_SINCE_SEEN` decision via `last_seen_revision`. Flagged as available headroom,
+     not a gap in what was asked for this block.

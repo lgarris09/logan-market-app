@@ -64,13 +64,31 @@ class LifecycleStore:
             "  last_evaluated_at TEXT NOT NULL"
             ")"
         )
+        # Stock Opportunity Logic V2.1 (User Sync Gap): additive column on an
+        # existing table -- a plain CREATE TABLE would silently do nothing
+        # against a pre-V2.1 database file already on disk (e.g. the hosted
+        # Fly volume's already-live v7 deployment), leaving `revision`
+        # missing and every read below failing. ALTER TABLE ADD COLUMN is
+        # itself idempotent-unsafe (errors if the column already exists), so
+        # this is guarded rather than run unconditionally every startup.
+        existing_columns = {
+            row["name"]
+            for row in self._conn.execute(
+                "PRAGMA table_info(lifecycle_snapshots)"
+            ).fetchall()
+        }
+        if "revision" not in existing_columns:
+            self._conn.execute(
+                "ALTER TABLE lifecycle_snapshots ADD COLUMN revision INTEGER "
+                "NOT NULL DEFAULT 1"
+            )
         self._conn.commit()
 
     def load_all(self) -> list[LifecycleSnapshot]:
         rows = self._conn.execute(
             "SELECT entity_id, lifecycle_state, confidence_score, trigger_codes, "
             "first_seen_at, last_meaningful_change_at, last_notification_worthy_at, "
-            "last_evaluated_at FROM lifecycle_snapshots"
+            "last_evaluated_at, revision FROM lifecycle_snapshots"
         ).fetchall()
         return [
             LifecycleSnapshot(
@@ -82,6 +100,7 @@ class LifecycleStore:
                 last_meaningful_change_at=row["last_meaningful_change_at"],
                 last_notification_worthy_at=row["last_notification_worthy_at"],
                 last_evaluated_at=row["last_evaluated_at"],
+                revision=row["revision"],
             )
             for row in rows
         ]
@@ -91,14 +110,15 @@ class LifecycleStore:
             "INSERT INTO lifecycle_snapshots "
             "(entity_id, lifecycle_state, confidence_score, trigger_codes, "
             "first_seen_at, last_meaningful_change_at, last_notification_worthy_at, "
-            "last_evaluated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "last_evaluated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(entity_id) DO UPDATE SET "
             "lifecycle_state=excluded.lifecycle_state, "
             "confidence_score=excluded.confidence_score, "
             "trigger_codes=excluded.trigger_codes, "
             "last_meaningful_change_at=excluded.last_meaningful_change_at, "
             "last_notification_worthy_at=excluded.last_notification_worthy_at, "
-            "last_evaluated_at=excluded.last_evaluated_at",
+            "last_evaluated_at=excluded.last_evaluated_at, "
+            "revision=excluded.revision",
             (
                 snapshot.entity_id,
                 snapshot.lifecycle_state,
@@ -112,6 +132,7 @@ class LifecycleStore:
                     else None
                 ),
                 snapshot.last_evaluated_at.isoformat(),
+                snapshot.revision,
             ),
         )
         self._conn.commit()

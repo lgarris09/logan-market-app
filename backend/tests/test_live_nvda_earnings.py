@@ -293,8 +293,9 @@ def test_live_nvda_response_has_no_internal_or_secret_fields(monkeypatch):
     # Field set is exactly the current, intentional FeedItem contract -- no
     # accidental/internal/secret fields. Sprint 3.6.9 (Stock Opportunity
     # Logic V2) added the six lifecycle_* fields below -- see
-    # docs/DECISIONS.md's Sprint 3.6.9 ADR; these are here deliberately, not
-    # a leak this test needs to keep guarding against.
+    # docs/DECISIONS.md's Sprint 3.6.9 ADR; V2.1 (User Sync Gap) added
+    # opportunity_revision/user_sync_status -- these are here deliberately,
+    # not a leak this test needs to keep guarding against.
     nvda_payload = _nvda_item(payload)
     assert set(nvda_payload.keys()) == {
         "event_id",
@@ -316,6 +317,8 @@ def test_live_nvda_response_has_no_internal_or_secret_fields(monkeypatch):
         "lifecycle_reason",
         "last_meaningful_change_at",
         "thesis_age_hours",
+        "opportunity_revision",
+        "user_sync_status",
     }
 
 

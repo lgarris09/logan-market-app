@@ -23,12 +23,17 @@ from logan_core.contracts import (  # noqa: E402
     Holding,
     InteractionType,
     Interest,
+    OpportunityRevision,
     RawSignal,
     UserModel,
 )
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.memory import MemoryStore  # noqa: E402
-from logan_core.opportunity_lifecycle import OpportunityLifecycleTracker  # noqa: E402
+from logan_core.opportunity_lifecycle import (  # noqa: E402
+    OpportunityLifecycleTracker,
+    UserOpportunityKnowledge,
+    compute_user_sync_delta,
+)
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
     earnings_report_to_raw_signal,
@@ -62,9 +67,13 @@ from .config import (  # noqa: E402
     live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
+    revision_store_db_path,
+    user_knowledge_store_db_path,
 )
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
+from .revision_store import OpportunityRevisionStore  # noqa: E402
+from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
@@ -104,6 +113,19 @@ _orchestrator: Orchestrator | None = None
 # lifecycle tracking purely in-memory, same discipline as memory_store.
 _lifecycle_tracker: OpportunityLifecycleTracker | None = None
 _lifecycle_store: LifecycleStore | None = None
+# Stock Opportunity Logic V2.1 (User Sync Gap): durable global revision
+# history (_revision_store) and per-user knowledge pointers
+# (_user_knowledge_store / _user_knowledge_cache) -- same construction/
+# gating discipline as _lifecycle_tracker/_lifecycle_store immediately
+# above: both are None unless live_stock_tickers() is configured (revisions
+# only exist once lifecycle tracking is active at all), and the durable
+# stores are additionally None unless memory_persistence_enabled(). The
+# cache is keyed by (user_id, entity_id) -- process-lifetime, write-through
+# to the store on every mutation, exactly mirroring _lifecycle_tracker's own
+# relationship to _lifecycle_store.
+_revision_store: OpportunityRevisionStore | None = None
+_user_knowledge_store: UserKnowledgeStore | None = None
+_user_knowledge_cache: dict[tuple[str, str], UserOpportunityKnowledge] = {}
 # user_ids whose very first `/v1/opportunities` request has already been
 # processed -- lets that first response stay notification-silent (nothing is
 # "new" relative to a user who's never seen anything yet) without treating
@@ -375,14 +397,33 @@ def _get_orchestrator() -> Orchestrator:
             # same way memory_store is, independently of the live-data gate
             # -- see lifecycle_store.py.
             global _lifecycle_tracker, _lifecycle_store
+            global _revision_store, _user_knowledge_store, _user_knowledge_cache
             _lifecycle_tracker = None
             _lifecycle_store = None
+            _revision_store = None
+            _user_knowledge_store = None
+            _user_knowledge_cache = {}
             if live_stock_tickers():
                 _lifecycle_tracker = OpportunityLifecycleTracker()
                 if memory_persistence_enabled():
                     _lifecycle_store = LifecycleStore(lifecycle_store_db_path())
                     for snapshot in _lifecycle_store.load_all():
                         _lifecycle_tracker.load_snapshot(snapshot)
+                    # Stock Opportunity Logic V2.1 (User Sync Gap): revision
+                    # history and per-user knowledge pointers are persisted
+                    # independently of the lifecycle snapshot table, but
+                    # gated on the identical two conditions (lifecycle
+                    # tracking active + persistence enabled) -- a revision
+                    # number is meaningless without an active tracker to
+                    # compare it against.
+                    _revision_store = OpportunityRevisionStore(revision_store_db_path())
+                    _user_knowledge_store = UserKnowledgeStore(
+                        user_knowledge_store_db_path()
+                    )
+                    for knowledge in _user_knowledge_store.load_all():
+                        _user_knowledge_cache[
+                            (knowledge.user_id, knowledge.entity_id)
+                        ] = knowledge
 
             deps = (
                 PipelineDependencies(
@@ -461,6 +502,88 @@ def _get_user_model(
                 base=existing,
             )
         return _user_models[user_id]
+
+
+def _max_opt(a: Optional[int], b: Optional[int]) -> Optional[int]:
+    """None-safe max -- used by `_advance_user_knowledge` so a pointer only
+    ever moves forward, never regresses or gets clobbered by a stale/lower
+    value from a racing caller.
+    """
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
+
+def _get_user_knowledge(
+    user_id: str, entity_id: str
+) -> Optional[UserOpportunityKnowledge]:
+    return _user_knowledge_cache.get((user_id, entity_id))
+
+
+def _advance_user_knowledge(
+    user_id: str,
+    entity_id: str,
+    now: datetime,
+    *,
+    seen_revision: Optional[int] = None,
+    notified_revision: Optional[int] = None,
+    opened_revision: Optional[int] = None,
+) -> None:
+    """The single UPSERT path for `UserOpportunityKnowledge` -- one row per
+    (user_id, entity_id), pointers only ever advanced (via `_max_opt`), never
+    one row per interaction (per the explicit product requirement). A no-op
+    write (all three revisions None) still updates `updated_at`, which is
+    harmless and keeps this the one code path every caller uses rather than
+    special-casing "nothing to advance."
+    """
+    key = (user_id, entity_id)
+    existing = _user_knowledge_cache.get(key)
+    updated = UserOpportunityKnowledge(
+        user_id=user_id,
+        entity_id=entity_id,
+        last_seen_revision=_max_opt(
+            existing.last_seen_revision if existing else None, seen_revision
+        ),
+        last_notified_revision=_max_opt(
+            existing.last_notified_revision if existing else None,
+            notified_revision,
+        ),
+        last_opened_revision=_max_opt(
+            existing.last_opened_revision if existing else None, opened_revision
+        ),
+        updated_at=now,
+    )
+    _user_knowledge_cache[key] = updated
+    if _user_knowledge_store is not None:
+        _user_knowledge_store.save(updated)
+
+
+def mark_user_notified(
+    user_id: str,
+    entity_id: str,
+    revision: Optional[int],
+    now: Optional[datetime] = None,
+) -> None:
+    """Called by notifications.py immediately after a real Expo dispatch
+    succeeds for one (user, item) pair -- the only place
+    `last_notified_revision` ever advances. Deliberately distinct from
+    "alert eligible" (PrioritizedItem.interruption == 'alert'): eligibility
+    alone is not a real send, and only a real send should ever count as
+    "this user was notified." A no-op when `revision` is None (lifecycle/
+    revision tracking not active for this entity) -- there is nothing to
+    advance a pointer against.
+    """
+    if revision is None:
+        return
+    with _state_lock:
+        _advance_user_knowledge(
+            user_id,
+            entity_id,
+            now or datetime.now(timezone.utc),
+            notified_revision=revision,
+        )
 
 
 def _live_earnings_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
@@ -628,6 +751,7 @@ def reset_pipeline_state() -> None:
     backend/tests/test_opportunities_api.py and test_logan_feed.py.
     """
     global _orchestrator, _lifecycle_tracker, _lifecycle_store
+    global _revision_store, _user_knowledge_store, _user_knowledge_cache
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -639,9 +763,16 @@ def reset_pipeline_state() -> None:
             _orchestrator.deps.memory_store.close()
         if _lifecycle_store is not None:
             _lifecycle_store.close()
+        if _revision_store is not None:
+            _revision_store.close()
+        if _user_knowledge_store is not None:
+            _user_knowledge_store.close()
         _orchestrator = None
         _lifecycle_tracker = None
         _lifecycle_store = None
+        _revision_store = None
+        _user_knowledge_store = None
+        _user_knowledge_cache = {}
         _baseline_established.clear()
         _user_models.clear()
         _opportunity_context_caches.clear()
@@ -710,8 +841,42 @@ def record_interaction(
     constant -- every write this produces lands in MemoryStore under that
     user_id, and PrioritizationEngine's AttentionState/fatigue tracking is
     scoped to it.
+
+    Stock Opportunity Logic V2.1 (User Sync Gap): this is the ONLY place
+    `last_seen_revision`/`last_opened_revision` ever advance -- deliberately
+    never inside `_run_feed_pipeline()`/the GET /v1/opportunities path, per
+    the explicit "fetching a feed does not imply seen" product rule. Every
+    real interaction_type reaching this function (impression included) is
+    already defensible evidence the user encountered this specific
+    opportunity in the app -- `useImpressionTracking.ts`'s own docstring is
+    explicit that generation/serialization into an API response alone is
+    NOT an impression, only becoming the field's focused card is -- so
+    "seen" advances on any interaction_type; "opened" (a strictly stronger
+    signal) advances only on "view", which mirrors the existing card-
+    disclosure/dwell-tracking semantics exactly (useCardDwellTracking.ts
+    submits "view" only for a real open->close span, never a mere render).
+    A no-op when lifecycle/revision tracking isn't active for this entity
+    (current_revision is None) -- there is nothing to advance a pointer
+    against.
     """
     orchestrator = _get_orchestrator()
+    snapshot = (
+        _lifecycle_tracker.export_snapshot(entity_id)
+        if _lifecycle_tracker is not None
+        else None
+    )
+    current_revision = snapshot.revision if snapshot is not None else None
+    if current_revision is not None:
+        with _state_lock:
+            _advance_user_knowledge(
+                user_id,
+                entity_id,
+                datetime.now(timezone.utc),
+                seen_revision=current_revision,
+                opened_revision=(
+                    current_revision if interaction_type == "view" else None
+                ),
+            )
 
     if interaction_type == "impression":
         with _state_lock:
@@ -852,6 +1017,25 @@ class FeedItem(BaseModel):
     # detected and would misrepresent how long this has actually been
     # sitting in the user's Attention Field unchanged -- see the ADR).
     thesis_age_hours: float | None = None
+
+    # Stock Opportunity Logic V2.1 (User Sync Gap, see docs/DECISIONS.md).
+    # Both None whenever lifecycle/revision tracking isn't active for this
+    # entity -- additive, same discipline as the V2 fields above.
+    #
+    # opportunity_revision: the entity's current *global* meaningful-
+    # revision number (objective, identical for every user -- see
+    # LifecycleSnapshot.revision). Not itself personalized; two users see
+    # the same number for the same real-world opportunity.
+    opportunity_revision: int | None = None
+    # user_sync_status: THIS user's own knowledge state relative to
+    # opportunity_revision -- "UP_TO_DATE" | "NEW_TO_USER" |
+    # "UPDATED_SINCE_SEEN" | "NOTIFIED_BUT_UNSEEN". See
+    # logan_core/opportunity_lifecycle/sync.py's SyncStatus for the exact,
+    # deterministic decision rule. This is the field that answers "is this
+    # change new to this specific user," distinct from is_updated above
+    # (which is global/objective) and is_new_for_user (which is about badge/
+    # review state, not revision knowledge).
+    user_sync_status: str | None = None
 
 
 class DemoFeedResponse(BaseModel):
@@ -1057,6 +1241,32 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                 if snapshot is not None:
                     _lifecycle_store.save(snapshot)
 
+            # Stock Opportunity Logic V2.1 (User Sync Gap): append one
+            # durable revision row exactly when this poll produced a new
+            # *global* revision (new_revision > previous_revision -- see
+            # opportunity_lifecycle/tracker.py's is_global_meaningful gate,
+            # which already excludes a personal-relevance-only change). Not
+            # every poll -- the common "none" / personal-only case leaves
+            # new_revision == previous_revision and writes nothing here.
+            delta = result.lifecycle_delta
+            if (
+                _revision_store is not None
+                and delta is not None
+                and delta.new_revision != delta.previous_revision
+            ):
+                _revision_store.append(
+                    OpportunityRevision(
+                        entity_id=entity_id,
+                        revision=delta.new_revision,
+                        lifecycle_state=delta.new_state,
+                        confidence_score=delta.new_confidence,
+                        trigger_codes=delta.new_trigger_codes,
+                        change_type=delta.change_type,
+                        reason=delta.reason,
+                        created_at=now,
+                    )
+                )
+
         # Connections: two events are "rippled" to each other if the entities either one
         # touches (directly or via World Model's downstream mapping) overlap.
         touched: dict[UUID, set[str]] = {
@@ -1110,6 +1320,25 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
             item_is_new_for_user = (
                 False if is_first_load else r.prioritized_item.is_new_for_user
             ) or r.event.event_id in pending_push_event_ids
+
+            # Stock Opportunity Logic V2.1 (User Sync Gap): a pure read/
+            # comparison, never a write -- fetching this feed must never by
+            # itself advance last_seen_revision (see record_interaction()'s
+            # own docstring for the one place that pointer does move).
+            current_revision = (
+                r.lifecycle_delta.new_revision if r.lifecycle_delta else None
+            )
+            sync_delta = (
+                compute_user_sync_delta(
+                    entity_id=canonical.entity_id,
+                    user_id=user_id,
+                    current_revision=current_revision,
+                    knowledge=_get_user_knowledge(user_id, canonical.entity_id),
+                    now=now,
+                )
+                if current_revision is not None
+                else None
+            )
             items.append(
                 FeedItem(
                     event_id=r.event.event_id,
@@ -1155,6 +1384,10 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                         if r.lifecycle_delta
                         else None
                     ),
+                    opportunity_revision=current_revision,
+                    user_sync_status=(
+                        sync_delta.status if sync_delta is not None else None
+                    ),
                 )
             )
             # Sprint 3.6.7 Block 4: retains a richer slice of this same
@@ -1167,6 +1400,7 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                     display_name=canonical.display_name,
                     result=r,
                     is_new_for_user=item_is_new_for_user,
+                    sync_delta=sync_delta,
                 )
             )
         _opportunity_context_caches.setdefault(

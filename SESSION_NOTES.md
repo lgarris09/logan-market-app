@@ -1598,3 +1598,49 @@ lambda-closure `Optional` narrowing fix in `orchestrator/pipeline.py` and a brac
 caught and fixed before any commit. See docs/DECISIONS.md ADR-066 for the full decision record, including
 the complete FMP capability table and the reference-implementation pattern documented for future domains.
 No merge to main.
+
+---
+
+# Session Notes — 2026-08-24 (recovery pass + Stock Opportunity Logic V2.1 — User Sync Gap)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the V2 commit `146dcbe`. The
+prior session had been cut off unexpectedly right after finishing V2 -- this session opened with a
+recovery/reporting pass (repo state, commits, and test suite all confirmed intact and green; a real,
+previously-undocumented finding: the prior session had already deployed V2 to hosted `stratus-api` as Fly
+release `v7`, confirmed live via a read-only `curl` before any new work started -- recorded as an addendum
+to ADR-066 rather than silently left out of the written record).
+
+## What was asked
+
+Chuck (the owner's architecture/product partner) sent one consolidated direction for the next block: V2
+answers "has the opportunity meaningfully changed since STRATUS last evaluated it" -- an objective question,
+identical for every user. The next-highest-leverage gap is the different question: "has it meaningfully
+changed since *this specific user* last knew about it." Build a minimal durable sync layer answering that,
+without re-touching V2's own working lifecycle logic. See ADR-067 for the full decision record.
+
+## What got built (see ADR-067 for the full per-area record)
+
+A monotonic global `revision` counter on `LifecycleSnapshot`/`LifecycleDelta`, bumped by
+`OpportunityLifecycleTracker.observe()` only when this poll's change was genuinely *objective*
+(`is_global_meaningful` -- a new, narrower gate than V2's own `is_meaningful`, deliberately excluding a
+personal-relevance-only change so two users always see the identical revision number for the same
+real-world opportunity). A durable, append-only `OpportunityRevision` history
+(`backend/app/revision_store.py`) written only when the revision actually advances -- not every poll. A
+compact per-`(user_id, entity_id)` `UserOpportunityKnowledge` (`logan_core/opportunity_lifecycle/sync.py`),
+durably backed by `backend/app/user_knowledge_store.py`, tracking `last_seen_revision`/
+`last_notified_revision`/`last_opened_revision` via a single UPSERT path. Exact semantics, chosen from what
+the app can already honestly tell apart: notified advances only on a real Expo dispatch; seen advances only
+inside `record_interaction()` (impression included, reusing the existing surfaced-vs-API-response
+distinction from Sprint 3.6.7 Block 3); opened advances only on a real "view" (card disclosure); the GET
+`/v1/opportunities` path itself never advances anything. `compute_user_sync_delta()` -- one pure,
+deterministic function -- produces `UP_TO_DATE` / `NEW_TO_USER` / `UPDATED_SINCE_SEEN` /
+`NOTIFIED_BUT_UNSEEN`, surfaced as two new `FeedItem` fields and extended into Ask STRATUS's grounding (a
+"Sync" system-prompt section, explicitly instructed never to manufacture novelty when nothing changed).
+
+## Status at the end of this session
+
+`backend`/`logan_core`: 666 → 690 (+24: `test_user_sync.py` 12 pure unit tests, `test_user_sync_integration.py`
+8 real backend-wiring tests, 4 sync-grounding tests appended to `test_ask_lifecycle_grounding.py`). 2
+pre-existing exact-field-set tests extended, 1 pre-existing fake-item fixture extended -- all real additions,
+not leaks or weakenings. mypy/ruff/black clean throughout. See docs/DECISIONS.md ADR-067 for the full
+decision record. No merge to main.

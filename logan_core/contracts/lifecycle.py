@@ -90,6 +90,18 @@ class LifecycleSnapshot(BaseModel):
     last_meaningful_change_at: datetime
     last_notification_worthy_at: Optional[datetime] = None
     last_evaluated_at: datetime
+    # Stock Opportunity Logic V2.1 (User Sync Gap) -- a monotonic counter of
+    # this entity's *meaningful* revisions (bumped exactly when observe()
+    # sets is_meaningful=True; a "none"-change poll never advances it). This
+    # is the stable, comparable number the per-user sync layer
+    # (opportunity_lifecycle/sync.py) diffs a user's last-known revision
+    # against -- entity_id remains the stable opportunity identity across
+    # every revision, matching how LifecycleSnapshot itself has always been
+    # keyed; revision is a version number on that same identity, not a new
+    # identity scheme. Defaults to 1 so any snapshot constructed before this
+    # field existed (or restored from a pre-V2.1 persisted row) is treated as
+    # "already at its first revision," not zero/unknown.
+    revision: int = Field(default=1, ge=1)
 
 
 class LifecycleDelta(BaseModel):
@@ -126,3 +138,37 @@ class LifecycleDelta(BaseModel):
     # Attention Field unchanged" -- see the ADR's explicit reasoning on this
     # exact distinction).
     thesis_age_hours: float = Field(ge=0.0)
+    # Stock Opportunity Logic V2.1 (User Sync Gap): the entity's meaningful-
+    # revision counter before/after this observe() call. previous_revision
+    # == new_revision whenever is_meaningful is False (a "none"-change poll
+    # never advances the counter); new_revision == previous_revision + 1
+    # whenever is_meaningful is True. This is what lets a per-user pointer
+    # (UserOpportunityKnowledge.last_seen_revision) be compared against a
+    # single integer rather than re-deriving "has anything meaningful
+    # happened since this user last looked" from timestamps.
+    previous_revision: int = Field(ge=1)
+    new_revision: int = Field(ge=1)
+
+
+class OpportunityRevision(BaseModel):
+    """One durable, append-only row in an entity's meaningful-revision
+    history -- written only when `OpportunityLifecycleTracker.observe()`
+    produced `is_meaningful=True` (see backend/app/revision_store.py), never
+    on every poll. `entity_id` is the stable opportunity identity across
+    every revision (unchanged from LifecycleSnapshot/LifecycleDelta's own
+    keying); `revision` is this row's position in that entity's history.
+    Deliberately typed/queryable core fields, not an opaque JSON blob --
+    the same "compact structured state, not payload history" discipline
+    LifecycleSnapshot already established, extended to a history log instead
+    of a single current-state row.
+    """
+
+    schema_version: str = "1.0"
+    entity_id: str
+    revision: int = Field(ge=1)
+    lifecycle_state: LifecycleState
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    trigger_codes: list[str] = Field(default_factory=list)
+    change_type: MeaningfulChangeType
+    reason: str
+    created_at: datetime

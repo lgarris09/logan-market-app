@@ -1,3 +1,9 @@
+from .sync import (
+    SyncStatus,
+    UserOpportunityKnowledge,
+    UserSyncDelta,
+    compute_user_sync_delta,
+)
 from .tracker import (
     CONFIDENCE_DELTA_THRESHOLD,
     HIGH_ATTENTION_CONFIDENCE_THRESHOLD,
@@ -14,4 +20,8 @@ __all__ = [
     "HIGH_ATTENTION_CONFIDENCE_THRESHOLD",
     "PERSONAL_RELEVANCE_THRESHOLD",
     "PERSONAL_RELEVANCE_DELTA_THRESHOLD",
+    "UserOpportunityKnowledge",
+    "UserSyncDelta",
+    "SyncStatus",
+    "compute_user_sync_delta",
 ]
