@@ -3310,3 +3310,19 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      its prior value rather than attempting to weight or reconcile conflicting directional evidence. A
      reasonable, honest first-version choice, not yet validated against a real mixed-signal scenario (none of
      the three live tickers has produced one to date).
+- **Addendum, 2026-08-25 (hosted validation)**: deploying this block to the hosted `stratus-api` Fly app
+  (release `v9`) and reading a real, live `/v1/opportunities` response surfaced one real FMP capability gap
+  the pre-deploy audit's single bounded test call didn't catch: `/stable/quote` accepts the broad-market
+  benchmark (`SPY` — confirmed live, `relative_to_market_pct` populated correctly with a real figure) but
+  rejects the SPDR Select Sector ETF symbols this block's sector-benchmark table uses (`XLK` for NVDA/AAPL),
+  returning a real `HTTP 402 Premium Query Parameter` error — sector ETFs are a paid-tier-only symbol class on
+  FMP's current plan, not a free-tier "Special Endpoint" like ordinary equities/major index ETFs.
+  `_fetch_market_evidence`'s existing best-effort-per-field design already handles this exactly as intended —
+  the real hosted response shows `sector_change_pct`/`relative_to_sector_pct` correctly `null` (never
+  fabricated), with every other evidence field (trigger price, market-relative performance, volume, beta)
+  populated with real live data. No code change was needed; this is a genuine, confirmed data-availability
+  gap, not an implementation defect: **sector-relative performance is not achievable for any ticker on FMP's
+  current free plan without a paid-tier upgrade** — a real owner decision (purchase a plan upgrade, or accept
+  this field staying empty), not something to route around silently. Everything else this block built
+  (trajectory, market-relative performance, volume-vs-average, beta-normalization, trigger price) is fully
+  live-verified and working exactly as designed on the current plan.
