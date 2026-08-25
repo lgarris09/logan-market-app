@@ -31,9 +31,25 @@ def _mock_earnings_provider(entries) -> FmpEarningsProvider:
 def _mock_market_data_provider(quote_entries, grade_entries) -> FmpMarketDataProvider:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/quote"):
-            return httpx.Response(200, json=quote_entries)
+            # Stock Opportunity Logic V2.2 fetches additional quotes (the
+            # SPY market benchmark, and a sector benchmark ETF) for the
+            # *entity's own* symbol only via this same endpoint -- any
+            # symbol not the entity itself (e.g. SPY/XLK) legitimately gets
+            # "no data" here, exactly like a real FMP response for a symbol
+            # this test's fixture doesn't cover. Only the entity's own
+            # `quote_entries` fixture data is returned for its own symbol.
+            requested_symbol = request.url.params.get("symbol")
+            entity_symbols = {e.get("symbol") for e in quote_entries}
+            if requested_symbol in entity_symbols:
+                return httpx.Response(200, json=quote_entries)
+            return httpx.Response(200, json=[])
         if request.url.path.endswith("/grades"):
             return httpx.Response(200, json=grade_entries)
+        if request.url.path.endswith("/profile"):
+            # Stock Opportunity Logic V2.2: no profile fixture data in these
+            # pre-V2.2 tests -- an honest "no profile" response, matching
+            # this file's existing "graceful, not fabricated" discipline.
+            return httpx.Response(200, json=[])
         raise AssertionError(f"unexpected FMP path: {request.url.path}")
 
     transport = httpx.MockTransport(handler)
@@ -252,4 +268,8 @@ def test_live_market_data_response_has_no_internal_or_secret_fields(monkeypatch)
         "thesis_age_hours",
         "opportunity_revision",
         "user_sync_status",
+        "trajectory",
+        "previous_trajectory",
+        "trajectory_reason",
+        "evidence",
     }

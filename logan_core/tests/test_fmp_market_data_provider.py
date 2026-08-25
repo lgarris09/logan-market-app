@@ -234,3 +234,93 @@ def test_grades_rate_limit_raises():
 
     with pytest.raises(FmpProviderError, match="rate limit"):
         _provider(handler).fetch_latest_grade_change("NVDA")
+
+
+# --- fetch_company_profile (Stock Opportunity Logic V2.2) ------------------
+#
+# Real live-verified shape (2026-08-24/25, bounded FMP call against the
+# `/stable/profile` endpoint, same base URL/API key/plan as /quote and
+# /grades): {"symbol": "NVDA", "beta": 2.215, "averageVolume": 145424700,
+# "sector": "Technology", "industry": "Semiconductors", ...}. Fixtures below
+# mirror that real shape.
+
+
+def test_successful_profile_response_maps_into_company_profile():
+    def handler(request):
+        assert request.url.path.endswith("/profile")
+        assert dict(request.url.params)["symbol"] == "NVDA"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "NVDA",
+                    "sector": "Technology",
+                    "industry": "Semiconductors",
+                    "averageVolume": 145424700,
+                    "beta": 2.215,
+                }
+            ],
+        )
+
+    profile = _provider(handler).fetch_company_profile("NVDA")
+    assert profile is not None
+    assert profile.entity_id == "NVDA"
+    assert profile.sector == "Technology"
+    assert profile.industry == "Semiconductors"
+    assert profile.average_volume == 145424700
+    assert profile.beta == 2.215
+    assert profile.source_id == FMP_SOURCE_ID
+    assert profile.source_name == FMP_SOURCE_NAME
+
+
+def test_profile_empty_list_returns_none_not_an_error():
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    assert _provider(handler).fetch_company_profile("NOSYMBOL") is None
+
+
+def test_profile_missing_optional_fields_does_not_raise():
+    """Unlike Quote/GradeChange's required fields, every CompanyProfile
+    field is genuinely optional -- a thinly-covered symbol legitimately may
+    have no beta/averageVolume/sector on file."""
+
+    def handler(request):
+        return httpx.Response(200, json=[{"symbol": "NVDA"}])
+
+    profile = _provider(handler).fetch_company_profile("NVDA")
+    assert profile is not None
+    assert profile.sector is None
+    assert profile.average_volume is None
+    assert profile.beta is None
+
+
+def test_profile_rate_limit_raises():
+    def handler(request):
+        return httpx.Response(429, text="rate limited")
+
+    with pytest.raises(FmpProviderError, match="rate limit"):
+        _provider(handler).fetch_company_profile("NVDA")
+
+
+def test_profile_non_200_raises():
+    def handler(request):
+        return httpx.Response(500, text="server error")
+
+    with pytest.raises(FmpProviderError, match="500"):
+        _provider(handler).fetch_company_profile("NVDA")
+
+
+def test_profile_is_cached_across_calls():
+    """PROFILE_CACHE_TTL_SECONDS is a real, long TTL (24h) -- confirms a
+    second call within the window doesn't re-hit the network."""
+    call_count = {"n": 0}
+
+    def handler(request):
+        call_count["n"] += 1
+        return httpx.Response(200, json=[{"symbol": "NVDA", "sector": "Technology"}])
+
+    provider = _provider(handler)
+    provider.fetch_company_profile("NVDA")
+    provider.fetch_company_profile("NVDA")
+    assert call_count["n"] == 1

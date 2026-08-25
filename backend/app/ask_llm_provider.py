@@ -207,6 +207,74 @@ def build_system_prompt(context: OpportunityContext) -> str:
                 "is stated here.",
             ]
         )
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment, see
+    # docs/DECISIONS.md): grounds the model in the real, objective evidence
+    # behind the trajectory label -- trigger price, relative-to-market/
+    # sector performance, volume vs. average, and beta-normalized move --
+    # all computed deterministically by OpportunityLifecycleTracker, never
+    # by the model. Trajectory is a dimension separate from lifecycle_state
+    # above: it answers "which way is the evidence moving," not "is this
+    # still an active thesis."
+    if context.evidence is not None:
+        ev = context.evidence
+        lines.extend(
+            [
+                f"Evidence trajectory: {context.trajectory} "
+                f"(previously: {context.previous_trajectory})",
+                f"Trajectory explanation: {context.trajectory_reason or 'No trajectory change this poll.'}",
+            ]
+        )
+        if ev.trigger_price is not None and ev.price is not None:
+            lines.append(
+                f"Price when this thesis triggered: {ev.trigger_price:.2f}; "
+                f"current price: {ev.price:.2f}"
+                + (
+                    f" ({ev.price_change_since_trigger_pct:+.1f}% since trigger)"
+                    if ev.price_change_since_trigger_pct is not None
+                    else ""
+                )
+            )
+        if ev.price_change_since_last_revision_pct is not None:
+            lines.append(
+                "Price change since the last meaningful update: "
+                f"{ev.price_change_since_last_revision_pct:+.1f}%"
+            )
+        if ev.relative_to_market_pct is not None:
+            lines.append(
+                f"Performance vs. the broad market (SPY) today: "
+                f"{ev.relative_to_market_pct:+.1f}pp "
+                f"({'outperforming' if ev.relative_to_market_pct > 0 else 'underperforming'})"
+            )
+        if ev.relative_to_sector_pct is not None and ev.sector is not None:
+            lines.append(
+                f"Performance vs. its sector ({ev.sector}) today: "
+                f"{ev.relative_to_sector_pct:+.1f}pp "
+                f"({'outperforming' if ev.relative_to_sector_pct > 0 else 'underperforming'})"
+            )
+        if ev.volume_ratio is not None:
+            lines.append(
+                f"Volume vs. average: {ev.volume_ratio:.1f}x "
+                f"({'unusually high participation' if ev.volume_ratio >= 1.5 else 'normal range'})"
+            )
+        if ev.beta_normalized_move_pct is not None and ev.beta is not None:
+            lines.append(
+                f"Volatility-adjusted move (raw change divided by beta={ev.beta:.2f}): "
+                f"{ev.beta_normalized_move_pct:+.1f}%"
+            )
+        lines.extend(
+            [
+                "",
+                "If asked whether the evidence behind this opportunity is strengthening,",
+                "steady, weakening, or reversing, answer using the Evidence trajectory",
+                "and the specific figures above -- e.g. 'NVDA continues to outperform its",
+                "sector and volume has increased, so the thesis remains strengthening,'",
+                "or 'price is higher, but the move is lagging the sector, so this is not",
+                "treated as stronger confirmation.' Do not invent relative performance,",
+                "volume, or volatility figures beyond what is listed here -- if a figure",
+                "is absent above, say STRATUS does not have that data for this poll,",
+                "rather than guessing.",
+            ]
+        )
     lines.extend(
         [
             "",

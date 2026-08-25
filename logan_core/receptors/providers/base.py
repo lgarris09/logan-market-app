@@ -58,6 +58,12 @@ class Quote(BaseModel):
     prior close -- the real, provider-computed figure, not re-derived from
     price/previous_close here (avoids a second, possibly-inconsistent
     calculation of the same number a provider already supplies).
+
+    `volume` (Stock Opportunity Logic V2.2, additive, Optional): the
+    session's real, provider-reported share volume -- confirmed live in
+    FMP's `/quote` response (2026-08-24/25) even though this codebase didn't
+    read it into this contract before V2.2. Optional/None for any provider
+    (or fixture) that doesn't supply it -- never estimated.
     """
 
     entity_id: str
@@ -67,6 +73,7 @@ class Quote(BaseModel):
     quote_timestamp: datetime
     source_id: str
     source_name: str
+    volume: Optional[float] = None
 
 
 class QuoteProvider(Protocol):
@@ -114,5 +121,36 @@ class AnalystGradesProvider(Protocol):
     def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
         """Returns the single most recent rating-change entry for entity_id,
         or None if the provider has nothing for it. Must not fabricate one.
+        """
+        ...
+
+
+class CompanyProfile(BaseModel):
+    """STRATUS-owned shape a company-profile provider maps its response into
+    (Sprint 3.6.9/Stock Opportunity Logic V2.2) -- the slower-changing
+    reference data Quote alone doesn't carry: sector classification, a
+    volume baseline, and beta. Every field Optional -- a real profile
+    response may be missing any of these for a given symbol, and this must
+    never be estimated/fabricated when absent.
+    """
+
+    entity_id: str
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    average_volume: Optional[float] = None
+    beta: Optional[float] = None
+    source_id: str
+    source_name: str
+
+
+class CompanyProfileProvider(Protocol):
+    """A source of real, slower-changing company reference data for one
+    entity at a time (Stock Opportunity Logic V2.2). Same shape/pattern as
+    QuoteProvider/AnalystGradesProvider.
+    """
+
+    def fetch_company_profile(self, entity_id: str) -> Optional[CompanyProfile]:
+        """Returns the current profile for entity_id, or None if the
+        provider has nothing for it. Must not fabricate one.
         """
         ...

@@ -68,6 +68,31 @@ MeaningfulChangeType = Literal[
     "reactivated",
     "personal_relevance_increased",
     "personal_relevance_decreased",
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment) -- see
+    # opportunity_lifecycle/tracker.py's _compute_trajectory. Only ever
+    # chosen when nothing else in observe()'s change-type priority chain
+    # already fired this poll (world-fact/aging/personal changes still take
+    # priority) -- these represent a poll where the *only* meaningful thing
+    # that happened was an objective evidence-trajectory shift.
+    "trajectory_strengthening",
+    "trajectory_weakening",
+    "trajectory_reversing",
+    "trajectory_reaccelerated",
+]
+
+# Stock Opportunity Logic V2.2: answers "is the evidence getting stronger,
+# holding, weakening, or turning against the thesis" -- a dimension
+# deliberately orthogonal to LifecycleState (which answers "is this still
+# active/relevant as a thesis at all"). A REVERSING opportunity can still be
+# lifecycle_state="monitoring"; a STRENGTHENING one can still eventually age
+# into "cooling" if the strengthening evidence itself goes quiet. Never
+# influenced by user_id/personal_relevance -- see MarketEvidenceInput/
+# _compute_trajectory, which take no personalization input at all.
+TrajectoryState = Literal[
+    "STRENGTHENING",
+    "STEADY",
+    "WEAKENING",
+    "REVERSING",
 ]
 
 
@@ -102,6 +127,86 @@ class LifecycleSnapshot(BaseModel):
     # field existed (or restored from a pre-V2.1 persisted row) is treated as
     # "already at its first revision," not zero/unknown.
     revision: int = Field(default=1, ge=1)
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment) -- all
+    # Optional/defaulted so a snapshot from before this field existed (or a
+    # poll with no live market evidence supplied) round-trips unchanged.
+    # trigger_price: the real price captured the first time evidence was
+    # available for this opportunity -- set once, never overwritten
+    # afterward (see tracker.py's observe()).
+    trigger_price: Optional[float] = None
+    # price_at_last_revision: the price at the most recent *global* revision
+    # boundary (see LifecycleDelta.new_revision) -- advances only when
+    # is_global_meaningful was true, not every poll.
+    price_at_last_revision: Optional[float] = None
+    # last_relative_strength: the previous poll's thesis-aligned,
+    # market-relative performance (positive = confirming the thesis
+    # direction, negative = contradicting it) -- the value _compute_trajectory
+    # diffs the current poll's own relative strength against.
+    last_relative_strength: Optional[float] = None
+    last_volume_ratio: Optional[float] = None
+    trajectory: TrajectoryState = "STEADY"
+
+
+class MarketEvidenceInput(BaseModel):
+    """Real, provider-sourced market context for one poll, optionally
+    supplied to `OpportunityLifecycleTracker.observe()`. Every field is
+    Optional -- a caller with no live market data this poll (demo mode, or a
+    provider fetch failure) passes `None` for the whole object (or omits
+    fields it couldn't fetch), and every V2.2 evidence/trajectory field on
+    the resulting `LifecycleDelta` stays at its inert default, exactly
+    preserving V2/V2.1 behavior. Never contains anything personalized --
+    this is objective market data, identical for every user.
+    """
+
+    schema_version: str = "1.0"
+    price: Optional[float] = None
+    change_pct: Optional[float] = None
+    market_change_pct: Optional[float] = None
+    sector: Optional[str] = None
+    sector_benchmark_symbol: Optional[str] = None
+    sector_change_pct: Optional[float] = None
+    volume: Optional[float] = None
+    average_volume: Optional[float] = None
+    beta: Optional[float] = None
+
+
+class EvidenceSnapshot(BaseModel):
+    """Typed, queryable objective evidence computed for one poll -- never an
+    opaque JSON blob (per the owner's explicit instruction). Attached to
+    `LifecycleDelta.evidence` only when `MarketEvidenceInput.price` was
+    supplied; every field individually Optional since a real provider may
+    supply some fields (price) without others (sector, beta) depending on
+    what's reachable that poll.
+    """
+
+    schema_version: str = "1.0"
+    entity_id: str
+    price: Optional[float] = None
+    # trigger_price: persists from LifecycleSnapshot.trigger_price -- "what
+    # was the price when this thesis triggered."
+    trigger_price: Optional[float] = None
+    price_change_since_trigger_pct: Optional[float] = None
+    price_change_since_last_revision_pct: Optional[float] = None
+    market_change_pct: Optional[float] = None
+    # relative_to_market_pct: this entity's own change_pct minus the broad
+    # market benchmark's change_pct -- positive means outperforming the
+    # market today, independent of the thesis' own direction (see
+    # tracker.py's _signed_relative_strength for the thesis-aligned version
+    # trajectory actually compares poll-to-poll).
+    relative_to_market_pct: Optional[float] = None
+    sector: Optional[str] = None
+    sector_change_pct: Optional[float] = None
+    relative_to_sector_pct: Optional[float] = None
+    volume: Optional[float] = None
+    average_volume: Optional[float] = None
+    volume_ratio: Optional[float] = None
+    beta: Optional[float] = None
+    # beta_normalized_move_pct: change_pct divided by beta -- a simple,
+    # explicit volatility-aware normalization (a high-beta stock's raw move
+    # is discounted relative to a low-beta stock's identical raw move), not
+    # a hidden composite score.
+    beta_normalized_move_pct: Optional[float] = None
+    evaluated_at: datetime
 
 
 class LifecycleDelta(BaseModel):
@@ -148,6 +253,15 @@ class LifecycleDelta(BaseModel):
     # happened since this user last looked" from timestamps.
     previous_revision: int = Field(ge=1)
     new_revision: int = Field(ge=1)
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment). All
+    # additive/defaulted -- a caller that never supplies MarketEvidenceInput
+    # to observe() (every pre-V2.2 caller/test) gets trajectory="STEADY",
+    # previous_trajectory="STEADY", trajectory_reason=None, evidence=None,
+    # byte-for-byte preserving prior behavior.
+    trajectory: TrajectoryState = "STEADY"
+    previous_trajectory: TrajectoryState = "STEADY"
+    trajectory_reason: Optional[str] = None
+    evidence: Optional[EvidenceSnapshot] = None
 
 
 class OpportunityRevision(BaseModel):

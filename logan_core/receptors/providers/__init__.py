@@ -1,5 +1,7 @@
 from .base import (
     AnalystGradesProvider,
+    CompanyProfile,
+    CompanyProfileProvider,
     EarningsProvider,
     EarningsReport,
     GradeChange,
@@ -25,6 +27,7 @@ from .fmp import (
     FMP_SOURCE_ID,
     FMP_SOURCE_NAME,
     GRADE_CACHE_TTL_SECONDS,
+    PROFILE_CACHE_TTL_SECONDS,
     QUOTE_CACHE_TTL_SECONDS,
     FmpEarningsProvider,
     FmpMarketDataProvider,
@@ -40,6 +43,8 @@ __all__ = [
     "Quote",
     "AnalystGradesProvider",
     "GradeChange",
+    "CompanyProfileProvider",
+    "CompanyProfile",
     "FixtureEarningsProvider",
     "nvda_earnings_beat_fixture",
     "FixtureMarketDataProvider",
@@ -62,4 +67,5 @@ __all__ = [
     "EARNINGS_CACHE_TTL_SECONDS",
     "GRADE_CACHE_TTL_SECONDS",
     "QUOTE_CACHE_TTL_SECONDS",
+    "PROFILE_CACHE_TTL_SECONDS",
 ]

@@ -3135,3 +3135,178 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      currently distinguishes "opened" from "seen" in the feed/Ask STRATUS surface; both currently drive the
      same `UP_TO_DATE`/`UPDATED_SINCE_SEEN` decision via `last_seen_revision`. Flagged as available headroom,
      not a gap in what was asked for this block.
+
+---
+
+## ADR-068: Stock Opportunity Logic V2.2 — Evidence + Trajectory Enrichment
+
+- Date: 2026-08-25
+- Status: Accepted
+- Context: V2 (ADR-066) fixed "does the card ever change." V2.1 (ADR-067) fixed "is this change new to this
+  user." Neither answers a third, genuinely different question: *why* an opportunity's card looks the way it
+  does right now, and whether the underlying market evidence is getting stronger, holding, weakening, or
+  actively turning against the original thesis. `confidence_score` alone doesn't answer this — it moves on
+  discrete trigger-driven events (an earnings beat, an analyst action), not on the continuous, day-to-day
+  question "is the market actually confirming this."
+- FMP capability audit (owner-required before adding calls, done via a real bounded live call against the
+  already-configured `FMP_API_KEY` before writing any code, 2026-08-24/25): FMP's `/stable/profile` endpoint
+  — same base URL, same API key, same free plan already in use for `/earnings`, `/quote`, `/grades` — returns
+  `sector`, `industry`, `averageVolume`, and `beta` for a real symbol (live-verified against NVDA:
+  `{"sector": "Technology", "industry": "Semiconductors", "averageVolume": 145424700, "beta": 2.215}`). This
+  closes the one gap ADR-066 flagged as "near-term-plausible but unread": volume/volatility data was already
+  reachable, just not yet parsed into this codebase's contracts. **No new vendor, no new paid tier, no new
+  secret required for anything built in this block.** Market- and sector-relative performance need one
+  additional benchmark quote each — fetched through the exact same `/quote` endpoint, just a different
+  symbol (SPY for the broad market; a small, reasoned sector→SPDR-Select-Sector-ETF lookup table for sector,
+  e.g. Technology→XLK) — not a new endpoint or vendor either.
+- Decision (by area):
+  1. **New `MarketEvidenceInput`/`EvidenceSnapshot` contracts** (`logan_core/contracts/lifecycle.py`) carry
+     typed, queryable core evidence — trigger price, price change since trigger, price change since the last
+     *global* meaningful revision, market-relative and sector-relative performance, volume vs. average,
+     beta-normalized move — never an opaque JSON blob. `CompanyProfile`/`CompanyProfileProvider`
+     (`receptors/providers/base.py`) and `FmpMarketDataProvider.fetch_company_profile()` (new, third method
+     on that class, same shared TTL cache pattern, `PROFILE_CACHE_TTL_SECONDS=24h` since sector/beta/avg-
+     volume change on the order of days-to-quarters) are the new provider surface. `Quote` gained an
+     additive, Optional `volume` field (confirmed present in FMP's real `/quote` response but never read
+     before this block).
+  2. **A clean, deterministic trajectory dimension, orthogonal to lifecycle state.** New
+     `TrajectoryState = STRENGTHENING | STEADY | WEAKENING | REVERSING`
+     (`logan_core/contracts/lifecycle.py`). Lifecycle answers "is this still an active thesis"; trajectory
+     answers "which way is the evidence moving" — a REVERSING opportunity can still be
+     `lifecycle_state="monitoring"`; the state-machine `elif` chain that decides `new_state` in
+     `OpportunityLifecycleTracker.observe()` is completely untouched by this block. Computed in
+     `_compute_trajectory()` (new, `opportunity_lifecycle/tracker.py`) from one signed number,
+     `relative_to_market_pct` re-aligned to the opportunity's own thesis direction (`_signed_relative_
+     strength`) — thesis direction itself is not invented: it's read directly from `TriggerEvent.direction`
+     (already a real, implemented field, contracts/trigger.py — positive for an earnings beat/analyst
+     upgrade, negative for a miss/downgrade), aggregated across this poll's active triggers
+     (`_thesis_direction`; a genuine mix of positive and negative, or no directional trigger at all, takes no
+     stance and holds the prior trajectory rather than guessing).
+  3. **Explicit deterministic predicates, not a hardcoded universal rule or an opaque intelligence score** —
+     per the owner's explicit instruction against "price moved > 2% = strengthening." Four declared constants
+     (`TRAJECTORY_STRENGTHEN_DELTA=1.0pp`, `TRAJECTORY_REACCELERATION_DELTA=2.5pp`,
+     `TRAJECTORY_REVERSAL_CONFIRM_THRESHOLD=0.5pp`, `HIGH_VOLUME_RATIO=1.5x`), each governing one independent,
+     readable branch: STRENGTHENING/WEAKENING on a poll-over-poll delta in thesis-aligned relative strength;
+     REVERSING specifically requires the *sign* to flip from genuinely confirming to genuinely contradicting
+     (both sides past the deadband, not a value merely crossing zero); a volume-confirmation branch can
+     promote STEADY to STRENGTHENING on unusually high participation (≥1.5x average) even without a big price
+     move, but never against contradicting price action; reacceleration (a further, materially larger jump
+     while already STRENGTHENING) is its own distinct, higher bar, satisfying the explicit "a strong thesis
+     reaccelerates while remaining in the same trajectory category" requirement without spamming a new
+     revision on ordinary continued-strengthening noise. Volatility-aware normalization is real but
+     deliberately narrow in scope for this first version: `beta_normalized_move_pct` (raw `change_pct`
+     divided by `beta`) is computed, persisted, and exposed to Ask STRATUS as a transparent, explicit figure,
+     but is not itself a trajectory-transition driver this block — market-relative performance (already a
+     volatility-normalizing comparison in its own right, since it nets out systematic market-wide moves) is
+     the primary trajectory axis, kept deliberately to one clean signal rather than a two-axis framework.
+  4. **Meaningful-change integration, additive and lowest-priority.** `is_meaningful` (and therefore the
+     revision-bump gate `is_global_meaningful`, unchanged from ADR-067) now also includes `trajectory_
+     meaningful`. `change_type` gains four new values (`trajectory_strengthening/_weakening/_reversing/
+     _reaccelerated`) but they are chosen *only* in the pre-existing final `else` branch — i.e., only when
+     nothing higher-priority (a real confidence/trigger-code change, an aging-window crossing, a personal-
+     relevance crossing) already claimed this poll's `change_type`. A poll with both a real confidence change
+     and a trajectory shift in the same tick still reports the confidence-driven `change_type`; the trajectory
+     fields (`trajectory`/`previous_trajectory`/`trajectory_reason`) are independent fields on the same
+     `LifecycleDelta` regardless, so the information is never lost, just not the *headline* reason that poll.
+     Tiny quote noise (a delta under the declared thresholds) computes `trajectory="STEADY"`/`meaningful=False`
+     every time — proven directly (`test_unchanged_quote_noise_does_not_create_meaningful_revision`).
+  5. **Global vs. personal state kept separate, continuing ADR-067's own rule.** `_compute_trajectory` and
+     every evidence computation take no `user_id`/`personal_relevance` input at all — proven directly
+     (`test_trajectory_is_identical_regardless_of_which_user_polls`,
+     `test_personal_relevance_alone_never_moves_trajectory`). V2.1's `UserSyncDelta`/`compute_user_sync_delta`
+     are completely untouched by this block; a richer global revision (now potentially trajectory-driven)
+     flows into the exact same, unmodified per-user sync comparison — a user who already saw the prior
+     revision correctly gets `UPDATED_SINCE_SEEN` the moment a trajectory-only revision lands, with no new
+     sync-layer logic needed.
+  6. **Notification behavior stays deterministic and asymmetric**, mirroring the `confidence_increased`/
+     `confidence_decreased` precedent exactly: `trajectory_strengthening`, `trajectory_reaccelerated`, and
+     `trajectory_reversing` are notification-worthy (added to `_NOTIFICATION_WORTHY_CHANGE_TYPES`);
+     `trajectory_weakening` deliberately is not — it updates the card without interrupting the user. No
+     "notify again every X hours" timer of any kind was added; silence remains the correct, common outcome
+     whenever nothing meaningful happened. Full end-to-end delivery of a real push additionally still passes
+     through Prioritization's own pre-existing fatigue/cooldown vetoes (ADR-050) exactly as before — this
+     block does not touch, weaken, or bypass that layer; the backend integration tests prove the V2.2-owned
+     signal (the lifecycle snapshot's `last_notification_worthy_at` timestamp, the exact fact
+     `get_alert_eligible_items`/dispatch reads) fires correctly, rather than re-proving fatigue/cooldown's own
+     already-covered behavior.
+  7. **Ask STRATUS extended, LLM remains narrator only.** `OpportunityContext` gained `trajectory`/
+     `previous_trajectory`/`trajectory_reason`/`evidence` (additive, all `None`/`"STEADY"` when inactive).
+     `build_system_prompt()` renders an "Evidence trajectory" section only when real evidence exists, stating
+     the trajectory label plus every concrete figure available that poll (trigger price and price-change-
+     since-trigger, price change since the last meaningful revision, market- and sector-relative performance,
+     volume ratio, beta-normalized move) and explicitly instructing the model to explain *why* using only
+     those figures, to say plainly when a figure is absent rather than guess, and to never invent relative
+     performance, volume, or volatility numbers beyond what is listed. The deterministic tracker remains the
+     sole author of every trajectory/evidence fact — matching V2/V2.1's own LLM-role discipline exactly; no
+     code path lets a model response alter `trajectory`, `evidence`, or any other authoritative field.
+     Deterministic fallback (`answer_question()`) is completely untouched and still fully functional with
+     `evidence=None`/`trajectory="STEADY"`.
+  8. **API contract, additive.** Four new `FeedItem` fields: `trajectory`, `previous_trajectory` (both
+     default `"STEADY"`), `trajectory_reason` (`None` default), and `evidence` (a nested, fully-typed
+     `EvidenceSnapshot` object — not a flattened dozen-plus top-level fields, matching how `delivered_item`
+     is already a typed sub-object on this same contract). All four are `None`/`"STEADY"` whenever lifecycle
+     tracking isn't active or no live market evidence was fetched this poll.
+  9. **Persistence, extending the same store V2/V2.1 already proved.** `LifecycleSnapshot` gained
+     `trigger_price`, `price_at_last_revision`, `last_relative_strength`, `last_volume_ratio`, `trajectory` —
+     persisted via the same `LifecycleStore`, using the identical additive-column-guard pattern ADR-067
+     introduced for `revision` (`PRAGMA table_info` checked before each `ALTER TABLE ADD COLUMN`, safe against
+     the already-live hosted Fly volume's existing database file). No new store was introduced for evidence
+     history — `OpportunityRevisionStore` (ADR-067) is deliberately not extended with evidence fields this
+     block, a documented scope boundary (see Deferred below), since the *current* evidence already survives
+     restart via the extended `LifecycleSnapshot` row, which is what the acceptance tests actually require.
+  10. **Gating**: market evidence is fetched only for tickers already gated behind `live_stock_tickers()` *and*
+      currently live-substituted this poll (`live_substituted`, the same set that gates the existing price-
+      move/analyst-grade fetches) — a simulated demo entity never gets a live evidence fetch spliced onto it,
+      preserving the "fully live or fully simulated, never blended" rule this file already enforces. Each of
+      the up-to-three additional fetches (profile, market benchmark, sector benchmark) is independently
+      best-effort: a failure on any one degrades that specific evidence field to `None` rather than failing
+      the whole attempt, matching this file's existing per-signal failure-isolation discipline.
+- Consequences: new fields on `logan_core/contracts/lifecycle.py` (`TrajectoryState`, `MarketEvidenceInput`,
+  `EvidenceSnapshot`, plus additive fields on `LifecycleSnapshot`/`LifecycleDelta`); `opportunity_lifecycle/
+  tracker.py` (`_thesis_direction`, `_signed_relative_strength`, `_build_evidence`, `_compute_trajectory`, new
+  `observe()` parameters); `receptors/providers/base.py`/`fmp.py`/`fixture.py` (`CompanyProfile`,
+  `fetch_company_profile()`, `Quote.volume`); `orchestrator/pipeline.py` (`run()` gained `market_evidence`,
+  forwarded to `observe()` alongside `trigger_directions` derived from real `TriggerEvent.direction` values);
+  `backend/app/logan_feed.py` (`_fetch_market_evidence()`, the sector-ETF lookup table, wiring into
+  `_run_feed_pipeline()`, four new `FeedItem` fields); `backend/app/lifecycle_store.py` (five new additive
+  columns); `backend/app/ask_context.py`/`ask_llm_provider.py` (evidence-aware grounding). New tests:
+  `logan_core/tests/test_evidence_trajectory.py` (12 — pure tracker/trajectory logic, including the global-
+  vs-personal separation and mixed-direction handling), `logan_core/tests/test_fmp_market_data_provider.py`
+  (+7 — `fetch_company_profile` contract, including the real live-verified response shape and cache reuse),
+  `logan_core/tests/test_pipeline_lifecycle.py` (+1 — real-Orchestrator vertical proof), `backend/tests/
+  test_evidence_trajectory_integration.py` (7 — real backend wiring: FeedItem exposure, trigger-price
+  persistence, trajectory-driven notification-worthy signal, the weakening/non-notify asymmetry, restart
+  persistence, Ask STRATUS grounding, deterministic-fallback non-interference). 4 pre-existing tests updated
+  (three FMP mock handlers extended to tolerate the new `/profile`/benchmark-quote calls; two exact-field-set
+  allowlists extended for the four new fields) — all real, intentional updates, not weakenings.
+  `backend`/`logan_core` combined 690 → 716 (+26). mypy/ruff/black clean throughout.
+- Acceptance: STRATUS can now deterministically explain whether the objective evidence behind an opportunity
+  is strengthening, steady, weakening, or reversing, and *why* (trigger price, relative-to-market/sector
+  performance, volume vs. average, beta-normalized move) — proven end-to-end through the real backend, not
+  just the pure tracker, and proven never to leak into or out of the per-user sync layer.
+- Deferred / flagged for the owner:
+  1. **`OpportunityRevisionStore` is not extended with evidence fields this block** — the durable revision
+     history (ADR-067) still stores only lifecycle facts (state, confidence, trigger_codes, change_type,
+     reason), not the evidence/trajectory snapshot that produced a given revision. Current evidence survives
+     restart correctly (via the extended `LifecycleSnapshot` row), but a future "show me the evidence at
+     revision N specifically, not just now" query isn't supported without this extension. Not required for
+     anything built or asked for in this block.
+  2. **Sector-relative performance uses one static sector→ETF table**, not a data-driven or FMP-supplied
+     benchmark mapping — a real, if small, gap for any sector this table doesn't recognize (the entity simply
+     gets no sector-relative figure that poll, never a fabricated one). Sufficient for the three currently
+     live tickers (NVDA/AAPL: Technology; TSLA: Consumer Cyclical, per FMP's own real classification), not
+     validated against every possible GICS sector FMP might return for a future ticker.
+  3. **Volatility-aware normalization (`beta_normalized_move_pct`) is computed and exposed but not a
+     trajectory-transition driver** — a deliberate, narrower first-version scope than a full two-axis
+     (market-relative + volatility-normalized) trajectory state machine, per the explicit "don't build a
+     giant scoring framework" instruction. Worth revisiting if market-relative performance alone proves too
+     coarse in practice.
+  4. **No live, real-market demonstration of a genuine STRENGTHENING→REVERSING transition was attempted** —
+     same reasoning as ADR-066's equivalent deferral: this requires real, unpredictable market movement
+     against a live position over time; deterministic tests with controlled evidence inputs are the correct
+     and only practical verification method today.
+  5. **Thesis-direction aggregation (`_thesis_direction`) takes no stance on genuinely mixed signals** (e.g.
+     a real earnings beat alongside a real analyst downgrade in the same poll) — trajectory simply holds at
+     its prior value rather than attempting to weight or reconcile conflicting directional evidence. A
+     reasonable, honest first-version choice, not yet validated against a real mixed-signal scenario (none of
+     the three live tickers has produced one to date).

@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 import httpx
 
-from .base import EarningsReport, GradeChange, Quote
+from .base import CompanyProfile, EarningsReport, GradeChange, Quote
 
 # Sprint 3.6.9 Remote STRATUS closeout -- provider-level TTL cache.
 #
@@ -37,6 +37,11 @@ from .base import EarningsReport, GradeChange, Quote
 EARNINGS_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours -- quarterly-cadence data
 GRADE_CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours -- infrequent-change data
 QUOTE_CACHE_TTL_SECONDS = 30 * 60  # 30 minutes -- the freshness-sensitive path
+# Stock Opportunity Logic V2.2: sector/average-volume/beta change on the
+# order of days-to-quarters, not intraday -- a long TTL is free and further
+# reduces real FMP call volume (this is an *additional* endpoint call this
+# block introduces; see the ADR's FMP capability audit).
+PROFILE_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
 
 
 class _FmpCacheEntry:
@@ -415,6 +420,7 @@ class FmpMarketDataProvider:
             quote_timestamp=datetime.fromtimestamp(timestamp, tz=timezone.utc),
             source_id=FMP_SOURCE_ID,
             source_name=FMP_SOURCE_NAME,
+            volume=entry.get("volume"),
         )
 
     def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
@@ -500,6 +506,83 @@ class FmpMarketDataProvider:
             new_rating=entry.get("newGrade"),
             action=action,
             action_date=action_date,
+            source_id=FMP_SOURCE_ID,
+            source_name=FMP_SOURCE_NAME,
+        )
+
+    def fetch_company_profile(self, entity_id: str) -> Optional[CompanyProfile]:
+        """Stock Opportunity Logic V2.2: FMP's `/profile` endpoint, on the
+        same base URL/API key/plan as `/quote` and `/grades` -- confirmed
+        live, 2026-08-24/25, to already return `averageVolume`, `beta`,
+        `sector`, and `industry` on the free tier this codebase already
+        uses. No new vendor, no new paid tier, no new secret -- see the
+        ADR's FMP capability audit for the full live-verified finding.
+        """
+        return self._cache.get_or_fetch(
+            "profile",
+            entity_id,
+            PROFILE_CACHE_TTL_SECONDS,
+            lambda: self._fetch_company_profile_uncached(entity_id),
+        )  # type: ignore[return-value]
+
+    def _fetch_company_profile_uncached(
+        self, entity_id: str
+    ) -> Optional[CompanyProfile]:
+        try:
+            response = self._client.get(
+                f"{self._base_url}/profile",
+                params={"symbol": entity_id, "apikey": self._api_key},
+            )
+        except httpx.RequestError as exc:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: network error ({exc})"
+            ) from exc
+
+        if response.status_code == 429:
+            raise FmpProviderError(
+                f"FMP rate limit hit fetching profile for {entity_id!r} "
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
+            )
+        if response.status_code != 200:
+            raise FmpProviderError(
+                f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
+                f"{_redact(response.text[:200], self._api_key)}"
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise FmpProviderError(
+                f"FMP profile response for {entity_id!r} was not valid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(payload, list):
+            raise FmpProviderError(
+                f"FMP profile response for {entity_id!r} was not a list as expected "
+                f"(got {type(payload).__name__})"
+            )
+        if len(payload) == 0:
+            # A real, legitimate "no data" case -- FMP has no profile for
+            # this symbol.
+            return None
+
+        entry = payload[0]
+        if not isinstance(entry, dict):
+            raise FmpProviderError(
+                f"FMP profile response for {entity_id!r} contained a non-dict entry"
+            )
+
+        # Every field here is genuinely optional -- unlike Quote/GradeChange
+        # (where a missing core field indicates a malformed response), a
+        # profile legitimately may not carry all of sector/averageVolume/
+        # beta for every symbol (e.g. a newly-listed or thinly-covered
+        # name). Never fabricated when absent.
+        return CompanyProfile(
+            entity_id=entry.get("symbol", entity_id),
+            sector=entry.get("sector"),
+            industry=entry.get("industry"),
+            average_volume=entry.get("averageVolume"),
+            beta=entry.get("beta"),
             source_id=FMP_SOURCE_ID,
             source_name=FMP_SOURCE_NAME,
         )

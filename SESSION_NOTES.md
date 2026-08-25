@@ -1644,3 +1644,58 @@ deterministic function -- produces `UP_TO_DATE` / `NEW_TO_USER` / `UPDATED_SINCE
 pre-existing exact-field-set tests extended, 1 pre-existing fake-item fixture extended -- all real additions,
 not leaks or weakenings. mypy/ruff/black clean throughout. See docs/DECISIONS.md ADR-067 for the full
 decision record. No merge to main.
+
+---
+
+# Session Notes — 2026-08-25 (Stock Opportunity Logic V2.2 — Evidence + Trajectory Enrichment)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the V2.1 commit `663ed28`
+(recovered/confirmed intact after another unexpected session interruption -- HEAD, working tree, and Fly v8
+all verified clean before continuing). Chuck sent one consolidated follow-on direction, continuing directly
+into this block once V2.1 was green/committed/pushed/deployed, per the owner's explicit "no owner-level
+dependency, keep moving" instruction.
+
+## What was asked
+
+Move STRATUS from "did anything change" to "is the objective evidence behind this opportunity strengthening,
+steady, weakening, or reversing -- and why." Additive to V2/V2.1; do not touch working lifecycle/snapshot/
+user-sync/notification/Ask STRATUS behavior unless a concrete defect requires it. Audit FMP's actual
+capability before adding any call; no new vendor/paid tier without approval.
+
+## FMP capability audit, done before writing any code
+
+A real, bounded live call against the already-configured `FMP_API_KEY` (`/stable/profile?symbol=NVDA`) found
+it already returns `sector`, `industry`, `averageVolume`, and `beta` on the same free plan already in use --
+closing the exact gap ADR-066 flagged as "likely present, not yet read." Market- and sector-relative
+performance need one more `/quote` call each (SPY; a small sector→SPDR-ETF lookup table) -- the same
+endpoint already integrated, just a different symbol. No new vendor, paid tier, or secret anywhere in this
+block.
+
+## What got built (see ADR-068 for the full per-area record)
+
+A clean `TrajectoryState` (STRENGTHENING/STEADY/WEAKENING/REVERSING), deliberately orthogonal to
+`LifecycleState` -- lifecycle answers "is this still an active thesis," trajectory answers "which way is the
+evidence moving." Computed via explicit, declared-threshold predicates (not one hardcoded universal rule or
+an opaque score): a poll-over-poll delta in thesis-aligned, market-relative performance drives
+strengthening/weakening; a stricter sign-flip-past-a-deadband rule drives reversal; a separate volume-
+confirmation branch can promote steady to strengthening on unusually high participation alone; reacceleration
+(a further, materially bigger jump while already strengthening) gets its own higher bar so it doesn't spam a
+revision on ordinary continued-strengthening noise. Thesis direction is read directly from `TriggerEvent`'s
+own already-real `direction` field, not invented. Global vs. personal state stays separate exactly as V2.1
+established -- the entire evidence/trajectory computation takes no `user_id`/`personal_relevance` input at
+all, proven directly. Meaningful-change integration is additive and lowest-priority in the existing
+`change_type` decision chain -- a real confidence/trigger-code/aging/personal change still wins if one fired
+the same poll; trajectory fields are exposed regardless via their own independent `LifecycleDelta` fields.
+Notification behavior mirrors the existing `confidence_increased`/`confidence_decreased` asymmetry exactly:
+strengthening/reaccelerated/reversing notify, weakening alone does not. Ask STRATUS gained a real "Evidence
+trajectory" grounding section -- concrete figures only, explicit instruction to say when a figure is absent
+rather than guess, deterministic tracker remains sole author of every fact.
+
+## Status at the end of this session
+
+`backend`/`logan_core`: 690 → 716 (+26: `test_evidence_trajectory.py` 12 pure unit tests, +7
+`fetch_company_profile` provider tests, +1 real-Orchestrator vertical proof, `test_evidence_trajectory_
+integration.py` 7 real backend-wiring tests). 4 pre-existing tests updated (3 FMP mock handlers extended to
+tolerate the new `/profile`/benchmark-quote calls, 2 exact-field-set allowlists extended for the four new
+`FeedItem` fields) -- all real, intentional updates, not weakenings. mypy/ruff/black clean throughout. See
+docs/DECISIONS.md ADR-068 for the full decision record. No merge to main.

@@ -42,6 +42,10 @@ def _routing_market_data_provider(quote_by_symbol: dict, grade_by_symbol: dict):
             return httpx.Response(200, json=quote_by_symbol.get(symbol, []))
         if request.url.path.endswith("/grades"):
             return httpx.Response(200, json=grade_by_symbol.get(symbol, []))
+        if request.url.path.endswith("/profile"):
+            # Stock Opportunity Logic V2.2: no profile fixture data in these
+            # pre-V2.2 tests -- an honest "no profile" response.
+            return httpx.Response(200, json=[])
         raise AssertionError(f"unexpected FMP path: {request.url.path}")
 
     transport = httpx.MockTransport(handler)

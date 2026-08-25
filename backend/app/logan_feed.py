@@ -19,10 +19,12 @@ from logan_core.contracts import (  # noqa: E402
     LOCAL_FOUNDER_USER_ID,
     DeliveredItem,
     Domain,
+    EvidenceSnapshot,
     FeedbackSignal,
     Holding,
     InteractionType,
     Interest,
+    MarketEvidenceInput,
     OpportunityRevision,
     RawSignal,
     UserModel,
@@ -742,6 +744,111 @@ def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | No
     return grade_change_to_raw_signal(grade)
 
 
+# Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment): the broad-
+# market benchmark for "market-relative performance" -- SPY (the S&P 500
+# ETF), a standard, widely-recognized proxy, fetched through the exact same
+# FmpMarketDataProvider.fetch_quote() this file already calls for every live
+# ticker. No new endpoint, no new vendor -- just one more symbol through an
+# already-integrated call.
+MARKET_BENCHMARK_SYMBOL = "SPY"
+
+# Sector -> SPDR Select Sector ETF, for "sector-relative performance" --
+# reasoned, industry-standard mappings (the same ETF family widely used for
+# this exact purpose), not derived from any FMP field. A sector this table
+# doesn't recognize simply gets no sector-relative evidence this poll (never
+# a fabricated benchmark) -- see _fetch_market_evidence's own handling.
+_SECTOR_BENCHMARK_SYMBOLS: dict[str, str] = {
+    "Technology": "XLK",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Financial Services": "XLF",
+    "Healthcare": "XLV",
+    "Industrials": "XLI",
+    "Communication Services": "XLC",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Basic Materials": "XLB",
+}
+
+
+def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | None:
+    """Stock Opportunity Logic V2.2: assembles this poll's objective market
+    evidence for one live-substituted ticker -- its own quote (price/
+    change_pct/volume), the broad-market benchmark's quote, its sector
+    benchmark's quote (when its profile resolves to a recognized sector),
+    and its company profile (sector/average_volume/beta). Every fetch is
+    independently best-effort: a failure fetching the profile or a benchmark
+    quote degrades that specific field to None rather than failing the whole
+    evidence attempt (an entity with a real quote but no recognized sector
+    still gets trigger-price/market-relative evidence, just no sector-
+    relative figure) -- matching this file's existing per-signal failure
+    isolation discipline. Returns None only when the entity's own quote
+    itself is unavailable, since without a real price there is nothing to
+    build evidence from at all.
+    """
+    try:
+        provider = FmpMarketDataProvider()
+    except FmpProviderError as exc:
+        print(
+            f"[live-stocks] {ticker}: market-data provider unavailable, skipping evidence: {exc}"
+        )
+        return None
+
+    try:
+        quote = provider.fetch_quote(ticker)
+    except FmpProviderError as exc:
+        print(
+            f"[live-stocks] {ticker}: FMP quote fetch failed, skipping evidence: {exc}"
+        )
+        return None
+    if quote is None:
+        print(f"[live-stocks] {ticker}: FMP has no quote, skipping evidence")
+        return None
+
+    market_change_pct: Optional[float] = None
+    try:
+        market_quote = provider.fetch_quote(MARKET_BENCHMARK_SYMBOL)
+        if market_quote is not None:
+            market_change_pct = market_quote.change_pct
+    except FmpProviderError as exc:
+        print(f"[live-stocks] {ticker}: market benchmark fetch failed: {exc}")
+
+    sector: Optional[str] = None
+    average_volume: Optional[float] = None
+    beta: Optional[float] = None
+    try:
+        profile = provider.fetch_company_profile(ticker)
+        if profile is not None:
+            sector = profile.sector
+            average_volume = profile.average_volume
+            beta = profile.beta
+    except FmpProviderError as exc:
+        print(f"[live-stocks] {ticker}: profile fetch failed: {exc}")
+
+    sector_benchmark_symbol = _SECTOR_BENCHMARK_SYMBOLS.get(sector) if sector else None
+    sector_change_pct: Optional[float] = None
+    if sector_benchmark_symbol is not None:
+        try:
+            sector_quote = provider.fetch_quote(sector_benchmark_symbol)
+            if sector_quote is not None:
+                sector_change_pct = sector_quote.change_pct
+        except FmpProviderError as exc:
+            print(f"[live-stocks] {ticker}: sector benchmark fetch failed: {exc}")
+
+    return MarketEvidenceInput(
+        price=quote.price,
+        change_pct=quote.change_pct,
+        market_change_pct=market_change_pct,
+        sector=sector,
+        sector_benchmark_symbol=sector_benchmark_symbol,
+        sector_change_pct=sector_change_pct,
+        volume=quote.volume,
+        average_volume=average_volume,
+        beta=beta,
+    )
+
+
 def reset_pipeline_state() -> None:
     """Test-only (and general-purpose "start over") hook: drops the persistent
     Orchestrator, baseline tracking, and persisted UserModel, so the next call
@@ -1037,6 +1144,27 @@ class FeedItem(BaseModel):
     # review state, not revision knowledge).
     user_sync_status: str | None = None
 
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment, see
+    # docs/DECISIONS.md). Both None/default whenever lifecycle tracking
+    # isn't active OR no live market evidence was fetched this poll (a
+    # provider failure, or the entity isn't a live-substituted ticker) --
+    # additive, same discipline as every prior lifecycle_*/opportunity_*
+    # field on this contract.
+    #
+    # trajectory: is the objective evidence strengthening/steady/weakening/
+    # reversing -- a dimension deliberately separate from lifecycle_state
+    # above (lifecycle_state answers "is this still active as a thesis";
+    # trajectory answers "which way is the evidence moving").
+    trajectory: str = "STEADY"
+    previous_trajectory: str = "STEADY"
+    trajectory_reason: str | None = None
+    # evidence: typed/queryable core evidence (trigger price, price change
+    # since trigger/since last revision, market- and sector-relative
+    # performance, volume vs. average, beta-normalized move) -- a nested
+    # structured object, not an opaque JSON blob, mirroring how
+    # `delivered_item` is already a typed sub-object on this same contract.
+    evidence: EvidenceSnapshot | None = None
+
 
 class DemoFeedResponse(BaseModel):
     items: list[FeedItem]
@@ -1212,6 +1340,15 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
             # price-move/grade-only live opportunity (earnings not firing)
             # is a real, deliberately deferred capability -- see the Block 5
             # ADR's own consequences.
+            # Stock Opportunity Logic V2.2 (Evidence + Trajectory
+            # Enrichment): market evidence is fetched under the identical
+            # `live_substituted` gate as the price-move/grade signals above
+            # -- a simulated demo entity never gets a live evidence fetch
+            # spliced onto it, matching this file's own "fully live or
+            # fully simulated, never blended" rule. A fetch failure (any
+            # FMP hiccup) degrades to no evidence this poll, never a
+            # fabricated one -- see _fetch_market_evidence's own docstring.
+            market_evidence = None
             if entity_id in live_substituted:
                 live_price_signal = _live_price_move_raw_signal(entity_id, now)
                 if live_price_signal is not None:
@@ -1219,6 +1356,7 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                 live_grade_signal = _live_analyst_grade_raw_signal(entity_id, now)
                 if live_grade_signal is not None:
                     raw_signals.append(live_grade_signal)
+                market_evidence = _fetch_market_evidence(entity_id, now)
 
             result = orchestrator.run(
                 raw_signals=raw_signals,
@@ -1226,6 +1364,7 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                 user_model=user_model,
                 engagement_samples=_engagement_samples(entity_id, now),
                 domain=raw_signal.domain,
+                market_evidence=market_evidence,
             )
             results.append((entity_id, result))
 
@@ -1387,6 +1526,25 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
                     opportunity_revision=current_revision,
                     user_sync_status=(
                         sync_delta.status if sync_delta is not None else None
+                    ),
+                    # Stock Opportunity Logic V2.2 -- all inert defaults
+                    # whenever r.lifecycle_delta is None, identical
+                    # discipline to the V2 fields above.
+                    trajectory=(
+                        r.lifecycle_delta.trajectory if r.lifecycle_delta else "STEADY"
+                    ),
+                    previous_trajectory=(
+                        r.lifecycle_delta.previous_trajectory
+                        if r.lifecycle_delta
+                        else "STEADY"
+                    ),
+                    trajectory_reason=(
+                        r.lifecycle_delta.trajectory_reason
+                        if r.lifecycle_delta
+                        else None
+                    ),
+                    evidence=(
+                        r.lifecycle_delta.evidence if r.lifecycle_delta else None
                     ),
                 )
             )

@@ -27,7 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from logan_core.contracts import Domain  # noqa: E402
+from logan_core.contracts import Domain, EvidenceSnapshot  # noqa: E402
 from logan_core.convergence import STOCK_CONVERGENCE_MULTI_SOURCE  # noqa: E402
 from logan_core.opportunity_lifecycle import UserSyncDelta  # noqa: E402
 from logan_core.orchestrator.pipeline import PipelineResult  # noqa: E402
@@ -95,6 +95,17 @@ class OpportunityContext(BaseModel):
     # model one authoritative sentence instead of making it infer meaning
     # from raw revision integers.
     sync_summary: Optional[str] = None
+
+    # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment, see
+    # docs/DECISIONS.md). None/default whenever lifecycle tracking isn't
+    # active or no live market evidence was fetched this poll -- additive,
+    # same discipline as every field above. This is what lets a grounded
+    # answer explain *why* a trajectory is what it is (real relative-
+    # performance/volume/beta figures), not just state the label.
+    trajectory: str = "STEADY"
+    previous_trajectory: str = "STEADY"
+    trajectory_reason: Optional[str] = None
+    evidence: Optional[EvidenceSnapshot] = None
 
 
 def _sync_summary(delta: "UserSyncDelta") -> str:
@@ -168,6 +179,10 @@ def build_opportunity_context(
         last_seen_revision=sync_delta.last_seen_revision if sync_delta else None,
         user_sync_status=sync_delta.status if sync_delta else None,
         sync_summary=_sync_summary(sync_delta) if sync_delta else None,
+        trajectory=delta.trajectory if delta else "STEADY",
+        previous_trajectory=delta.previous_trajectory if delta else "STEADY",
+        trajectory_reason=delta.trajectory_reason if delta else None,
+        evidence=delta.evidence if delta else None,
     )
 
 

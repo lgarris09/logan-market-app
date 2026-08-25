@@ -25,6 +25,7 @@ from logan_core.contracts import (
     FeedbackSignal,
     InteractionType,
     LifecycleDelta,
+    MarketEvidenceInput,
     MemoryWrite,
     MentalModel,
     NormalizedSignal,
@@ -361,8 +362,18 @@ class Orchestrator:
         engagement_samples: list[EngagementSample],
         domain: Domain,
         current_question: Optional[str] = None,
+        market_evidence: Optional[MarketEvidenceInput] = None,
     ) -> PipelineResult:
         """Runs the primary vertical-slice pipeline: Raw Signal through Presentation.
+
+        `market_evidence` (Stock Opportunity Logic V2.2, Optional, default
+        None) is forwarded to `lifecycle_tracker.observe()` unchanged when a
+        tracker is wired in -- every pre-V2.2 caller that never passes it
+        gets byte-for-byte unchanged behavior (trajectory stays "STEADY",
+        evidence stays None). `trigger_directions` is never a caller
+        parameter -- it's derived here from this event's own
+        `TriggerEvent.direction` values, already real, already implemented
+        data (contracts/trigger.py), not a new input surface.
         Feedback and Learning are separate, explicit calls (run_feedback_loop) — see
         LOGAN_IMPLEMENTATION_PLAN.md's resolved first-operational-test scope.
         """
@@ -573,6 +584,8 @@ class Orchestrator:
                     user_id=user_id,
                     personal_relevance=recommendation.dimensions.personal_relevance,
                     now=datetime.now(timezone.utc),
+                    market_evidence=market_evidence,
+                    trigger_directions=[t.direction for t in event.trigger_events],
                 ),
                 event_id=event.event_id,
             )

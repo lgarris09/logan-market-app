@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from .base import EarningsReport, GradeChange, Quote
+from .base import CompanyProfile, EarningsReport, GradeChange, Quote
 
 # Explicit, unmistakable marker for anything sourced from this provider --
 # Phase 4 instruction: "never quietly fall back to simulated data while
@@ -68,15 +68,23 @@ class FixtureMarketDataProvider:
         self,
         quotes: Optional[dict[str, Quote]] = None,
         grade_changes: Optional[dict[str, GradeChange]] = None,
+        profiles: Optional[dict[str, CompanyProfile]] = None,
     ) -> None:
         self._quotes = quotes or {}
         self._grade_changes = grade_changes or {}
+        self._profiles = profiles or {}
 
     def fetch_quote(self, entity_id: str) -> Optional[Quote]:
         return self._quotes.get(entity_id)
 
     def fetch_latest_grade_change(self, entity_id: str) -> Optional[GradeChange]:
         return self._grade_changes.get(entity_id)
+
+    def fetch_company_profile(self, entity_id: str) -> Optional[CompanyProfile]:
+        """Stock Opportunity Logic V2.2 -- deterministic, in-repo profile
+        data, explicitly NOT live. Same role/discipline as the two methods
+        above."""
+        return self._profiles.get(entity_id)
 
 
 def nvda_price_move_up_fixture() -> Quote:

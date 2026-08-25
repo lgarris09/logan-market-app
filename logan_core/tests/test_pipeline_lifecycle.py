@@ -9,6 +9,7 @@ Evidence Trust, Reasoning, Opportunity, Policy, Prioritization) is used
 completely unmodified.
 """
 
+from logan_core.contracts import MarketEvidenceInput
 from logan_core.opportunity_lifecycle import OpportunityLifecycleTracker
 from logan_core.orchestrator import Orchestrator, PipelineDependencies
 from logan_core.receptors import earnings_report_to_raw_signal
@@ -169,3 +170,53 @@ def test_restart_simulated_tracker_reload_does_not_treat_known_entity_as_new(
     assert result.lifecycle_delta is not None
     assert result.lifecycle_delta.change_type != "new_opportunity"
     assert result.prioritized_item.changed_since_view is False
+
+
+# --- Stock Opportunity Logic V2.2 -- market_evidence flows through the real
+# Orchestrator, including a real TriggerEvent's own `direction` field --------
+
+
+def test_market_evidence_reaches_lifecycle_delta_through_real_orchestrator(
+    user_model, engagement_samples, now
+):
+    """Full vertical proof: market_evidence passed to Orchestrator.run() ends
+    up on the real LifecycleDelta.evidence the pipeline produces, and
+    trigger_directions is correctly derived from this event's own real
+    TriggerEvents (STOCK_EARNINGS_BEAT fires with direction="positive" --
+    see TRIGGER_REGISTRY_STOCKS.md), not a hand-built test double."""
+    tracker = OpportunityLifecycleTracker()
+    orchestrator = _orchestrator(tracker)
+    raw = earnings_report_to_raw_signal(nvda_earnings_beat_fixture())
+    raw = raw.model_copy(update={"captured_at": now})
+
+    first = orchestrator.run(
+        raw_signals=[raw],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+        market_evidence=MarketEvidenceInput(
+            price=100.0, change_pct=0.0, market_change_pct=0.0
+        ),
+    )
+    assert first.lifecycle_delta is not None
+    assert first.lifecycle_delta.evidence is not None
+    assert first.lifecycle_delta.evidence.trigger_price == 100.0
+
+    second = orchestrator.run(
+        raw_signals=[raw],
+        user_id="demo_user",
+        user_model=user_model,
+        engagement_samples=engagement_samples,
+        domain="stocks",
+        market_evidence=MarketEvidenceInput(
+            price=105.0, change_pct=5.0, market_change_pct=0.0
+        ),
+    )
+    assert second.lifecycle_delta is not None
+    assert second.lifecycle_delta.evidence is not None
+    # trigger_price persists from the first poll; the real earnings-beat
+    # trigger's own direction="positive" is what let trajectory take a
+    # directional stance at all.
+    assert second.lifecycle_delta.evidence.trigger_price == 100.0
+    assert second.lifecycle_delta.trajectory == "STRENGTHENING"

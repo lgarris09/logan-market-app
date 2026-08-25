@@ -82,13 +82,33 @@ class LifecycleStore:
                 "ALTER TABLE lifecycle_snapshots ADD COLUMN revision INTEGER "
                 "NOT NULL DEFAULT 1"
             )
+            existing_columns.add("revision")
+        # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment):
+        # same additive-column-guard pattern as `revision` above -- every
+        # new column is nullable (no NOT NULL/DEFAULT constraint beyond
+        # `trajectory`, which defaults to the same inert "STEADY" every
+        # pre-V2.2 row should be read back as).
+        v22_columns = {
+            "trigger_price": "REAL",
+            "price_at_last_revision": "REAL",
+            "last_relative_strength": "REAL",
+            "last_volume_ratio": "REAL",
+            "trajectory": "TEXT NOT NULL DEFAULT 'STEADY'",
+        }
+        for column, ddl in v22_columns.items():
+            if column not in existing_columns:
+                self._conn.execute(
+                    f"ALTER TABLE lifecycle_snapshots ADD COLUMN {column} {ddl}"
+                )
         self._conn.commit()
 
     def load_all(self) -> list[LifecycleSnapshot]:
         rows = self._conn.execute(
             "SELECT entity_id, lifecycle_state, confidence_score, trigger_codes, "
             "first_seen_at, last_meaningful_change_at, last_notification_worthy_at, "
-            "last_evaluated_at, revision FROM lifecycle_snapshots"
+            "last_evaluated_at, revision, trigger_price, price_at_last_revision, "
+            "last_relative_strength, last_volume_ratio, trajectory "
+            "FROM lifecycle_snapshots"
         ).fetchall()
         return [
             LifecycleSnapshot(
@@ -101,6 +121,11 @@ class LifecycleStore:
                 last_notification_worthy_at=row["last_notification_worthy_at"],
                 last_evaluated_at=row["last_evaluated_at"],
                 revision=row["revision"],
+                trigger_price=row["trigger_price"],
+                price_at_last_revision=row["price_at_last_revision"],
+                last_relative_strength=row["last_relative_strength"],
+                last_volume_ratio=row["last_volume_ratio"],
+                trajectory=row["trajectory"],
             )
             for row in rows
         ]
@@ -110,7 +135,9 @@ class LifecycleStore:
             "INSERT INTO lifecycle_snapshots "
             "(entity_id, lifecycle_state, confidence_score, trigger_codes, "
             "first_seen_at, last_meaningful_change_at, last_notification_worthy_at, "
-            "last_evaluated_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "last_evaluated_at, revision, trigger_price, price_at_last_revision, "
+            "last_relative_strength, last_volume_ratio, trajectory) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(entity_id) DO UPDATE SET "
             "lifecycle_state=excluded.lifecycle_state, "
             "confidence_score=excluded.confidence_score, "
@@ -118,7 +145,12 @@ class LifecycleStore:
             "last_meaningful_change_at=excluded.last_meaningful_change_at, "
             "last_notification_worthy_at=excluded.last_notification_worthy_at, "
             "last_evaluated_at=excluded.last_evaluated_at, "
-            "revision=excluded.revision",
+            "revision=excluded.revision, "
+            "trigger_price=excluded.trigger_price, "
+            "price_at_last_revision=excluded.price_at_last_revision, "
+            "last_relative_strength=excluded.last_relative_strength, "
+            "last_volume_ratio=excluded.last_volume_ratio, "
+            "trajectory=excluded.trajectory",
             (
                 snapshot.entity_id,
                 snapshot.lifecycle_state,
@@ -133,6 +165,11 @@ class LifecycleStore:
                 ),
                 snapshot.last_evaluated_at.isoformat(),
                 snapshot.revision,
+                snapshot.trigger_price,
+                snapshot.price_at_last_revision,
+                snapshot.last_relative_strength,
+                snapshot.last_volume_ratio,
+                snapshot.trajectory,
             ),
         )
         self._conn.commit()

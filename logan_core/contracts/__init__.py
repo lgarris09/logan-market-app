@@ -19,11 +19,14 @@ from .confidence import ConclusionConfidence
 from .feedback import FeedbackSignal, InferredIntent, InteractionType, OutcomeRecord
 from .learning import MemoryWrite
 from .lifecycle import (
+    EvidenceSnapshot,
     LifecycleDelta,
     LifecycleSnapshot,
     LifecycleState,
+    MarketEvidenceInput,
     MeaningfulChangeType,
     OpportunityRevision,
+    TrajectoryState,
 )
 from .memory import MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
@@ -114,4 +117,7 @@ __all__ = [
     "LifecycleSnapshot",
     "LifecycleDelta",
     "OpportunityRevision",
+    "TrajectoryState",
+    "MarketEvidenceInput",
+    "EvidenceSnapshot",
 ]

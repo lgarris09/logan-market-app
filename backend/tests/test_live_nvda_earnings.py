@@ -319,6 +319,10 @@ def test_live_nvda_response_has_no_internal_or_secret_fields(monkeypatch):
         "thesis_age_hours",
         "opportunity_revision",
         "user_sync_status",
+        "trajectory",
+        "previous_trajectory",
+        "trajectory_reason",
+        "evidence",
     }
 
 

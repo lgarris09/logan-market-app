@@ -24,10 +24,13 @@ from datetime import datetime
 from typing import Optional
 
 from logan_core.contracts import (
+    EvidenceSnapshot,
     LifecycleDelta,
     LifecycleSnapshot,
     LifecycleState,
+    MarketEvidenceInput,
     MeaningfulChangeType,
+    TrajectoryState,
 )
 
 # Signal-specific natural relevance windows (hours) -- reasoned per signal
@@ -104,6 +107,15 @@ _NOTIFICATION_WORTHY_CHANGE_TYPES = {
     "convergence_formed",
     "reactivated",
     "personal_relevance_increased",
+    # Stock Opportunity Logic V2.2: a trajectory turning against the thesis,
+    # or a genuinely strengthening/reaccelerating one, is exactly the kind of
+    # real evidence-backed transition Watch exists to catch -- matching the
+    # existing confidence_increased precedent. "trajectory_weakening" is
+    # deliberately absent, mirroring confidence_decreased's own asymmetry: a
+    # modest weakening updates the card without interrupting the user.
+    "trajectory_strengthening",
+    "trajectory_reaccelerated",
+    "trajectory_reversing",
 }
 
 
@@ -118,6 +130,246 @@ def _window_hours(
     """
     windows = [table.get(code, default) for code in trigger_codes]
     return max(windows) if windows else default
+
+
+# --- Stock Opportunity Logic V2.2 -- Evidence + Trajectory Enrichment ------
+#
+# Deliberately explicit, declared thresholds -- not a learned/opaque score --
+# matching this file's own existing discipline (CONFIDENCE_DELTA_THRESHOLD
+# etc.). All units are percentage points of *thesis-aligned, market-relative*
+# performance (see _signed_relative_strength) unless noted otherwise.
+
+# The delta (poll-over-poll) in thesis-aligned relative strength required to
+# call the trajectory STRENGTHENING or WEAKENING at all.
+TRAJECTORY_STRENGTHEN_DELTA = 1.0
+# A further, materially larger jump while *already* STRENGTHENING -- "a
+# strong thesis reaccelerates while remaining in the same trajectory
+# category" from the product spec. Deliberately a distinct, larger bar than
+# the base delta so ordinary quote noise while strengthening doesn't spam a
+# fresh meaningful revision every poll.
+TRAJECTORY_REACCELERATION_DELTA = 2.5
+# REVERSING requires the *sign* of thesis-aligned relative strength to flip
+# from genuinely confirming to genuinely contradicting -- both sides of the
+# flip must clear this small deadband, so a move hovering near zero (neither
+# clearly confirming nor contradicting) never registers as a "reversal."
+TRAJECTORY_REVERSAL_CONFIRM_THRESHOLD = 0.5
+# Volume confirmation: participation this poll vs. the entity's own average
+# volume baseline (see MarketEvidenceInput.average_volume). 1.5x is a
+# conservative, explicit "unusually high" bar -- not derived from any
+# statistical distribution, matching this file's declared-constant style.
+HIGH_VOLUME_RATIO = 1.5
+
+
+def _thesis_direction(trigger_directions: list[str]) -> str:
+    """Aggregate directional bias of this poll's active TriggerEvents
+    (TriggerEvent.direction is already a real, implemented field -- see
+    contracts/trigger.py -- reused here rather than inventing a second
+    directionality concept). "positive" (e.g. an earnings beat, an analyst
+    upgrade) means the thesis expects the price to outperform; "negative"
+    (a miss, a downgrade) means it expects underperformance. Any mix of both
+    (or neither/empty) is "mixed" -- trajectory takes no directional stance
+    on genuinely ambiguous or absent evidence rather than guessing.
+    """
+    has_positive = "positive" in trigger_directions
+    has_negative = "negative" in trigger_directions
+    if has_positive and not has_negative:
+        return "positive"
+    if has_negative and not has_positive:
+        return "negative"
+    return "mixed"
+
+
+def _signed_relative_strength(
+    relative_to_market_pct: Optional[float], thesis_direction: str
+) -> Optional[float]:
+    """Thesis-aligned relative-to-market performance: positive always means
+    "confirming this opportunity's own directional thesis," negative always
+    means "contradicting it," regardless of whether the thesis itself is
+    bullish or bearish -- this is the single number trajectory compares
+    poll-to-poll. None when there's no usable market-relative figure, or the
+    active triggers give no clear directional stance to align against.
+    """
+    if relative_to_market_pct is None or thesis_direction == "mixed":
+        return None
+    return (
+        relative_to_market_pct
+        if thesis_direction == "positive"
+        else -relative_to_market_pct
+    )
+
+
+def _build_evidence(
+    entity_id: str,
+    evidence_input: MarketEvidenceInput,
+    trigger_price: float,
+    price_at_last_revision: Optional[float],
+    now: datetime,
+) -> EvidenceSnapshot:
+    """Pure arithmetic over already-fetched, already-verified provider data
+    (see backend/app/logan_feed.py for how MarketEvidenceInput is populated)
+    -- makes zero provider calls itself. Every ratio is None when an input it
+    needs is missing, never a fabricated/estimated value.
+    """
+    price = evidence_input.price
+    assert price is not None  # guaranteed by the caller's own guard
+    price_change_since_trigger_pct = (
+        (price - trigger_price) / trigger_price * 100.0 if trigger_price else None
+    )
+    price_change_since_last_revision_pct = (
+        (price - price_at_last_revision) / price_at_last_revision * 100.0
+        if price_at_last_revision
+        else None
+    )
+    relative_to_market_pct = (
+        evidence_input.change_pct - evidence_input.market_change_pct
+        if evidence_input.change_pct is not None
+        and evidence_input.market_change_pct is not None
+        else None
+    )
+    relative_to_sector_pct = (
+        evidence_input.change_pct - evidence_input.sector_change_pct
+        if evidence_input.change_pct is not None
+        and evidence_input.sector_change_pct is not None
+        else None
+    )
+    volume_ratio = (
+        evidence_input.volume / evidence_input.average_volume
+        if evidence_input.volume is not None and evidence_input.average_volume
+        else None
+    )
+    beta_normalized_move_pct = (
+        evidence_input.change_pct / evidence_input.beta
+        if evidence_input.change_pct is not None and evidence_input.beta
+        else None
+    )
+    return EvidenceSnapshot(
+        entity_id=entity_id,
+        price=price,
+        trigger_price=trigger_price,
+        price_change_since_trigger_pct=price_change_since_trigger_pct,
+        price_change_since_last_revision_pct=price_change_since_last_revision_pct,
+        market_change_pct=evidence_input.market_change_pct,
+        relative_to_market_pct=relative_to_market_pct,
+        sector=evidence_input.sector,
+        sector_change_pct=evidence_input.sector_change_pct,
+        relative_to_sector_pct=relative_to_sector_pct,
+        volume=evidence_input.volume,
+        average_volume=evidence_input.average_volume,
+        volume_ratio=volume_ratio,
+        beta=evidence_input.beta,
+        beta_normalized_move_pct=beta_normalized_move_pct,
+        evaluated_at=now,
+    )
+
+
+def _compute_trajectory(
+    prior_trajectory: TrajectoryState,
+    prior_relative_strength: Optional[float],
+    relative_strength: Optional[float],
+    prior_volume_ratio: Optional[float],
+    volume_ratio: Optional[float],
+) -> tuple[TrajectoryState, str, bool, Optional[MeaningfulChangeType]]:
+    """The trajectory state machine: STRENGTHENING/STEADY/WEAKENING/REVERSING,
+    a reason sentence, whether this poll's trajectory is itself meaningful
+    enough to surface as a change_type, and (when so) which one. Explicit
+    deterministic predicates, not a composite/opaque score -- each branch is
+    independently readable and testable. Never reads user_id/
+    personal_relevance -- purely a function of two polls' worth of objective
+    market evidence.
+    """
+    if relative_strength is None:
+        # No usable directional evidence this poll (mixed/absent trigger
+        # direction, or a missing market-relative figure) -- hold the prior
+        # trajectory rather than guessing; not itself a meaningful event.
+        return (
+            prior_trajectory,
+            "No directional market evidence available this poll.",
+            False,
+            None,
+        )
+
+    if prior_relative_strength is None:
+        return (
+            "STEADY",
+            "First evidence-bearing poll for this opportunity -- no prior "
+            "trajectory to compare against yet.",
+            False,
+            None,
+        )
+
+    delta = relative_strength - prior_relative_strength
+
+    if (
+        prior_relative_strength > TRAJECTORY_REVERSAL_CONFIRM_THRESHOLD
+        and relative_strength < -TRAJECTORY_REVERSAL_CONFIRM_THRESHOLD
+    ):
+        return (
+            "REVERSING",
+            (
+                f"Evidence has flipped against the thesis: relative "
+                f"performance moved from +{prior_relative_strength:.1f}pp to "
+                f"{relative_strength:.1f}pp."
+            ),
+            True,
+            "trajectory_reversing",
+        )
+
+    if delta >= TRAJECTORY_STRENGTHEN_DELTA:
+        if (
+            prior_trajectory == "STRENGTHENING"
+            and delta >= TRAJECTORY_REACCELERATION_DELTA
+        ):
+            return (
+                "STRENGTHENING",
+                f"Thesis reaccelerated: relative performance improved by "
+                f"{delta:.1f}pp, well beyond ordinary continued strengthening.",
+                True,
+                "trajectory_reaccelerated",
+            )
+        first_time = prior_trajectory != "STRENGTHENING"
+        return (
+            "STRENGTHENING",
+            f"Relative performance improved by {delta:.1f}pp -- evidence is "
+            "strengthening the thesis.",
+            first_time,
+            "trajectory_strengthening" if first_time else None,
+        )
+
+    if delta <= -TRAJECTORY_STRENGTHEN_DELTA:
+        first_time = prior_trajectory != "WEAKENING"
+        return (
+            "WEAKENING",
+            f"Relative performance declined by {abs(delta):.1f}pp -- evidence "
+            "is weakening.",
+            first_time,
+            "trajectory_weakening" if first_time else None,
+        )
+
+    # Volume confirmation: a real, separate predicate -- "significant volume
+    # confirmation appears" -- that can promote an otherwise-steady thesis
+    # into strengthening even without a big relative-strength move yet, but
+    # only while the price action is still net-confirming (never on its own
+    # against contradicting evidence).
+    if (
+        volume_ratio is not None
+        and prior_volume_ratio is not None
+        and volume_ratio >= HIGH_VOLUME_RATIO > prior_volume_ratio
+        and relative_strength > 0
+    ):
+        return (
+            "STRENGTHENING",
+            f"Volume confirmation: participation jumped to {volume_ratio:.1f}x "
+            "average while price action continues to confirm the thesis.",
+            True,
+            "trajectory_strengthening",
+        )
+
+    return (
+        prior_trajectory,
+        "No material change in evidence trajectory this poll.",
+        False,
+        None,
+    )
 
 
 class OpportunityLifecycleTracker:
@@ -154,6 +406,8 @@ class OpportunityLifecycleTracker:
         user_id: str,
         personal_relevance: float,
         now: datetime,
+        market_evidence: Optional[MarketEvidenceInput] = None,
+        trigger_directions: Optional[list[str]] = None,
     ) -> LifecycleDelta:
         """The core comparison: current authoritative facts (confidence,
         active trigger_codes, this user's personal_relevance) against the
@@ -163,6 +417,16 @@ class OpportunityLifecycleTracker:
         above, never learned or LLM-influenced (the LLM layer, see
         backend/app/lifecycle_narrative.py, only ever narrates a delta this
         method already computed -- it cannot produce one itself).
+
+        `market_evidence`/`trigger_directions` (Stock Opportunity Logic V2.2,
+        both Optional, default None) are the only new inputs -- every
+        pre-V2.2 caller/test that never passes them gets byte-for-byte
+        unchanged lifecycle_state/confidence/revision behavior, with
+        trajectory staying at its inert "STEADY" default. Never mixed with
+        `user_id`/`personal_relevance` in the evidence/trajectory
+        computation below -- trajectory is purely objective, entity-keyed,
+        identical for every user, per the explicit "keep global vs personal
+        state separate" requirement carried forward from V2.1.
         """
         prior = self._snapshots.get(entity_id)
         personal_key = (user_id, entity_id)
@@ -170,6 +434,22 @@ class OpportunityLifecycleTracker:
         self._personal_relevance[personal_key] = personal_relevance
 
         if prior is None:
+            trigger_price: Optional[float] = None
+            evidence: Optional[EvidenceSnapshot] = None
+            trajectory: TrajectoryState = "STEADY"
+            if market_evidence is not None and market_evidence.price is not None:
+                trigger_price = market_evidence.price
+                evidence = _build_evidence(
+                    entity_id, market_evidence, trigger_price, trigger_price, now
+                )
+            relative_strength = (
+                _signed_relative_strength(
+                    evidence.relative_to_market_pct,
+                    _thesis_direction(trigger_directions or []),
+                )
+                if evidence is not None
+                else None
+            )
             self._snapshots[entity_id] = LifecycleSnapshot(
                 entity_id=entity_id,
                 lifecycle_state="new",
@@ -180,6 +460,11 @@ class OpportunityLifecycleTracker:
                 last_notification_worthy_at=now,
                 last_evaluated_at=now,
                 revision=1,
+                trigger_price=trigger_price,
+                price_at_last_revision=trigger_price,
+                last_relative_strength=relative_strength,
+                last_volume_ratio=evidence.volume_ratio if evidence else None,
+                trajectory=trajectory,
             )
             return LifecycleDelta(
                 entity_id=entity_id,
@@ -199,6 +484,10 @@ class OpportunityLifecycleTracker:
                 thesis_age_hours=0.0,
                 previous_revision=1,
                 new_revision=1,
+                trajectory=trajectory,
+                previous_trajectory=trajectory,
+                trajectory_reason=None,
+                evidence=evidence,
             )
 
         confidence_delta = confidence_score - prior.confidence_score
@@ -239,7 +528,50 @@ class OpportunityLifecycleTracker:
             trigger_codes, _EXPIRE_WINDOW_HOURS, _DEFAULT_EXPIRE_WINDOW_HOURS
         )
 
-        is_meaningful = world_meaningful or personal_meaningful
+        # Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment):
+        # objective evidence/trajectory computation, entirely independent of
+        # user_id/personal_relevance. `effective_trigger_price` carries prior
+        # trigger_price forward untouched when this poll has no market
+        # evidence (or sets it for the first time, exactly once, the first
+        # poll evidence ever arrives -- possibly later than this
+        # opportunity's own first_seen_at, if evidence wasn't available yet).
+        evidence = None
+        trajectory = prior.trajectory
+        previous_trajectory = prior.trajectory
+        trajectory_reason = None
+        trajectory_meaningful = False
+        trajectory_change_type: Optional[MeaningfulChangeType] = None
+        relative_strength = None
+        effective_trigger_price = prior.trigger_price
+
+        if market_evidence is not None and market_evidence.price is not None:
+            if effective_trigger_price is None:
+                effective_trigger_price = market_evidence.price
+            evidence = _build_evidence(
+                entity_id,
+                market_evidence,
+                effective_trigger_price,
+                prior.price_at_last_revision,
+                now,
+            )
+            relative_strength = _signed_relative_strength(
+                evidence.relative_to_market_pct,
+                _thesis_direction(trigger_directions or []),
+            )
+            (
+                trajectory,
+                trajectory_reason,
+                trajectory_meaningful,
+                trajectory_change_type,
+            ) = _compute_trajectory(
+                prior_trajectory=prior.trajectory,
+                prior_relative_strength=prior.last_relative_strength,
+                relative_strength=relative_strength,
+                prior_volume_ratio=prior.last_volume_ratio,
+                volume_ratio=evidence.volume_ratio,
+            )
+
+        is_meaningful = world_meaningful or personal_meaningful or trajectory_meaningful
         reactivated = prior.lifecycle_state in ("cooling", "stale") and world_meaningful
 
         new_state: LifecycleState
@@ -332,8 +664,19 @@ class OpportunityLifecycleTracker:
                 if prior.lifecycle_state in ("new", "developing", "high_attention")
                 else prior.lifecycle_state
             )
-            change_type = "none"
-            reason = "No material change -- STRATUS is still monitoring."
+            # Stock Opportunity Logic V2.2: a trajectory-only change is the
+            # lowest-priority meaningful reason -- every higher-priority
+            # branch above (world-fact, aging, personal) already claimed
+            # change_type/reason if it fired this poll. Deliberately does
+            # NOT alter `new_state`/lifecycle_state at all -- trajectory and
+            # lifecycle remain orthogonal dimensions, per the explicit
+            # product requirement.
+            if trajectory_meaningful and trajectory_change_type is not None:
+                change_type = trajectory_change_type
+                reason = trajectory_reason or "The evidence trajectory has changed."
+            else:
+                change_type = "none"
+                reason = "No material change -- STRATUS is still monitoring."
 
         is_notification_worthy = (
             is_meaningful and change_type in _NOTIFICATION_WORTHY_CHANGE_TYPES
@@ -373,6 +716,32 @@ class OpportunityLifecycleTracker:
         )
         new_revision = prior.revision + 1 if is_global_meaningful else prior.revision
 
+        # Stock Opportunity Logic V2.2: "price at last meaningful snapshot"
+        # advances only on a genuine global revision boundary, matching the
+        # literal product question ("how far has price moved since the last
+        # meaningful snapshot") -- not every poll, and not on a
+        # personal-relevance-only change either (is_global_meaningful already
+        # excludes that case, same as the revision counter itself).
+        price_at_last_revision = (
+            market_evidence.price
+            if (
+                market_evidence is not None
+                and market_evidence.price is not None
+                and is_global_meaningful
+            )
+            else prior.price_at_last_revision
+        )
+        # last_relative_strength/last_volume_ratio only advance on a poll
+        # that actually had usable evidence -- a poll with none (provider
+        # failure, demo mode) must never erase previously-established
+        # trajectory history.
+        last_relative_strength = (
+            relative_strength if evidence is not None else prior.last_relative_strength
+        )
+        last_volume_ratio = (
+            evidence.volume_ratio if evidence is not None else prior.last_volume_ratio
+        )
+
         self._snapshots[entity_id] = LifecycleSnapshot(
             entity_id=entity_id,
             lifecycle_state=new_state,
@@ -385,6 +754,11 @@ class OpportunityLifecycleTracker:
             ),
             last_evaluated_at=now,
             revision=new_revision,
+            trigger_price=effective_trigger_price,
+            price_at_last_revision=price_at_last_revision,
+            last_relative_strength=last_relative_strength,
+            last_volume_ratio=last_volume_ratio,
+            trajectory=trajectory,
         )
 
         return LifecycleDelta(
@@ -405,4 +779,8 @@ class OpportunityLifecycleTracker:
             thesis_age_hours=thesis_age_hours,
             previous_revision=prior.revision,
             new_revision=new_revision,
+            trajectory=trajectory,
+            previous_trajectory=previous_trajectory,
+            trajectory_reason=trajectory_reason,
+            evidence=evidence,
         )
