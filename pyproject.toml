@@ -30,6 +30,15 @@ ignore = [
     "E501",  # line length -- Black already enforces this; avoid double-reporting
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# B008 exempts FastAPI dependency defaults only when the parameter's type
+# annotation is itself immutable (str, int, ...) -- every pre-V2.3A
+# `Depends(resolve_user_id)` usage happens to type as `str` and was already
+# exempt by accident, not by this config. V2.3A's first non-str dependency
+# result (`ClerkClaims`) surfaced the gap; this is the standard, documented
+# fix for the FastAPI + flake8-bugbear interaction, not a rule suppression.
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.mypy]
 python_version = "3.11"
 exclude = ["logan_core/.venv", "backend/.venv", "mobile"]

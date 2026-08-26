@@ -220,6 +220,30 @@ class MemoryStore:
         """`user_id` is required -- see `query()`'s own docstring."""
         return [r for r in self._records.values() if r.user_id == user_id]
 
+    def delete_user(self, user_id: str) -> int:
+        """V2.3A (Identity & Account Foundation) -- the Memory-layer half of
+        `purge_user_data()` (see backend/app/account_lifecycle.py). Removes
+        every record for `user_id`, in-memory and (when persistence is
+        enabled) durably. Returns the number of records removed. Unlike
+        `_compact()`, this is unconditional -- every record_type is
+        removed, including explicit/high-value ones `_compact()` would
+        never prune, since account deletion means genuinely all of this
+        user's data, not just bounded history.
+        """
+        to_delete = [
+            record_id
+            for record_id, record in self._records.items()
+            if record.user_id == user_id
+        ]
+        for record_id in to_delete:
+            del self._records[record_id]
+        if self._conn is not None and to_delete:
+            self._conn.execute(
+                "DELETE FROM memory_records WHERE user_id = ?", (user_id,)
+            )
+            self._conn.commit()
+        return len(to_delete)
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()

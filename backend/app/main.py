@@ -5,8 +5,10 @@ from typing import AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .account_lifecycle import purge_user_data
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
 from .ask_llm_provider import ConversationTurn
+from .clerk_auth import ClerkClaims
 from .config import cors_allowed_origins, legacy_memory_db_path, startup_config_summary
 from .data import DEMO_OPPORTUNITIES
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
@@ -34,6 +36,9 @@ from .models import (
     AskRequest,
     AskResponse,
     BriefingResponse,
+    DeleteAccountResponse,
+    LinkAccountRequest,
+    LinkAccountResponse,
     NotificationsReviewRequest,
     NotificationsReviewResponse,
     RecordInteractionRequest,
@@ -48,7 +53,7 @@ from .notifications import (
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
 from .rate_limit import check_rate_limit
-from .user_context import resolve_user_id
+from .user_context import link_account, require_clerk_claims, resolve_user_id
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
 # fixed-window limits for this API's two most expensive/cost-sensitive
@@ -59,6 +64,8 @@ from .user_context import resolve_user_id
 _OPPORTUNITIES_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
 _ASK_RATE_LIMIT = (20, 300.0)  # 20 requests / 5 minutes
 _NOTIFICATIONS_REGISTER_RATE_LIMIT = (10, 60.0)  # 10 requests / 60s
+_ACCOUNT_LINK_RATE_LIMIT = (10, 60.0)  # 10 requests / 60s
+_ACCOUNT_DELETE_RATE_LIMIT = (5, 300.0)  # 5 requests / 5 minutes
 
 
 async def _notification_poll_loop() -> None:
@@ -235,6 +242,52 @@ def record_interaction_route(
         duration_ms=request.duration_ms,
     )
     return RecordInteractionResponse(recorded=True)
+
+
+@app.post("/v1/account/link", response_model=LinkAccountResponse)
+def link_account_route(
+    request: LinkAccountRequest, claims: ClerkClaims = Depends(require_clerk_claims)
+) -> LinkAccountResponse:
+    """V2.3A -- Identity & Account Foundation. The explicit anonymous ->
+    authenticated upgrade path: called by the mobile client immediately
+    after a first successful Clerk sign-in on a device that has real
+    anonymous history worth carrying forward (see user_context.link_account's
+    own docstring for the full first-link-wins semantics).
+
+    Requires a valid Clerk session (`require_clerk_claims` -- there is no
+    anonymous fallback for this route, unlike every other route in this
+    file). Must be called before any other authenticated request from this
+    same session, or `resolve_user_id()`'s own auto-provisioning may already
+    have claimed a fresh identity for this external account -- see
+    docs/DECISIONS.md's ADR-069 for the full ordering requirement.
+
+    Rate-limited per external subject (not `user_id` -- this route
+    deliberately never resolves one, see above), same defense-in-depth
+    discipline as every other route here.
+    """
+    check_rate_limit("account-link", claims.subject, *_ACCOUNT_LINK_RATE_LIMIT)
+    stratus_user_id, upgraded = link_account(
+        "clerk", claims.subject, request.anonymous_user_id
+    )
+    return LinkAccountResponse(
+        stratus_user_id=stratus_user_id, upgraded_existing_identity=upgraded
+    )
+
+
+@app.delete("/v1/account", response_model=DeleteAccountResponse)
+def delete_account_route(
+    user_id: str = Depends(resolve_user_id),
+) -> DeleteAccountResponse:
+    """V2.3A -- Identity & Account Foundation. Purges every piece of the
+    *caller's own* user-scoped state (see account_lifecycle.purge_user_data)
+    -- `user_id` always comes from `resolve_user_id()`, never a client-
+    supplied target, so a caller can only ever delete their own data, never
+    another user's. Available to both anonymous and authenticated callers --
+    an anonymous user's local data is still their own to remove.
+    """
+    check_rate_limit("account-delete", user_id, *_ACCOUNT_DELETE_RATE_LIMIT)
+    purge_user_data(user_id)
+    return DeleteAccountResponse(deleted=True, stratus_user_id=user_id)
 
 
 @app.post("/v1/memories", response_model=MemoryDecision)

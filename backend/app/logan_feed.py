@@ -886,6 +886,34 @@ def reset_pipeline_state() -> None:
         _ask_sessions.clear()
 
 
+def purge_user(user_id: str) -> None:
+    """V2.3A (Identity & Account Foundation) -- the logan_feed half of
+    `purge_user_data()` (see backend/app/account_lifecycle.py, the central
+    account-deletion primitive). Removes every piece of this user's state
+    this module owns or holds a reference to: MemoryStore records,
+    per-(user_id, entity_id) revision-knowledge rows, PrioritizationEngine's
+    in-memory AttentionState, the process-lifetime UserModel/baseline/
+    OpportunityContext-cache entries, and any Ask STRATUS session anchored
+    to this user_id. Never touches objective/global opportunity state
+    (LifecycleStore, RevisionStore, World Model) -- that data is not
+    user-owned and must survive this user's deletion unchanged, per the
+    explicit "objective intelligence remains global" boundary.
+    """
+    with _state_lock:
+        if _orchestrator is not None:
+            _orchestrator.deps.memory_store.delete_user(user_id)
+            _orchestrator.deps.prioritization_engine.delete_user(user_id)
+        if _user_knowledge_store is not None:
+            _user_knowledge_store.delete_user(user_id)
+        for key in [k for k in _user_knowledge_cache if k[0] == user_id]:
+            del _user_knowledge_cache[key]
+        _baseline_established.discard(user_id)
+        _user_models.pop(user_id, None)
+        _opportunity_context_caches.pop(user_id, None)
+        for key in [k for k in _ask_sessions if k[0] == user_id]:
+            del _ask_sessions[key]
+
+
 def mark_notifications_reviewed(user_id: str, event_ids: list[UUID]) -> None:
     """Called by the `/v1/notifications/review` route -- the only way an
     event_id's `is_new_for_user` clears (re-observing the same event again

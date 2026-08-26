@@ -92,3 +92,35 @@ class RecordInteractionRequest(BaseModel):
 
 class RecordInteractionResponse(BaseModel):
     recorded: bool
+
+
+class LinkAccountRequest(BaseModel):
+    """V2.3A -- Identity & Account Foundation. The client's current
+    anonymous per-install identity (mobile/lib/identity.ts's device id) --
+    the thing this call is trying to carry forward into a newly-
+    authenticated account. Sent explicitly in the body, not inferred from
+    the X-Stratus-User-Id header, so this operation's intent is unambiguous
+    regardless of what any other header on this same request happens to
+    carry.
+    """
+
+    anonymous_user_id: str = Field(min_length=1, max_length=128)
+
+
+class LinkAccountResponse(BaseModel):
+    stratus_user_id: str
+    # True: this device's own existing anonymous identity became the
+    # canonical, now-authenticated identity -- its prior history is
+    # preserved as-is under the same id, no client-side change needed
+    # beyond knowing it's now authenticated.
+    # False: this external account was already linked to a *different*
+    # stratus_user_id (e.g. a second device signing into the same real
+    # account) -- the client should adopt `stratus_user_id` above as its
+    # active identity going forward; this device's own prior anonymous
+    # history remains under its old id, not merged in (see ADR-069).
+    upgraded_existing_identity: bool
+
+
+class DeleteAccountResponse(BaseModel):
+    deleted: bool
+    stratus_user_id: str

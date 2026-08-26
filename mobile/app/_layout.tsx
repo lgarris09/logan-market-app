@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
+import { ClerkProvider } from "@clerk/expo";
 import {
   useFonts,
   Inter_400Regular,
@@ -15,6 +17,28 @@ import {
 } from "@expo-google-fonts/inter-tight";
 
 import { theme } from "../constants/theme";
+import { CLERK_PUBLISHABLE_KEY, isClerkConfigured } from "../lib/clerkConfig";
+import { clerkTokenCache } from "../lib/clerkTokenCache";
+
+// V2.3A -- Identity & Account Foundation. `<ClerkProvider>` is mounted only
+// when a real publishable key is configured -- unconfigured (every
+// environment until the owner supplies real Clerk credentials, see
+// docs/DECISIONS.md's ADR-069) means this component is a pure passthrough,
+// and the app is byte-for-byte the pre-V2.3A anonymous-only experience: no
+// sign-in UI, no Clerk network calls, no behavior change at all.
+function AuthProvider({ children }: { children: ReactNode }) {
+  if (!isClerkConfigured()) {
+    return <>{children}</>;
+  }
+  return (
+    <ClerkProvider
+      publishableKey={CLERK_PUBLISHABLE_KEY as string}
+      tokenCache={clerkTokenCache}
+    >
+      {children}
+    </ClerkProvider>
+  );
+}
 
 // Sprint 3.6 (brand-fidelity pass): the reference's typography panel
 // specifies Inter/Inter Tight as the actual brand typeface (previously
@@ -44,7 +68,7 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <>
+    <AuthProvider>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -63,6 +87,10 @@ export default function RootLayout() {
             way to know that header's height. */}
         <Stack.Screen name="ask" options={{ headerShown: false }} />
         <Stack.Screen name="about" options={{ title: "About STRATUS" }} />
+        {/* V2.3A -- reachable from index.tsx's menu regardless of whether
+            Clerk is configured: shows "Continue as guest" info when it
+            isn't, and the real sign-in/sign-out UI when it is. */}
+        <Stack.Screen name="account" options={{ title: "Account" }} />
         {/* Developer/Diagnostics only -- reachable only via app/index.tsx's
             single __DEV__-gated "Developer / Diagnostics" menu row. */}
         <Stack.Screen name="dev-diagnostics" options={{ title: "Developer / Diagnostics" }} />
@@ -78,6 +106,6 @@ export default function RootLayout() {
         <Stack.Screen name="memory" options={{ title: "Diagnostics: Memory Inbox" }} />
         <Stack.Screen name="demo" options={{ title: "Diagnostics: STRATUS Demo" }} />
       </Stack>
-    </>
+    </AuthProvider>
   );
 }

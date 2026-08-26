@@ -231,6 +231,37 @@ def revision_store_db_path() -> Path:
     return memory_store_db_path().parent / "opportunity_revisions.db"
 
 
+def account_store_db_path() -> Path:
+    """Stock Opportunity Logic V2.3A (Identity & Account Foundation): the
+    durable SQLite file backing the account/external-identity mapping (see
+    account_store.py) when memory_persistence_enabled() is true -- same
+    pattern as every other Sprint 3.6.9+ store. Defaults to a sibling
+    `accounts.db`; overridable via STRATUS_ACCOUNTS_DB_PATH for test
+    isolation.
+    """
+    override = os.environ.get("STRATUS_ACCOUNTS_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "accounts.db"
+
+
+def clerk_issuer_url() -> str | None:
+    """V2.3A: the Clerk Frontend API URL that also serves as this project's
+    JWT issuer (e.g. https://your-instance.clerk.accounts.dev, or a custom
+    domain in production) -- read from CLERK_ISSUER_URL. Unset by default,
+    matching every other new capability's rollout pattern in this codebase
+    (STRATUS_LLM_ASK, STRATUS_PERSIST_MEMORY): authentication stays
+    completely inert -- no JWKS fetch, no token verification attempted --
+    until this is explicitly configured with a real Clerk instance.
+    """
+    value = os.environ.get("CLERK_ISSUER_URL", "").strip()
+    return value.rstrip("/") or None
+
+
+def clerk_configured() -> bool:
+    return clerk_issuer_url() is not None
+
+
 def user_knowledge_store_db_path() -> Path:
     """Stock Opportunity Logic V2.1 (User Sync Gap): the durable SQLite file
     backing per-`(user_id, entity_id)` knowledge pointers (see
@@ -286,6 +317,7 @@ def startup_config_summary() -> str:
         f"live_tickers={','.join(tickers) if tickers else '(none)'} "
         f"memory_persistence={memory_persistence_enabled()} "
         f"llm_ask={llm_ask_enabled()} "
+        f"clerk_auth={clerk_configured()} "
         f"cors_origins={cors_allowed_origins()}"
     )
 

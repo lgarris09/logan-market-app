@@ -122,5 +122,20 @@ class NotificationStore:
         )
         self._conn.commit()
 
+    def delete_user(self, user_id: str) -> None:
+        """V2.3A (Identity & Account Foundation) -- the notification-state
+        half of `purge_user_data()` (see backend/app/account_lifecycle.py).
+        Removes this user's registered push tokens and dispatch/review
+        dedup history across all three tables.
+        """
+        self._conn.execute("DELETE FROM push_tokens WHERE user_id = ?", (user_id,))
+        self._conn.execute(
+            "DELETE FROM dispatched_notifications WHERE user_id = ?", (user_id,)
+        )
+        self._conn.execute(
+            "DELETE FROM reviewed_pushed_notifications WHERE user_id = ?", (user_id,)
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

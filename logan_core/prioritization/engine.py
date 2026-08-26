@@ -185,6 +185,16 @@ class PrioritizationEngine:
     def attention_state(self, user_id: str) -> AttentionState | None:
         return self._states.get(user_id)
 
+    def delete_user(self, user_id: str) -> None:
+        """V2.3A (Identity & Account Foundation) -- the Attention-State half
+        of `purge_user_data()` (see backend/app/account_lifecycle.py).
+        Process-memory only (AttentionState/fatigue/cooldown have never been
+        durable, see ADR-061's own documented scope) -- this simply drops
+        this user's in-memory state so it does not outlive account deletion
+        for the remainder of this process's life.
+        """
+        self._states.pop(user_id, None)
+
     def mark_reviewed(
         self,
         user_id: str,

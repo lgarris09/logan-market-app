@@ -3326,3 +3326,166 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   this field staying empty), not something to route around silently. Everything else this block built
   (trajectory, market-relative performance, volume-vs-average, beta-normalization, trigger price) is fully
   live-verified and working exactly as designed on the current plan.
+
+---
+
+## ADR-069: STRATUS V2.3A — Identity & Account Foundation
+
+- Date: 2026-08-25
+- Status: Accepted
+- Context: V2/V2.1/V2.2 built the objective Market Intelligence layer. Before building the personal-learning
+  system V2.3B needs (declared/learned interests, behavioral signals, cross-device personalization),
+  STRATUS needs a real identity/account foundation — without one, "personalization" has nowhere durable to
+  attach, and the existing `X-Stratus-User-Id` header (Sprint 3.6.8/3.6.9) is pure client-asserted identity
+  with zero verification: any caller can claim to be any `user_id` by changing one header. The explicit
+  product requirement: no mandatory registration wall (`first launch → anonymous identity → immediate
+  product access → later authenticate → same internal user continues`), and the internal `stratus_user_id`
+  string must remain the one canonical identity every domain service already keys on — never replaced,
+  never duplicated by a second identity model.
+- Auth-provider evaluation (owner-confirmed before implementation, per the explicit "auth-provider
+  commitment" stop condition): compared Clerk against Supabase Auth for this stack (Expo/React Native,
+  FastAPI, Fly.io, existing `X-Stratus-User-Id` model). **Decision: Clerk.** Rationale: a dedicated,
+  actively-maintained Expo SDK (`@clerk/expo`) with built-in Apple/Google/passwordless-email support and
+  significantly less custom native-OAuth wiring than Supabase's more DIY Expo integration; backend
+  verification is standard JWT/JWKS (no Clerk-specific server SDK), which is exactly what keeps domain logic
+  fully decoupled from the vendor and makes a future provider swap a backend-only, one-module change. Clerk's
+  free tier is 50,000 Monthly Retained Users (corrected from an earlier, outdated 10,000 figure) — ample for
+  this project's current and near-term scale. No real Clerk account/project was created this block — the
+  owner will supply real credentials afterward, same pattern as ADR-056's `ANTHROPIC_API_KEY` rollout; every
+  piece of this block is built and tested against a real, self-signed-JWT-based test harness, and stays
+  completely inert (no JWKS fetch, no auth UI rendered) until `CLERK_ISSUER_URL`/
+  `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` are configured.
+- Decision (by area):
+  1. **One identity model, not two.** The existing anonymous per-install identifier
+     (`mobile/lib/identity.ts`'s `device_id`, a SecureStore-persisted UUID, Sprint 3.6.9) *is* the
+     `stratus_user_id` for an anonymous user — no separate "local learning" identity was introduced. New
+     `backend/app/account_store.py` (`AccountStore`, SQLite, same `STRATUS_PERSIST_MEMORY`-gated pattern as
+     every other Sprint 3.6.9+ store) adds exactly two tables: `accounts` (one row per `stratus_user_id`,
+     anonymous or authenticated — the anchor row V2.3B's own tables will key off of) and
+     `external_identities` (the `(provider, external_subject) → stratus_user_id` mapping — many external
+     identities may eventually map to one canonical id, never the reverse).
+  2. **Backend verification, standard JWT/JWKS, no Clerk SDK.** New `backend/app/clerk_auth.py` verifies a
+     real Clerk session token via PyJWT's built-in `PyJWKClient` (new dependency: `PyJWT[crypto]`) against
+     Clerk's own published JWKS — RS256 only, explicit issuer/expiry/subject checks, fails closed and
+     silently (`None`) on every failure mode (missing config, network error, bad signature, wrong issuer,
+     expired). `ClerkClaims.subject` is the *only* thing this module ever exposes to a caller — no other
+     token claim reaches `account_store.py` or any domain service.
+  3. **`resolve_user_id()` (backend/app/user_context.py) gains a second, authenticated tier, without
+     changing its own name or its existing anonymous behavior at all.** A present `Authorization: Bearer`
+     header always takes priority over — and is never blended with — the anonymous `X-Stratus-User-Id`
+     header; it either resolves to a real, verified `stratus_user_id` or the request is rejected outright
+     (401), never silently downgraded to anonymous (a client that explicitly claims to be authenticated and
+     fails verification must be told so plainly — masking an expired session as "anonymous" would hide a
+     real bug behind an apparently-successful, differently-scoped response). A verified-but-never-before-seen
+     external identity is auto-provisioned a *fresh* `stratus_user_id` immediately (`_provision_or_lookup_
+     account` — the common case: a brand-new device with no anonymous history worth preserving). Every one of
+     the eight pre-existing routes using `Depends(resolve_user_id)` is protected automatically by this one
+     change — audited directly (`grep` across `main.py`): no route accepts a client-supplied `user_id` via
+     body/query param anywhere, `resolve_user_id` is the sole choke point.
+  4. **The anonymous → authenticated upgrade is a distinct, explicit action — never inferred inside
+     `resolve_user_id()`.** New `POST /v1/account/link` (`require_clerk_claims`, a stricter sibling
+     dependency requiring a valid token with no anonymous fallback) and `user_context.link_account()`: first
+     link for a given `(provider, subject)` makes the anonymous device's *own existing* `stratus_user_id`
+     become the canonical, now-authenticated identity — zero data migration, since every store (MemoryStore,
+     UserKnowledgeStore, PrioritizationEngine's AttentionState, notification tokens) is already keyed by that
+     same string. This must run *before* any other authenticated request from the same session, or
+     auto-provisioning (item 3) will already have claimed a fresh, empty identity for that external account
+     first — a real ordering requirement, documented here and enforced by the mobile client calling `/link`
+     immediately after a successful sign-in, before any other authenticated call.
+  5. **Anonymous-merge semantics: first-linked-wins, explicit and deterministic, not a sophisticated merge
+     engine.** When a *second* device (already anonymous, with its own history) authenticates into an
+     account already linked to a first device, `link_account()` returns the *first* device's canonical id,
+     `upgraded_existing_identity=False` — the second device's own prior anonymous history is **not** merged
+     into the canonical account; it remains intact under its own original id, simply no longer the active
+     identity going forward. A deliberate, bounded, documented scope choice (see Deferred below), not an
+     accident — proven directly
+     (`test_second_device_linking_same_account_gets_first_linked_canonical_id`).
+  6. **Founder/dev identity stays completely isolated, unchanged.** `LOCAL_FOUNDER_USER_ID` is a fixed,
+     compile-time constant, never reachable via Clerk auto-provisioning or linking (a fresh authenticated
+     `stratus_user_id` is always a random UUID) — `_get_user_model()`'s founder-only seed block
+     (`backend/app/logan_feed.py`) is untouched and still only special-cases the literal founder constant.
+     Proven directly (`test_authenticated_identity_is_never_the_founder_constant`).
+  7. **Account deletion, built now as the central primitive V2.3B's own future stores will plug into.** New
+     `backend/app/account_lifecycle.py::purge_user_data(stratus_user_id)` orchestrates deletion across every
+     current user-scoped store: `MemoryStore.delete_user()` (new), `UserKnowledgeStore.delete_user()` (new),
+     `NotificationStore.delete_user()` (new), `PrioritizationEngine.delete_user()` (new, in-memory
+     AttentionState), and `user_context.purge_account_identity()` (the account row + every external-identity
+     mapping pointing at it). Exposed via `DELETE /v1/account`, resolved via the caller's own
+     `resolve_user_id()` — never a client-supplied target, so a caller can only ever delete their own data.
+     Idempotent by construction. Deliberately does **not** touch objective/global state (LifecycleStore,
+     RevisionStore, World Model) — an account's deletion must never alter what any other user sees for the
+     same real-world opportunity.
+  8. **Session/token handling uses Clerk's own supported lifecycle end to end, no homegrown session
+     infrastructure.** Mobile: `mobile/lib/clerkTokenCache.ts` backs Clerk's persisted session in
+     `expo-secure-store` (the same keychain mechanism `identity.ts` already uses) — this is what makes app
+     restart/session restoration work automatically, before any request is made. `mobile/lib/clerkClient.ts`
+     exposes the current session JWT to `apiClient.ts` (a plain function module, not a React component) via
+     Clerk's own documented `getClerkInstance()` outside-of-React pattern. Sign-out is Clerk's own
+     `signOut()` — the backend needs no additional state change, since JWTs are stateless and simply expire;
+     the app reverts to sending only the anonymous header on the next request.
+  9. **Mobile UX, deliberately minimal (V2.3B owns real onboarding design).** New `app/account.tsx`: a guest
+     notice when Clerk isn't configured (today's default — the app is otherwise byte-for-byte unchanged),
+     else Apple/Google (`useSSO`) and passwordless email-code (`useSignIn`'s current "Future resource" API —
+     `signIn.emailCode.sendCode()`/`verifyCode()`/`finalize()`, verified directly against the installed
+     `@clerk/expo` v4's own type definitions rather than older documentation) sign-in options, a signed-in
+     view with sign-out and "delete my data," reachable from the existing hamburger menu's "Your STRATUS"
+     section. `apiClient.ts` attaches `Authorization: Bearer <token>` *alongside*, never instead of, the
+     existing `X-Stratus-User-Id` header on every request.
+  10. **Privacy/data-ownership boundary, explicit.** External auth identity (Clerk `sub`) lives only in
+      `clerk_auth.py`'s verification step and `account_store.py`'s mapping table — never reaches domain logic.
+      STRATUS account identity (`stratus_user_id`) is the one thing every domain service sees. Anonymous-
+      device identity is a `stratus_user_id` like any other, just never yet linked to an external identity.
+      User-owned behavioral state (Memory, UserOpportunityKnowledge, AttentionState, notification tokens) is
+      strictly per-`stratus_user_id`, purgeable via item 7. Objective/global opportunity intelligence
+      (LifecycleSnapshot, OpportunityRevision) remains global/shared, never duplicated per account and never
+      touched by any account-lifecycle operation — continuing V2/V2.1/V2.2's own boundary unchanged.
+- Consequences: new `backend/app/account_store.py`, `clerk_auth.py`, `account_lifecycle.py`; `user_context.py`
+  rewritten (authenticated tier, `link_account`, `purge_account_identity`, process-lifetime account/identity
+  cache mirroring `logan_feed.py`'s own `_lifecycle_tracker`/`_lifecycle_store` pattern); `config.py`
+  (`clerk_issuer_url`, `clerk_configured`, `account_store_db_path`); `main.py` (`POST /v1/account/link`,
+  `DELETE /v1/account`, both rate-limited); `models.py` (`LinkAccountRequest/Response`,
+  `DeleteAccountResponse`); `logan_core/memory/store.py` (`delete_user`);
+  `logan_core/prioritization/engine.py` (`delete_user`); `backend/app/notification_store.py`/
+  `user_knowledge_store.py` (`delete_user`); `backend/requirements.txt` (`PyJWT[crypto]`); `pyproject.toml`
+  (a `flake8-bugbear.extend-immutable-calls` entry for `fastapi.Depends`, the standard fix for a
+  non-`str`-typed `Depends(...)` default this block's first non-string dependency result surfaced). Mobile:
+  new `@clerk/expo`, `expo-web-browser`, `expo-auth-session` dependencies; `lib/clerkConfig.ts`,
+  `clerkTokenCache.ts`, `clerkClient.ts`, `account.ts`; `app/account.tsx`; `app/_layout.tsx`
+  (conditional `<ClerkProvider>`); `apiClient.ts` (Bearer attachment); `app/index.tsx` (menu entry); a Jest
+  manual mock (`__mocks__/@clerk/expo.js`) working around `@clerk/react`'s CJS build reaching into a
+  web-only `react-dom` dependency under Jest's Node resolution (never hit by Metro's real, platform-aware
+  bundler on-device). New tests: `backend/tests/test_clerk_auth.py` (9 — real RSA-keypair-signed JWT
+  verification, not a mocked boolean), `backend/tests/test_account_identity.py` (16 — auto-provisioning,
+  the security boundary, linking, first-linked-wins merge, founder isolation, deletion, restart
+  persistence), plus store-level `delete_user` coverage folded into existing suites. Mobile:
+  `lib/__tests__/account.test.ts`, `clerkClient.test.ts`, plus 2 new `apiClient.test.ts` cases (Bearer
+  attachment/omission). `backend`/`logan_core` combined 716 → 741 (+25). Mobile Jest 134 → 143 (+9).
+  mypy/ruff/black and `tsc --noEmit`/`eslint` clean throughout.
+- Acceptance: every domain service still receives only a plain `stratus_user_id` string, identical in shape
+  and meaning to every pre-V2.3A caller. A client cannot impersonate another user by spoofing
+  `X-Stratus-User-Id` once a verified Bearer token is present (proven directly). An anonymous user's state
+  survives authentication intact under the same identity string. Deletion actually removes every current
+  user-scoped store's data for that identity, proven directly, without touching objective opportunity state.
+- Deferred / flagged for the owner:
+  1. **Real Clerk credentials were not created or supplied this block** — `CLERK_ISSUER_URL`/
+     `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` remain unset everywhere; the owner needs to create a real Clerk
+     project (enabling Apple/Google/email-code strategies) and supply both values before any of this is
+     reachable outside tests. Until then, the app and API are byte-for-byte the pre-V2.3A anonymous-only
+     experience.
+  2. **Mobile sign-in UI is implemented against `@clerk/expo`'s real, current type-checked API surface but
+     not visually/behaviorally verified on a real device with a real Clerk project** — no simulator or real
+     Clerk instance is available in this environment. `tsc --noEmit`/`eslint`/Jest are the validation this
+     block could perform; a real on-device pass (Apple/Google native OAuth redirect handling in particular)
+     remains the owner's next concrete step once real credentials exist.
+  3. **Anonymous-history merge for a second device is intentionally not implemented** — first-linked-wins is
+     the documented, deterministic behavior; a second device's own prior anonymous data is preserved but not
+     folded into the canonical account. A real merge engine (reconciling potentially-conflicting behavioral
+     evidence from two devices) is a materially larger, separate design question, correctly out of this
+     block's bounded scope.
+  4. **No dedicated backend sign-out endpoint** — deliberate: Clerk JWTs are stateless and simply expire;
+     sign-out is entirely a client-side action (discarding the cached session). Revoking a specific session
+     server-side (e.g. "sign out this device remotely") is a real Clerk capability not wired into this block.
+  5. **Rate limiting on `/v1/account/link`/`DELETE /v1/account`** uses the same lightweight in-memory,
+     per-process limiter as every other route (`rate_limit.py`) — not re-evaluated for this specific new
+     attack surface beyond generous, defensive-in-depth defaults; a real Clerk-backed deployment may want
+     tighter, provider-side abuse protection (Clerk itself rate-limits auth attempts) layered on top later.

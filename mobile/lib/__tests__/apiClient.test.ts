@@ -1,4 +1,5 @@
 import { fetchJson } from "../apiClient";
+import { getClerkSessionToken } from "../clerkClient";
 import { getOrCreateDeviceId } from "../identity";
 
 // Sprint 3.6.9: apiClient now attaches this install's identity to every
@@ -8,6 +9,13 @@ import { getOrCreateDeviceId } from "../identity";
 // behavior and don't depend on identity.ts's internals.
 jest.mock("../identity", () => ({
   getOrCreateDeviceId: jest.fn().mockResolvedValue("test-device-id-1234"),
+}));
+
+// V2.3A: same discipline for the (optional) Clerk session token -- mocked
+// at the module boundary so these tests never touch the real @clerk/expo
+// SDK (see __mocks__/@clerk/expo.js for why that matters under Jest).
+jest.mock("../clerkClient", () => ({
+  getClerkSessionToken: jest.fn().mockResolvedValue(null),
 }));
 
 // Mocks a fetch that respects its AbortSignal, the way the real one does --
@@ -181,6 +189,40 @@ describe("fetchJson", () => {
       const [, init] = fetchSpy.mock.calls[0];
       const headers = (init as RequestInit).headers as Record<string, string>;
       expect(headers["X-Stratus-User-Id"]).toBeUndefined();
+    });
+  });
+
+  describe("Clerk session propagation (V2.3A)", () => {
+    it("attaches Authorization: Bearer when a Clerk session token exists", async () => {
+      (getClerkSessionToken as jest.Mock).mockResolvedValueOnce("real-jwt-token");
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({}))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await fetchJson("/v1/opportunities");
+
+      const [, init] = fetchSpy.mock.calls[0];
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers["Authorization"]).toBe("Bearer real-jwt-token");
+      // Sent alongside, never instead of, the anonymous device header --
+      // /v1/account/link needs this device id present on the same request
+      // that also carries the Bearer token.
+      expect(headers["X-Stratus-User-Id"]).toBe("test-device-id-1234");
+    });
+
+    it("omits Authorization entirely when no Clerk session exists (the default)", async () => {
+      (getClerkSessionToken as jest.Mock).mockResolvedValueOnce(null);
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({}))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await fetchJson("/v1/opportunities");
+
+      const [, init] = fetchSpy.mock.calls[0];
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers["Authorization"]).toBeUndefined();
     });
   });
 });

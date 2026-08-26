@@ -7,7 +7,15 @@
 // identity (see lib/identity.ts) gets attached to every request, via the
 // X-Stratus-User-Id header -- one change point rather than threading it
 // through each of the many individual call sites across the app.
+//
+// V2.3A: also attaches a real Clerk session token (Authorization: Bearer)
+// when one exists, alongside -- never instead of -- the anonymous
+// X-Stratus-User-Id header. The backend's own resolve_user_id() always
+// prefers a verified Bearer token when present; sending both here is what
+// lets /v1/account/link (called separately, right after sign-in) still see
+// this same anonymous device id on every other concurrent request.
 import { API_BASE_URL } from "../constants/config";
+import { getClerkSessionToken } from "./clerkClient";
 import { getOrCreateDeviceId } from "./identity";
 
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -66,9 +74,15 @@ export async function fetchJson<T>(
   } catch {
     deviceId = null;
   }
-  const identityHeaders: Record<string, string> = deviceId
-    ? { "X-Stratus-User-Id": deviceId }
-    : {};
+  // V2.3A: never blocks the request if Clerk isn't configured/loaded/signed
+  // in -- getClerkSessionToken() itself never throws, returning null for
+  // every one of those cases, so this degrades to the exact pre-V2.3A
+  // anonymous-only request shape.
+  const sessionToken = await getClerkSessionToken();
+  const identityHeaders: Record<string, string> = {
+    ...(deviceId ? { "X-Stratus-User-Id": deviceId } : {}),
+    ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+  };
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (callerSignal?.aborted) {

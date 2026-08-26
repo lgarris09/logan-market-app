@@ -113,7 +113,7 @@ function notifBadgeWidth(count: number): number {
 // device screenshot review: that inline content dominated the menu).
 type ConsumerItem = {
   label: string;
-  href?: "/ask" | "/about";
+  href?: "/ask" | "/about" | "/account";
   soon?: boolean;
 };
 
@@ -124,6 +124,10 @@ const ATTENTION_ITEMS: ConsumerItem[] = [
 
 const YOUR_STRATUS_ITEMS: ConsumerItem[] = [
   { label: "Ask STRATUS", href: "/ask" },
+  // V2.3A -- Identity & Account Foundation: real destination, reachable
+  // regardless of whether Clerk is configured for this build (see
+  // app/account.tsx's own guest-notice fallback).
+  { label: "Account", href: "/account" },
   { label: "About STRATUS", href: "/about" },
   { label: "Settings", soon: true },
 ];

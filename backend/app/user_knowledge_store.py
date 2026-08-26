@@ -86,5 +86,16 @@ class UserKnowledgeStore:
         self._conn.execute("DELETE FROM user_opportunity_knowledge")
         self._conn.commit()
 
+    def delete_user(self, user_id: str) -> None:
+        """V2.3A (Identity & Account Foundation) -- the sync-state half of
+        `purge_user_data()` (see backend/app/account_lifecycle.py). Removes
+        every seen/notified/opened revision pointer for `user_id`, across
+        every entity.
+        """
+        self._conn.execute(
+            "DELETE FROM user_opportunity_knowledge WHERE user_id = ?", (user_id,)
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

@@ -166,6 +166,20 @@ def reset_notification_state() -> None:
     _reviewed_pushed_event_ids.clear()
 
 
+def purge_user(user_id: str) -> None:
+    """V2.3A (Identity & Account Foundation) -- the notification-state half
+    of `purge_user_data()` (see backend/app/account_lifecycle.py). Removes
+    this user's registered push tokens and dispatch/review dedup history,
+    in-memory and durably.
+    """
+    store = _get_store()
+    if store is not None:
+        store.delete_user(user_id)
+    _registered_tokens.pop(user_id, None)
+    _dispatched_event_ids.pop(user_id, None)
+    _reviewed_pushed_event_ids.pop(user_id, None)
+
+
 def _notification_body(item: FeedItem) -> str:
     """Sprint 3.6.6H: a concise, human-scannable push body, built from the
     existing DeliveredItem text rather than a new copy-generation layer.

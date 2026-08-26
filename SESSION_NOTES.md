@@ -1699,3 +1699,75 @@ integration.py` 7 real backend-wiring tests). 4 pre-existing tests updated (3 FM
 tolerate the new `/profile`/benchmark-quote calls, 2 exact-field-set allowlists extended for the four new
 `FeedItem` fields) -- all real, intentional updates, not weakenings. mypy/ruff/black clean throughout. See
 docs/DECISIONS.md ADR-068 for the full decision record. No merge to main.
+
+---
+
+# Session Notes — 2026-08-25 (STRATUS V2.3A — Identity & Account Foundation)
+
+Branch: `feat/sprint-3.6.7-stock-signal-expansion`, continuing directly from the V2.2 commit `6bd4c9b`. Chuck
+sent the next consolidated direction: before V2.3B's personal-learning system, establish a real identity/
+account foundation, without a mandatory registration wall.
+
+## What was asked, and the one thing worth stopping for
+
+First launch → anonymous STRATUS identity → immediate product access → later authenticate → same internal
+user continues. The internal `stratus_user_id` stays canonical; external auth identity must never leak into
+domain logic. This explicitly named an "auth-provider commitment" as one of the few things worth a real
+check-in (both CLAUDE.md and this session's own standing team-workflow memory flag it) -- asked before
+writing any provider-specific code: Clerk vs. Supabase Auth. Answer: Clerk, build the full integration now
+with real SDKs, treat the real API key the same way `ANTHROPIC_API_KEY` was handled (built and inert, real
+credentials supplied afterward).
+
+## What was found before building anything
+
+The anonymous identity foundation item 1 asked for *already exists* -- Sprint 3.6.9's Persistent Mobile
+Identity (`mobile/lib/identity.ts`, a SecureStore-persisted per-install UUID) sent as `X-Stratus-User-Id`.
+The real gap: `resolve_user_id()` (`backend/app/user_context.py`) trusted that header completely
+unverified -- any caller could claim to be any `stratus_user_id` by changing one header value. This became
+the actual identity model to build on, not something to duplicate: the anonymous device id literally *is*
+the `stratus_user_id` for an anonymous user, and every existing route already funnels through this one
+`Depends(resolve_user_id)` choke point (confirmed via a direct audit of every route in `main.py`) -- meaning
+the entire security boundary could be added in one place, not N per-route changes.
+
+## What got built (see ADR-069 for the full per-area record)
+
+Standard JWT/JWKS verification (`clerk_auth.py`, PyJWT's `PyJWKClient`) -- no Clerk-specific server SDK, kept
+domain logic fully decoupled from the vendor. `resolve_user_id()` gained a second, authenticated tier: a
+present Bearer token always wins over the anonymous header, never blended, never silently downgraded on
+failure (a hard 401, not a quiet fallback). New `account_store.py` (`accounts` + `external_identities`
+tables) maps `(provider, subject) -> stratus_user_id`. The anonymous-to-authenticated upgrade is one
+explicit action (`POST /v1/account/link`), not inferred: first link makes the anonymous device's *own
+existing* id become the canonical authenticated identity -- zero data migration, since every store is
+already keyed by that same string. A second device linking the same real account gets the *first* device's
+canonical id back (first-linked-wins, its own prior history preserved but not merged -- a deliberate,
+documented scope boundary, not a full merge engine). Founder/dev identity stays completely isolated by
+construction. A new central `purge_user_data()` primitive purges every current user-scoped store
+(MemoryStore, UserKnowledgeStore, NotificationStore, PrioritizationEngine's AttentionState, the account
+mapping itself) via `DELETE /v1/account`, resolved only from the caller's own identity -- built now, per the
+owner's explicit instruction, so V2.3B's future stores have one lifecycle operation to plug into rather than
+a retrofit. Mobile: a minimal `app/account.tsx` (guest notice when unconfigured, Apple/Google/passwordless-
+email sign-in, sign-out, delete-my-data), Clerk's own SecureStore-backed session cache for restart
+restoration, `apiClient.ts` attaching a Bearer token alongside the existing anonymous header.
+
+## A real API-shape correction made mid-session
+
+Clerk's `useSignIn()` in the installed `@clerk/expo` v4 returns a completely different, newer "Future
+resource" shape (`signIn.emailCode.sendCode()`/`verifyCode()`/`finalize()`) than the classic
+`prepareFirstFactor`/`attemptFirstFactor`/`setActive` pattern documented in older Clerk material -- caught by
+`tsc --noEmit` failing against the real installed package's own type definitions, not assumed correct from
+memory. Rewrote the email-code flow against the real, current API before proceeding. Separately, `npm
+install` itself flagged `@clerk/clerk-expo` as deprecated in favor of `@clerk/expo` -- switched packages
+before writing any integration code around the wrong one.
+
+## Status at the end of this session
+
+`backend`/`logan_core`: 716 → 741 (+25: `test_clerk_auth.py` 9 real-RSA-signed-JWT tests,
+`test_account_identity.py` 16 auto-provisioning/security-boundary/linking/merge/founder-isolation/deletion/
+restart tests, plus `delete_user` store coverage). Mobile Jest: 134 → 143 (+9: `account.test.ts`,
+`clerkClient.test.ts`, 2 new `apiClient.test.ts` Bearer-attachment cases). A Jest manual mock
+(`__mocks__/@clerk/expo.js`) was needed to work around `@clerk/react`'s CJS build reaching into a web-only
+`react-dom` dependency under Jest's Node module resolution -- never hit by Metro's real, platform-aware
+bundler on a real device. mypy/ruff/black and `tsc --noEmit`/`eslint` clean throughout. No real Clerk
+project/credentials exist yet -- the app and API remain byte-for-byte the pre-V2.3A anonymous-only
+experience until the owner supplies them. See docs/DECISIONS.md ADR-069 for the full decision record. No
+merge to main.
