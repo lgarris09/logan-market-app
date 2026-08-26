@@ -195,6 +195,37 @@ def _provision_or_lookup_account(provider: str, external_subject: str) -> str:
         return new_id
 
 
+class AccountLinkConflictError(Exception):
+    """V2.3A overnight security-audit finding: raised by `link_account()`
+    when the requested `anonymous_user_id` is already the canonical
+    identity for a *different* external identity than the one presenting
+    this request. Without this check, a caller with a valid-but-unrelated
+    Clerk session could supply any other user's known `stratus_user_id` as
+    `anonymous_user_id` and permanently bind their own external identity to
+    that victim's existing account -- gaining standing read/write access to
+    it, not merely one-time anonymous impersonation. `main.py`'s route maps
+    this to `HTTPException(409)`.
+    """
+
+
+def _is_linked_to_a_different_identity(
+    stratus_user_id: str, provider: str, external_subject: str
+) -> bool:
+    """Checks the process-lifetime identity cache (kept in sync with the
+    durable store by every mutation in this module -- see `_get_account_
+    store()`'s own lazy-reload docstring) for any *other* `(provider,
+    external_subject)` pair already mapped to `stratus_user_id`. Legitimate
+    multi-device sign-in never reaches this: `link_account()` returns via
+    its own existing-mapping lookup first when the *same* `(provider,
+    external_subject)` pair was already linked.
+    """
+    _get_account_store()  # ensure the cache reflects durable state first
+    target = (provider, external_subject)
+    return any(
+        uid == stratus_user_id and key != target for key, uid in _identity_cache.items()
+    )
+
+
 def link_account(
     provider: str, external_subject: str, anonymous_user_id: str
 ) -> tuple[str, bool]:
@@ -216,11 +247,22 @@ def link_account(
       merge scope). Returns `(existing_canonical_id, False)` -- the caller
       (the mobile client) is expected to adopt the returned id as its own
       active identity going forward.
+
+    Raises `AccountLinkConflictError` when `anonymous_user_id` is already
+    claimed by a *different* external identity -- see that exception's own
+    docstring for the exact hijack scenario this closes.
     """
     with _state_lock:
         existing = _lookup_identity(provider, external_subject)
         if existing is not None:
             return existing, False
+
+        if _is_linked_to_a_different_identity(
+            anonymous_user_id, provider, external_subject
+        ):
+            raise AccountLinkConflictError(
+                "This identity is already associated with a different account."
+            )
 
         _create_account(anonymous_user_id, is_anonymous=False)
         _mark_authenticated(anonymous_user_id)

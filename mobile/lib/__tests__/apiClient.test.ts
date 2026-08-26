@@ -1,4 +1,5 @@
 import { fetchJson } from "../apiClient";
+import { registerPendingLink } from "../authLinkGate";
 import { getClerkSessionToken } from "../clerkClient";
 import { getOrCreateDeviceId } from "../identity";
 
@@ -223,6 +224,56 @@ describe("fetchJson", () => {
       const [, init] = fetchSpy.mock.calls[0];
       const headers = (init as RequestInit).headers as Record<string, string>;
       expect(headers["Authorization"]).toBeUndefined();
+    });
+  });
+
+  describe("account-link ordering gate (V2.3A overnight audit)", () => {
+    it("waits for a pending link before sending an ordinary request", async () => {
+      const order: string[] = [];
+      let resolveLink!: () => void;
+      const linkPromise = new Promise<void>((resolve) => {
+        resolveLink = () => {
+          order.push("link-settled");
+          resolve();
+        };
+      });
+      registerPendingLink(linkPromise);
+
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) => {
+        order.push("request-sent");
+        return Promise.resolve(jsonResponse({}));
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const requestPromise = fetchJson("/v1/opportunities");
+      // The request must not have reached fetch() yet -- it's waiting on
+      // the still-pending link.
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      resolveLink();
+      await requestPromise;
+
+      expect(order).toEqual(["link-settled", "request-sent"]);
+    });
+
+    it("never waits on itself when the request IS the link request", async () => {
+      // If fetchJson("/v1/account/link") awaited its own registered gate,
+      // this would hang forever and the test would time out.
+      let resolveLink!: () => void;
+      const linkPromise = new Promise<void>((resolve) => {
+        resolveLink = resolve;
+      });
+      registerPendingLink(linkPromise);
+
+      const fetchSpy = jest.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve(jsonResponse({ stratus_user_id: "x", upgraded_existing_identity: true }))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await fetchJson("/v1/account/link", { method: "POST" });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      resolveLink();
     });
   });
 });

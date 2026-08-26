@@ -18,6 +18,7 @@ import * as WebBrowser from "expo-web-browser";
 
 import { font, spacing, theme, type } from "../constants/theme";
 import { deleteAccount, linkAnonymousIdentityToAccount } from "../lib/account";
+import { registerPendingLink } from "../lib/authLinkGate";
 import { isClerkConfigured } from "../lib/clerkConfig";
 
 // Required once, at module scope, by Clerk's own documented Expo OAuth
@@ -138,11 +139,20 @@ function SignInOptions() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const finishSignIn = useCallback(async () => {
+  const finishSignIn = useCallback((): Promise<unknown> => {
     // The one place a first-time sign-in on this device carries its
     // existing anonymous history forward -- must run before any other
-    // authenticated request (see docs/DECISIONS.md's ADR-069).
-    await linkAnonymousIdentityToAccount();
+    // authenticated request (see docs/DECISIONS.md's ADR-069). Deliberately
+    // NOT an `async` function: both statements below must execute in the
+    // same synchronous tick as the call site's own `await activate(...)`/
+    // `await signIn.finalize()` resolution, with no `await` gap for
+    // another macrotask (the background opportunities poll on the
+    // underlying index screen, in particular -- Expo Router keeps it
+    // mounted under this screen) to sneak a request in with the new Bearer
+    // token before this link request does. See lib/authLinkGate.ts.
+    const linkPromise = linkAnonymousIdentityToAccount();
+    registerPendingLink(linkPromise);
+    return linkPromise;
   }, []);
 
   const handleOAuth = useCallback(

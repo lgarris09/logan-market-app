@@ -232,6 +232,70 @@ def test_second_device_linking_same_account_gets_first_linked_canonical_id():
     assert second.json()["stratus_user_id"] != device_b
 
 
+def test_link_rejects_claiming_a_stratus_user_id_already_linked_elsewhere():
+    """Overnight security re-audit finding: a caller must not be able to
+    hijack a *known* stratus_user_id by presenting it as their own
+    `anonymous_user_id` -- that would permanently bind their own,
+    genuinely-valid external identity to a victim's existing account,
+    gaining standing read/write access to it. Must be a hard rejection
+    (409), not a silent success under either identity."""
+    victim_device = f"anon-{uuid4()}"
+    client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": victim_device},
+        headers=_bearer("clerk_victim"),
+    )
+    # victim_device is now the canonical, linked identity for clerk_victim.
+
+    attacker_response = client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": victim_device},  # the attacker knows/guesses this
+        headers=_bearer("clerk_attacker"),  # a genuinely different, valid identity
+    )
+    assert attacker_response.status_code == 409
+
+    # The attacker's own token must still resolve to their own identity,
+    # never the victim's, after the rejected attempt.
+    attacker_resolved = resolve_user_id(
+        x_stratus_user_id=None, authorization=_bearer_value("clerk_attacker")
+    )
+    assert attacker_resolved != victim_device
+
+    # The victim's own link must remain completely intact.
+    victim_resolved = resolve_user_id(
+        x_stratus_user_id=None, authorization=_bearer_value("clerk_victim")
+    )
+    assert victim_resolved == victim_device
+
+
+def test_link_conflict_does_not_disturb_the_victims_existing_data():
+    from backend.app.logan_feed import _get_orchestrator, record_interaction
+
+    reset_pipeline_state()
+    victim_device = f"anon-{uuid4()}"
+    record_interaction(
+        user_id=victim_device,
+        event_id=uuid4(),
+        entity_id="NVDA",
+        domain="stocks",
+        interaction_type="save",
+    )
+    client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": victim_device},
+        headers=_bearer("clerk_victim_2"),
+    )
+
+    client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": victim_device},
+        headers=_bearer("clerk_attacker_2"),
+    )
+
+    orchestrator = _get_orchestrator()
+    assert len(orchestrator.deps.memory_store.query(user_id=victim_device)) >= 1
+
+
 def test_after_linking_authenticated_requests_resolve_to_the_linked_identity():
     anon_id = f"anon-{uuid4()}"
     subject = "clerk_full_flow"
@@ -321,6 +385,28 @@ def test_deleted_account_reauthenticating_gets_a_fresh_identity():
         x_stratus_user_id=None, authorization=_bearer_value(subject)
     )
     assert new_resolution != original_id
+
+
+def test_delete_account_purges_v21_opportunity_knowledge_state():
+    """Overnight security re-audit: purge_user_data() must also clear V2.1's
+    UserOpportunityKnowledge pointers (last_seen/notified/opened revision),
+    not just MemoryStore/notification state -- this is a disposable-identity
+    check, never run against founder/primary data."""
+    from datetime import datetime, timezone
+
+    from backend.app.logan_feed import _advance_user_knowledge, _get_user_knowledge
+
+    reset_pipeline_state()
+    user_id = f"anon-{uuid4()}"
+    _advance_user_knowledge(
+        user_id, "NVDA", datetime.now(timezone.utc), seen_revision=3
+    )
+    assert _get_user_knowledge(user_id, "NVDA") is not None
+
+    response = client.delete("/v1/account", headers={"X-Stratus-User-Id": user_id})
+    assert response.status_code == 200
+
+    assert _get_user_knowledge(user_id, "NVDA") is None
 
 
 # --- Persistence / restart ---------------------------------------------------

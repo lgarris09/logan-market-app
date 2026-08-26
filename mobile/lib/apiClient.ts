@@ -14,7 +14,17 @@
 // prefers a verified Bearer token when present; sending both here is what
 // lets /v1/account/link (called separately, right after sign-in) still see
 // this same anonymous device id on every other concurrent request.
+//
+// Also awaits authLinkGate's waitForPendingLink() before sending anything --
+// closes a real ordering race found in the V2.3A overnight audit: a
+// background poll (app/index.tsx) can otherwise reach the backend with a
+// brand-new Bearer token before app/account.tsx's own POST /v1/account/link
+// call does, silently orphaning this device's anonymous history via
+// resolve_user_id()'s auto-provisioning path instead of carrying it forward.
+// A no-op whenever no link is currently in flight (the overwhelmingly
+// common case).
 import { API_BASE_URL } from "../constants/config";
+import { waitForPendingLink } from "./authLinkGate";
 import { getClerkSessionToken } from "./clerkClient";
 import { getOrCreateDeviceId } from "./identity";
 
@@ -45,6 +55,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// V2.3A: POST /v1/account/link is itself sent through fetchJson -- it must
+// never await its own in-flight gate (that would deadlock: the gate only
+// clears once this exact request settles). Every other request waits.
+const ACCOUNT_LINK_PATH = "/v1/account/link";
+
 /**
  * Fetches JSON from a `${API_BASE_URL}${path}` endpoint with a timeout, bounded
  * retry on transient failure, and cooperative cancellation. Never throws --
@@ -63,6 +78,10 @@ export async function fetchJson<T>(
     retryDelayMs = DEFAULT_RETRY_DELAY_MS,
     ...fetchOptions
   } = options;
+
+  if (path !== ACCOUNT_LINK_PATH) {
+    await waitForPendingLink();
+  }
 
   // Sprint 3.6.9: never blocks the request if identity storage is
   // unavailable (rare) -- proceeds without the header, and the backend's

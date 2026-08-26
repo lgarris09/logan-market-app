@@ -53,7 +53,12 @@ from .notifications import (
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
 from .rate_limit import check_rate_limit
-from .user_context import link_account, require_clerk_claims, resolve_user_id
+from .user_context import (
+    AccountLinkConflictError,
+    link_account,
+    require_clerk_claims,
+    resolve_user_id,
+)
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
 # fixed-window limits for this API's two most expensive/cost-sensitive
@@ -264,11 +269,19 @@ def link_account_route(
     Rate-limited per external subject (not `user_id` -- this route
     deliberately never resolves one, see above), same defense-in-depth
     discipline as every other route here.
+
+    Raises 409 when `request.anonymous_user_id` is already claimed by a
+    *different* external identity -- see `user_context.AccountLinkConflictError`
+    for the exact account-hijack scenario this rejects (found during the
+    V2.3A overnight security re-audit).
     """
     check_rate_limit("account-link", claims.subject, *_ACCOUNT_LINK_RATE_LIMIT)
-    stratus_user_id, upgraded = link_account(
-        "clerk", claims.subject, request.anonymous_user_id
-    )
+    try:
+        stratus_user_id, upgraded = link_account(
+            "clerk", claims.subject, request.anonymous_user_id
+        )
+    except AccountLinkConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return LinkAccountResponse(
         stratus_user_id=stratus_user_id, upgraded_existing_identity=upgraded
     )
