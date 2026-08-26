@@ -42,6 +42,14 @@ QUOTE_CACHE_TTL_SECONDS = 30 * 60  # 30 minutes -- the freshness-sensitive path
 # reduces real FMP call volume (this is an *additional* endpoint call this
 # block introduces; see the ADR's FMP capability audit).
 PROFILE_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+# V2.2 hosted-validation follow-up (see fetch_benchmark_quote's own
+# docstring): a market/sector benchmark quote is additional call volume on
+# top of every live ticker's own quote/earnings/grades calls -- a long TTL
+# here is what keeps that addition from meaningfully eating into FMP's
+# free-tier daily quota. 4 hours is a deliberate middle ground: fresh enough
+# for "is the market/sector up or down today" to stay meaningful, far
+# cheaper than the 30-minute TTL an entity's own quote correctly needs.
+BENCHMARK_QUOTE_CACHE_TTL_SECONDS = 4 * 60 * 60  # 4 hours
 
 
 class _FmpCacheEntry:
@@ -350,6 +358,28 @@ class FmpMarketDataProvider:
             "quote",
             entity_id,
             QUOTE_CACHE_TTL_SECONDS,
+            lambda: self._fetch_quote_uncached(entity_id),
+        )  # type: ignore[return-value]
+
+    def fetch_benchmark_quote(self, entity_id: str) -> Optional[Quote]:
+        """Stock Opportunity Logic V2.2 (Evidence + Trajectory Enrichment):
+        the SAME quote fetch/parse as `fetch_quote()`, cached separately
+        under a much longer TTL. A market/sector benchmark (SPY, a sector
+        ETF) doesn't need `fetch_quote()`'s 30-minute freshness the way an
+        entity's *own* quote does for real-time trigger detection -- a
+        benchmark's relative standing changes slowly enough that hours-old
+        data is still meaningful context. Found live, 2026-08-25/26: adding
+        SPY + sector-ETF fetches to every live-ticker poll under the tight
+        30-minute TTL materially increased daily FMP call volume and
+        contributed to exhausting the hosted deployment's free-tier daily
+        quota (a real `HTTP 429` observed across every endpoint, not just
+        quotes) -- this method exists specifically to undo that regression
+        without touching the freshness of any entity's own price data.
+        """
+        return self._cache.get_or_fetch(
+            "benchmark_quote",
+            entity_id,
+            BENCHMARK_QUOTE_CACHE_TTL_SECONDS,
             lambda: self._fetch_quote_uncached(entity_id),
         )  # type: ignore[return-value]
 

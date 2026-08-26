@@ -22,6 +22,7 @@ from .fixture import (
     nvda_price_move_up_fixture,
 )
 from .fmp import (
+    BENCHMARK_QUOTE_CACHE_TTL_SECONDS,
     EARNINGS_CACHE_TTL_SECONDS,
     FMP_API_KEY_ENV_VAR,
     FMP_SOURCE_ID,
@@ -68,4 +69,5 @@ __all__ = [
     "GRADE_CACHE_TTL_SECONDS",
     "QUOTE_CACHE_TTL_SECONDS",
     "PROFILE_CACHE_TTL_SECONDS",
+    "BENCHMARK_QUOTE_CACHE_TTL_SECONDS",
 ]

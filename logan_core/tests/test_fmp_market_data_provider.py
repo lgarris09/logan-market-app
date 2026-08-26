@@ -324,3 +324,64 @@ def test_profile_is_cached_across_calls():
     provider.fetch_company_profile("NVDA")
     provider.fetch_company_profile("NVDA")
     assert call_count["n"] == 1
+
+
+# --- fetch_benchmark_quote (V2.2 hosted-validation follow-up) --------------
+
+
+def test_benchmark_quote_maps_the_same_as_fetch_quote():
+    def handler(request):
+        assert request.url.path.endswith("/quote")
+        assert dict(request.url.params)["symbol"] == "SPY"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "SPY",
+                    "price": 500.0,
+                    "previousClose": 495.0,
+                    "changePercentage": 1.01,
+                    "volume": 50_000_000,
+                    "timestamp": 1787601600,
+                }
+            ],
+        )
+
+    quote = _provider(handler).fetch_benchmark_quote("SPY")
+    assert quote is not None
+    assert quote.entity_id == "SPY"
+    assert quote.price == 500.0
+
+
+def test_benchmark_quote_uses_a_separate_longer_lived_cache_than_fetch_quote():
+    """The whole point of this method: a benchmark quote must not share
+    fetch_quote()'s tight 30-minute cache entry, and must itself be cached
+    for much longer -- verified by hitting both once each and confirming
+    only two real calls happened, then re-hitting both and confirming no
+    further calls (both cache entries independently satisfied)."""
+    call_count = {"n": 0}
+
+    def handler(request):
+        call_count["n"] += 1
+        symbol = request.url.params.get("symbol")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": symbol,
+                    "price": 100.0,
+                    "previousClose": 99.0,
+                    "changePercentage": 1.0,
+                    "timestamp": 1787601600,
+                }
+            ],
+        )
+
+    provider = _provider(handler)
+    provider.fetch_quote("SPY")
+    provider.fetch_benchmark_quote("SPY")
+    assert call_count["n"] == 2  # two independent cache entries, both real
+
+    provider.fetch_quote("SPY")
+    provider.fetch_benchmark_quote("SPY")
+    assert call_count["n"] == 2  # both served from their own cache

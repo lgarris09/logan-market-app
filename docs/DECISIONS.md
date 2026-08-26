@@ -3326,6 +3326,22 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   this field staying empty), not something to route around silently. Everything else this block built
   (trajectory, market-relative performance, volume-vs-average, beta-normalization, trigger price) is fully
   live-verified and working exactly as designed on the current plan.
+- **Addendum, 2026-08-25/26 (V2.3A hosted-validation fallout)**: deploying V2.3A and re-checking the hosted
+  `/v1/opportunities` response found it returning an empty feed — real logs showed `HTTP 429 Limit Reach`
+  from FMP across *every* endpoint (`/earnings` included, not just `/quote`), meaning this deployment's daily
+  FMP quota was genuinely exhausted, not a code defect. Root cause: this block's own SPY/sector-benchmark
+  quote fetches (item above) reused `fetch_quote()`'s tight 30-minute cache TTL — appropriate for an entity's
+  own price (needs to catch a real move quickly) but unnecessarily expensive for a benchmark's relative
+  standing, which doesn't need that freshness. Combined with the pre-existing 60-second background
+  notification poller (ADR-046) re-running the full pipeline continuously, this materially increased daily
+  call volume past ADR-062's own carefully-tuned budget. Fixed with a new `fetch_benchmark_quote()`
+  (`logan_core/receptors/providers/fmp.py`) — the identical fetch/parse as `fetch_quote()`, cached
+  separately under a new `BENCHMARK_QUOTE_CACHE_TTL_SECONDS` (4 hours) — used for the SPY/sector fetches in
+  `backend/app/logan_feed.py::_fetch_market_evidence` only; an entity's own quote fetch is completely
+  unaffected. 2 new tests (`test_benchmark_quote_maps_the_same_as_fetch_quote`,
+  `test_benchmark_quote_uses_a_separate_longer_lived_cache_than_fetch_quote`); combined test count
+  743 (+2). Not a new architectural decision — a direct, minimal fix for a real regression this same block's
+  hosted validation surfaced, applied before the final report rather than left broken in production.
 
 ---
 

@@ -808,7 +808,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
 
     market_change_pct: Optional[float] = None
     try:
-        market_quote = provider.fetch_quote(MARKET_BENCHMARK_SYMBOL)
+        market_quote = provider.fetch_benchmark_quote(MARKET_BENCHMARK_SYMBOL)
         if market_quote is not None:
             market_change_pct = market_quote.change_pct
     except FmpProviderError as exc:
@@ -830,7 +830,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
     sector_change_pct: Optional[float] = None
     if sector_benchmark_symbol is not None:
         try:
-            sector_quote = provider.fetch_quote(sector_benchmark_symbol)
+            sector_quote = provider.fetch_benchmark_quote(sector_benchmark_symbol)
             if sector_quote is not None:
                 sector_change_pct = sector_quote.change_pct
         except FmpProviderError as exc:
