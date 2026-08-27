@@ -29,6 +29,22 @@
 // by removing this override and running
 // `eas build --profile preview --platform ios` -- if the eager bundle
 // phase no longer fails on react-dom/react-dom/*, this file is obsolete.
+// A second, unrelated temporary Expo-packaging compatibility pin lives in
+// package.json's "overrides" ({ "expo-crypto": "15.0.9" }), added the same
+// V2.3A on-device debug session: expo-auth-session@57.0.9 declares its own
+// "expo-crypto": "~57.0.2" dependency, incompatible with this project's
+// SDK-54 expo-crypto@15.0.9 -- npm installed a second, nested copy at
+// expo-auth-session/node_modules/expo-crypto whose native AES module
+// (ExpoCryptoAES) was never autolinked into the compiled binary, causing
+// `Cannot find native module 'ExpoCryptoAES'` and a silently-undefined
+// `AuthSession` inside @clerk/expo's useSSO.js the moment any OAuth
+// (Google/Apple) sign-in was attempted. Confirmed expo-auth-session's own
+// PKCE code only ever calls Crypto.getRandomValues()/digestStringAsync(),
+// both present in 15.0.9 -- forcing that one resolution everywhere is
+// sufficient. REMOVAL CONDITION for that override: once expo-auth-session
+// ships a version whose own expo-crypto dependency range is compatible
+// with this project's Expo SDK line, delete the "overrides" entry and
+// confirm `npm ls expo-crypto` shows a single, undeduped copy.
 const { getDefaultConfig } = require("expo/metro-config");
 
 const config = getDefaultConfig(__dirname);

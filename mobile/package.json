@@ -46,6 +46,9 @@
     "react-native-svg": "15.12.1",
     "react-native-worklets": "0.5.1"
   },
+  "overrides": {
+    "expo-crypto": "$expo-crypto"
+  },
   "devDependencies": {
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "^29.5.14",
