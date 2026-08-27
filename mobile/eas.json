@@ -15,7 +15,8 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "preview",
-        "EXPO_PUBLIC_API_BASE_URL": "https://stratus-api.fly.dev"
+        "EXPO_PUBLIC_API_BASE_URL": "https://stratus-api.fly.dev",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_ZW5nYWdpbmctcGxhdHlwdXMtOTY0Ny5jbGVyay5hY2NvdW50cy5kZXYk"
       }
     },
     "production": {
