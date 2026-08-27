@@ -24,7 +24,15 @@
       "expo-router",
       "expo-font",
       "expo-notifications",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {},
