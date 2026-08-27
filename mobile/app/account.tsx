@@ -53,7 +53,7 @@ function GuestOnlyNotice() {
 // are safe to import unconditionally; they simply require a ClerkProvider
 // ancestor, which _layout.tsx only ever mounts when isClerkConfigured().
 // eslint-disable-next-line import/first
-import { useAuth, useSignIn, useSSO } from "@clerk/expo";
+import { useAuth, useSignIn, useSignUp, useSSO } from "@clerk/expo";
 
 function ConfiguredAccountScreen() {
   const { isLoaded, isSignedIn, signOut } = useAuth();
@@ -128,13 +128,19 @@ function SignedInView({ onSignOut }: { onSignOut: () => Promise<void> }) {
 function SignInOptions() {
   const { startSSOFlow } = useSSO();
   // Clerk's current "Future" resource API (see @clerk/shared's
-  // SignInFutureResource): signIn.emailCode.sendCode()/verifyCode() plus
-  // signIn.finalize() replace the older prepareFirstFactor/attemptFirstFactor/
-  // setActive shape this app's earlier draft assumed -- verified directly
-  // against the installed @clerk/expo package's own type definitions, not
-  // guessed from older documentation.
+  // SignInFutureResource/SignUpFutureResource): signIn.emailCode.*/
+  // signIn.finalize() and signUp.verifications.*EmailCode/signUp.finalize()
+  // replace the older prepareFirstFactor/attemptFirstFactor/setActive shape
+  // this app's earlier draft assumed -- verified directly against the
+  // installed @clerk/expo package's own type definitions, not guessed from
+  // older documentation.
   const { signIn } = useSignIn();
+  const { signUp } = useSignUp();
   const [stage, setStage] = useState<"idle" | "email" | "code">("idle");
+  // Combined sign-in/sign-up over one email field (V2.3A fix): whichever
+  // resource actually owns the in-flight attempt, so handleVerifyCode calls
+  // back into the same one handleSendCode started.
+  const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -174,42 +180,69 @@ function SignInOptions() {
   );
 
   const handleSendCode = useCallback(async () => {
-    if (!signIn || !email.trim()) return;
+    if (!signIn || !signUp || !email.trim()) return;
     setBusy(true);
     try {
       const { error } = await signIn.emailCode.sendCode({ emailAddress: email.trim() });
-      if (error) {
-        Alert.alert(
-          "Couldn't send a code",
-          "That email may not have an existing STRATUS account yet -- try Apple or Google, or check the address."
-        );
-      } else {
+      if (!error) {
+        setFlow("signIn");
         setStage("code");
+        return;
       }
+      // "No account with this email" is the one sign-in failure that means
+      // "this is a new user" -- fall back to creating an account with the
+      // same email, rather than surfacing this as a dead end. Any other
+      // error (rate limit, disabled strategy, etc.) is a real sign-in
+      // problem and must not be masked as "try creating an account."
+      if (error.code !== "form_identifier_not_found") {
+        Alert.alert("Couldn't send a code", error.message || "Please check the address and try again.");
+        return;
+      }
+      const created = await signUp.create({ emailAddress: email.trim() });
+      if (created.error) {
+        Alert.alert("Couldn't send a code", created.error.message || "Please check the address and try again.");
+        return;
+      }
+      const sent = await signUp.verifications.sendEmailCode();
+      if (sent.error) {
+        Alert.alert("Couldn't send a code", sent.error.message || "Please try again.");
+        return;
+      }
+      setFlow("signUp");
+      setStage("code");
     } catch (error) {
       Alert.alert("Couldn't send a code", error instanceof Error ? error.message : "Please try again.");
     } finally {
       setBusy(false);
     }
-  }, [signIn, email]);
+  }, [signIn, signUp, email]);
 
   const handleVerifyCode = useCallback(async () => {
-    if (!signIn || !code.trim()) return;
+    if (!signIn || !signUp || !code.trim()) return;
     setBusy(true);
     try {
-      const { error } = await signIn.emailCode.verifyCode({ code: code.trim() });
-      if (!error && signIn.status === "complete") {
-        await signIn.finalize();
-        await finishSignIn();
+      if (flow === "signUp") {
+        const { error } = await signUp.verifications.verifyEmailCode({ code: code.trim() });
+        if (!error && signUp.status === "complete") {
+          await signUp.finalize();
+          await finishSignIn();
+          return;
+        }
       } else {
-        Alert.alert("Incorrect code", "Please check the code and try again.");
+        const { error } = await signIn.emailCode.verifyCode({ code: code.trim() });
+        if (!error && signIn.status === "complete") {
+          await signIn.finalize();
+          await finishSignIn();
+          return;
+        }
       }
+      Alert.alert("Incorrect code", "Please check the code and try again.");
     } catch (error) {
       Alert.alert("Couldn't verify code", error instanceof Error ? error.message : "Please try again.");
     } finally {
       setBusy(false);
     }
-  }, [signIn, code, finishSignIn]);
+  }, [signIn, signUp, code, flow, finishSignIn]);
 
   return (
     <View>
