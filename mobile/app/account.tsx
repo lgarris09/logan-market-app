@@ -165,12 +165,31 @@ function SignInOptions() {
     async (strategy: "oauth_apple" | "oauth_google") => {
       setBusy(true);
       try {
-        const { createdSessionId, setActive: activate } = await startSSOFlow({ strategy });
+        // TEMPORARY diagnostic logging -- V2.3A Google/Apple OAuth live-debug
+        // session (2026-08-27/28). Remove once the callback issue is
+        // resolved and confirmed on-device; visible only via a connected
+        // Metro dev-client session, never in a preview/production build's
+        // console.
+        console.log(`[oauth-debug] starting startSSOFlow(${strategy})`);
+        const result = await startSSOFlow({ strategy });
+        console.log("[oauth-debug] startSSOFlow result", {
+          hasCreatedSessionId: Boolean(result.createdSessionId),
+          hasSetActive: Boolean(result.setActive),
+          authSessionResultType: result.authSessionResult?.type,
+          authSessionResultUrl:
+            result.authSessionResult && "url" in result.authSessionResult
+              ? result.authSessionResult.url
+              : undefined,
+        });
+        const { createdSessionId, setActive: activate } = result;
         if (createdSessionId && activate) {
           await activate({ session: createdSessionId });
           await finishSignIn();
+        } else {
+          console.log("[oauth-debug] no session created -- flow did not complete");
         }
       } catch (error) {
+        console.log("[oauth-debug] threw", error);
         Alert.alert("Sign-in failed", error instanceof Error ? error.message : "Please try again.");
       } finally {
         setBusy(false);
