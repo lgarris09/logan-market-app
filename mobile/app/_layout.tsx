@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Stack } from "expo-router";
+import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { ClerkProvider } from "@clerk/expo";
@@ -19,6 +19,7 @@ import {
 import { theme } from "../constants/theme";
 import { CLERK_PUBLISHABLE_KEY, isClerkConfigured } from "../lib/clerkConfig";
 import { clerkTokenCache } from "../lib/clerkTokenCache";
+import { hasCompletedOnboarding } from "../lib/onboarding";
 
 // V2.3A -- Identity & Account Foundation. `<ClerkProvider>` is mounted only
 // when a real publishable key is configured -- unconfigured (every
@@ -59,13 +60,46 @@ export default function RootLayout() {
     InterTight_700Bold,
   });
 
+  // V2.3A consumer closeout -- first-run onboarding gate. Checked once,
+  // alongside font loading, behind the same held splash screen so a device
+  // that needs onboarding never flashes the real Attention Field first.
+  // `needsOnboarding` starts `false` (not `null`) deliberately: the default
+  // must be "don't redirect" so a check that somehow never resolves fails
+  // open into the existing anonymous-first experience, never into a stuck
+  // splash or a forced redirect loop.
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+
   useEffect(() => {
-    if (fontsLoaded || fontError) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded, fontError]);
+    let cancelled = false;
+    hasCompletedOnboarding()
+      .then((completed) => {
+        if (!cancelled) setNeedsOnboarding(!completed);
+      })
+      .catch(() => {
+        // SecureStore unavailable is the same "fail open" case as above.
+      })
+      .finally(() => {
+        if (!cancelled) setOnboardingChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const ready = (fontsLoaded || fontError) && onboardingChecked;
+
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
+
+  useEffect(() => {
+    if (ready && needsOnboarding) router.replace("/onboarding/intro");
+  }, [ready, needsOnboarding]);
 
   // Falls through to the system font (never a blank screen) if font loading
   // genuinely fails on-device rather than blocking the app forever.
-  if (!fontsLoaded && !fontError) return null;
+  if (!ready) return null;
 
   return (
     <AuthProvider>
@@ -79,6 +113,12 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        {/* V2.3A consumer closeout -- first-run onboarding sequence. Each
+            screen renders its own back chevron (or none, for intro) rather
+            than the native Stack header -- see app/onboarding/*.tsx. */}
+        <Stack.Screen name="onboarding/intro" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding/account" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding/interests" options={{ headerShown: false }} />
         {/* headerShown:false -- ask.tsx renders its own SafeAreaView/topbar
             (mirroring index.tsx) so KeyboardAvoidingView fully owns and
             correctly measures its tree. Round 2 (real-device screenshots):
