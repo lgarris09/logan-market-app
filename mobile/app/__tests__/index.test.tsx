@@ -8,6 +8,15 @@ jest.mock("../../lib/apiClient", () => ({
   fetchJson: jest.fn(),
 }));
 
+// V2.3A consumer closeout -- the header avatar navigates via expo-router's
+// `router.push`; mocked so tests can assert on it directly rather than
+// depending on jest-expo's real navigation context being fully set up for
+// a screen rendered standalone (outside any actual Stack).
+const mockRouterPush = jest.fn();
+jest.mock("expo-router", () => ({
+  router: { push: (...args: unknown[]) => mockRouterPush(...args) },
+}));
+
 // @expo/vector-icons pulls in expo-font -> expo-asset, which isn't hoisted to a
 // location Jest's (Node-standard) module resolution can find under npm's nested
 // install layout -- unrelated to this screen's own logic, so it's mocked out
@@ -46,6 +55,7 @@ function opportunitiesResult(itemCount: number): ApiResult<OpportunitiesResponse
 describe("AttentionFieldScreen", () => {
   beforeEach(() => {
     mockedFetchJson.mockReset();
+    mockRouterPush.mockReset();
   });
 
   it("shows a loading state before the request resolves", () => {
@@ -125,5 +135,44 @@ describe("AttentionFieldScreen", () => {
     } finally {
       (global as { __DEV__?: boolean }).__DEV__ = originalDev;
     }
+  });
+
+  describe("header profile avatar (V2.3A -- standard account affordance)", () => {
+    it("renders a distinct, guest-fallback avatar next to the notification bell, not the old ambiguous dot", () => {
+      mockedFetchJson.mockReturnValue(new Promise(() => {}));
+
+      render(<AttentionFieldScreen />);
+
+      // Clerk isn't configured in this test environment, so the header
+      // renders its guest fallback (a plain person glyph) rather than
+      // calling any Clerk hook -- see components/ProfileAvatar.tsx.
+      expect(screen.getByLabelText("Account and settings")).toBeTruthy();
+      expect(screen.getByText("icon:person-outline")).toBeTruthy();
+      // The bell is a separate element with its own label/icon, not merged
+      // into the same tap target as the avatar.
+      expect(screen.getByLabelText("No new opportunities")).toBeTruthy();
+      expect(screen.getByText("icon:notifications-outline")).toBeTruthy();
+    });
+
+    it("navigates to the Account & Settings screen when the avatar is pressed", () => {
+      mockedFetchJson.mockReturnValue(new Promise(() => {}));
+
+      render(<AttentionFieldScreen />);
+      fireEvent.press(screen.getByLabelText("Account and settings"));
+
+      expect(mockRouterPush).toHaveBeenCalledWith("/account");
+    });
+
+    it("pressing the avatar never also triggers the notifications panel", () => {
+      mockedFetchJson.mockReturnValue(new Promise(() => {}));
+
+      render(<AttentionFieldScreen />);
+      fireEvent.press(screen.getByLabelText("Account and settings"));
+
+      // NEW OPPORTUNITIES panel title only ever renders once panelItems is
+      // set by openNotifications() -- confirming it's absent proves the
+      // avatar's own press handler is fully independent of the bell's.
+      expect(screen.queryByText("NEW OPPORTUNITIES")).toBeNull();
+    });
   });
 });

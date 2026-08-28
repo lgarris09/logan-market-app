@@ -12,21 +12,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import Animated, {
-  Easing,
-  interpolate,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
 
 import { font, radius, spacing, theme, tracking, type } from "../constants/theme";
 import { AttentionField, OpenRequest } from "../components/AttentionField";
 import { FieldBiasControl } from "../components/FieldBiasControl";
 import { PressableScale } from "../components/PressableScale";
+import { ProfileAvatar } from "../components/ProfileAvatar";
 import { fetchJson } from "../lib/apiClient";
+import { isClerkConfigured } from "../lib/clerkConfig";
 import { FieldBias } from "../lib/fieldBias";
 import { InteractionDomain, recordInteraction } from "../lib/interactions";
 import {
@@ -34,6 +27,28 @@ import {
   useNotificationTapHandler,
 } from "../lib/notifications";
 import { OpportunitiesResponse } from "../types/loganFeed";
+
+// V2.3A consumer closeout -- the standard account affordance, replacing the
+// previous ambiguous pulsing orange dot. Split into two components (rather
+// than one that conditionally skips calling useUser()) for the same reason
+// app/account.tsx's AccountScreen/ConfiguredAccountScreen split exists: a
+// component that calls a Clerk hook must never be the one rendered when
+// Clerk isn't configured -- conditionally *skipping* the hook call inside
+// one component would violate React's rules of hooks the moment
+// isClerkConfigured() ever changed within a single mounted instance.
+import { useUser } from "@clerk/expo";
+
+function HeaderAvatar() {
+  if (!isClerkConfigured()) {
+    return <ProfileAvatar user={null} />;
+  }
+  return <ClerkHeaderAvatar />;
+}
+
+function ClerkHeaderAvatar() {
+  const { user } = useUser();
+  return <ProfileAvatar user={user ?? null} />;
+}
 
 // Sprint 3.6 device retest: the Attention Field header and the menu drawer
 // header both now render the owner-approved STRATUS wordmark artwork
@@ -180,34 +195,6 @@ export default function AttentionFieldScreen() {
   // FieldBiasControl.tsx. Local UI state only, never persisted; resets to
   // "all" on a fresh screen mount by design.
   const [fieldBias, setFieldBias] = useState<FieldBias>("all");
-
-  // Header "live" dot: a slow, constant size pulse -- purely decorative
-  // (see liveDot's own accessibility props below), same breathing sine-ease
-  // pattern Vessel.tsx uses elsewhere in the app rather than a new motion
-  // language. Skips animating entirely under the OS's Reduce Motion setting.
-  const liveDotPulse = useSharedValue(0);
-  const reducedMotion = useReducedMotion();
-
-  useEffect(() => {
-    if (reducedMotion) {
-      liveDotPulse.value = 0;
-      return;
-    }
-    const ease = Easing.inOut(Easing.sin);
-    // Slowed from 1600ms/leg (3.2s full cycle) to 2600ms/leg (5.2s) -- the
-    // faster version read as a glitch/flicker rather than a calm pulse.
-    // Was a manually chained withSequence(grow, shrink) repeated via
-    // withRepeat(..., false) -- that combination snapped back to "large" at
-    // the loop boundary instead of continuing the shrink smoothly.
-    // withRepeat's own `reverse: true` ping-pongs a single withTiming back
-    // to its start automatically, which is the idiomatic way to avoid that
-    // seam.
-    liveDotPulse.value = withRepeat(withTiming(1, { duration: 2600, easing: ease }), -1, true);
-  }, [liveDotPulse, reducedMotion]);
-
-  const liveDotStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: interpolate(liveDotPulse.value, [0, 1], [1, 1.5]) }],
-  }));
 
   const loadFeed = useCallback(async (signal: AbortSignal) => {
     setState({ kind: "loading" });
@@ -457,8 +444,13 @@ export default function AttentionFieldScreen() {
                 : "No new opportunities"
             }
             accessibilityHint={unread.length > 0 ? "Opens the new opportunities list" : undefined}
+            style={styles.bellButton}
           >
-            <Animated.View style={[styles.liveDot, liveDotStyle]} />
+            <Ionicons
+              name={unread.length > 0 ? "notifications" : "notifications-outline"}
+              size={20}
+              color={theme.textSecondary}
+            />
             {unread.length > 0 && (
               <View
                 style={[styles.notifBadge, { width: notifBadgeWidth(unread.length) }]}
@@ -469,6 +461,15 @@ export default function AttentionFieldScreen() {
                 </Text>
               </View>
             )}
+          </Pressable>
+          <Pressable
+            onPress={() => router.push("/account")}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Account and settings"
+            style={styles.avatarButton}
+          >
+            <HeaderAvatar />
           </Pressable>
         </View>
       </View>
@@ -723,14 +724,16 @@ const styles = StyleSheet.create({
   },
   // Equal-width bookend columns -- see the JSX comment above for why this
   // (rather than space-between on 3 unequal children) is what actually
-  // centers the logo precisely.
-  topbarSide: { width: 22, flexDirection: "row", alignItems: "center" },
-  topbarSideRight: { alignItems: "flex-end" },
+  // centers the logo precisely. Widened from 22 (just the hamburger) to fit
+  // the right side's bell + avatar pair -- both sides share this one value
+  // so the center column's true midpoint keeps landing on the row's true
+  // midpoint regardless of which side is rendering what.
+  topbarSide: { width: 64, flexDirection: "row", alignItems: "center" },
+  topbarSideRight: { justifyContent: "flex-end", gap: spacing.sm },
   topbarCenter: { flex: 1, alignItems: "center" },
   headerLogo: { width: HEADER_LOGO_WIDTH, height: HEADER_LOGO_HEIGHT },
-  // Base size up 5 -> 7 (min ~7px at rest) with the 1.5x pulse peak (~10.5px
-  // at max) -- both ends of the pulse bigger, not just the resting size.
-  liveDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: theme.accent },
+  bellButton: { padding: 2 },
+  avatarButton: { padding: 2 },
   notifBadge: {
     position: "absolute",
     // Pushed further up/right (was -6/-8) -- at the old offsets the badge
