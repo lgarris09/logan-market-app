@@ -211,7 +211,20 @@ export default function AttentionFieldScreen() {
 
   const loadFeed = useCallback(async (signal: AbortSignal) => {
     setState({ kind: "loading" });
-    const result = await fetchJson<OpportunitiesResponse>("/v1/opportunities", { signal });
+    // V2.3A field report: on a restrictive/blocking network (confirmed:
+    // reproduced on a work Wi-Fi, absent on cellular), this request's
+    // default 3-attempt/10s-each retry budget -- stacked on top of
+    // fetchJson's own waitForPendingLink() gate right after fresh sign-in --
+    // could leave the plain, textless loading spinner on screen for up to
+    // ~40s before any visible state changed, reading as a dead/black screen
+    // rather than a slow one. Narrowed here (this call site only, not
+    // fetchJson's shared defaults) so a blocked network reaches the
+    // existing, already-graceful "timeout" state in ~9s instead.
+    const result = await fetchJson<OpportunitiesResponse>("/v1/opportunities", {
+      signal,
+      timeoutMs: 8000,
+      retries: 1,
+    });
     switch (result.status) {
       case "success":
         setState(
@@ -463,18 +476,42 @@ export default function AttentionFieldScreen() {
       {state.kind === "loading" && (
         <View style={styles.centerFill} accessibilityLabel="Loading opportunities">
           <ActivityIndicator color={theme.accent} size="large" />
+          {/* V2.3A field report fix: a bare spinner on this near-black
+              background was indistinguishable from a dead/black screen on a
+              slow or blocked network -- this text is the entire fix for
+              that specific confusion, independent of how long the load
+              actually takes. */}
+          <Text style={styles.loadingText}>Connecting to STRATUS…</Text>
         </View>
       )}
 
       {state.kind === "error" && (
         <View style={styles.centerFill}>
           <View style={styles.error} accessibilityLiveRegion="polite">
-            <Text style={styles.errorTitle}>Backend not connected</Text>
-            <Text style={styles.errorText}>{state.message}</Text>
-            <Text style={styles.errorText}>
-              Start FastAPI and set your computer IP in constants/config.ts (or
-              EXPO_PUBLIC_API_BASE_URL).
-            </Text>
+            {__DEV__ ? (
+              <>
+                <Text style={styles.errorTitle}>Backend not connected</Text>
+                <Text style={styles.errorText}>{state.message}</Text>
+                <Text style={styles.errorText}>
+                  Start FastAPI and set your computer IP in constants/config.ts (or
+                  EXPO_PUBLIC_API_BASE_URL).
+                </Text>
+              </>
+            ) : (
+              // V2.3A field report fix: the dev-oriented "start FastAPI"
+              // copy above was being shown verbatim on hosted/production
+              // builds too -- actively wrong and confusing on a real
+              // device. A hosted build only ever means "the network or the
+              // hosted service is unreachable," never "you forgot to start
+              // your local backend."
+              <>
+                <Text style={styles.errorTitle}>Unable to reach STRATUS</Text>
+                <Text style={styles.errorText}>
+                  Check your connection and try again. Some networks (for example, a
+                  restrictive work Wi-Fi) may block this connection.
+                </Text>
+              </>
+            )}
             <PressableScale
               style={styles.retryButton}
               onPress={startLoad}
@@ -492,7 +529,9 @@ export default function AttentionFieldScreen() {
           <View style={styles.error} accessibilityLiveRegion="polite">
             <Text style={styles.errorTitle}>Taking longer than expected</Text>
             <Text style={styles.errorText}>
-              STRATUS didn&apos;t respond in time. Check that the backend is running and reachable.
+              {__DEV__
+                ? "STRATUS didn't respond in time. Check that the backend is running and reachable."
+                : "STRATUS didn't respond in time. Check your connection -- some networks (for example, a restrictive work Wi-Fi) may block this connection."}
             </Text>
             <PressableScale
               style={styles.retryButton}
@@ -756,6 +795,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing.xl,
+  },
+  loadingText: {
+    color: theme.textSecondary,
+    fontFamily: font.body,
+    fontSize: type.body,
+    marginTop: spacing.md,
   },
   error: {
     backgroundColor: theme.accentSoft,

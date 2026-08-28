@@ -54,6 +54,11 @@ describe("AttentionFieldScreen", () => {
     render(<AttentionFieldScreen />);
 
     expect(screen.getByLabelText("Loading opportunities")).toBeTruthy();
+    // V2.3A field report fix: a bare spinner on this screen's near-black
+    // background was indistinguishable from a dead/black screen on a slow
+    // or blocked network (reproduced on a real work Wi-Fi) -- this text is
+    // the fix for that specific confusion.
+    expect(screen.getByText("Connecting to STRATUS…")).toBeTruthy();
   });
 
   it("renders the Attention Field once opportunities load", async () => {
@@ -101,5 +106,24 @@ describe("AttentionFieldScreen", () => {
     });
 
     await waitFor(() => expect(screen.getByText("AttentionField:2")).toBeTruthy());
+  });
+
+  it("shows the hosted-network error copy (not dev-only 'start FastAPI' guidance) outside __DEV__", async () => {
+    // V2.3A field report fix: the dev-oriented "Start FastAPI..." message
+    // was being shown verbatim on hosted/production builds too, actively
+    // wrong and confusing on a real device that simply can't reach a
+    // blocked or unreachable hosted backend.
+    const originalDev = (global as { __DEV__?: boolean }).__DEV__;
+    (global as { __DEV__?: boolean }).__DEV__ = false;
+    try {
+      mockedFetchJson.mockResolvedValueOnce({ status: "error", message: "Server returned 500" });
+
+      render(<AttentionFieldScreen />);
+
+      await waitFor(() => expect(screen.getByText("Unable to reach STRATUS")).toBeTruthy());
+      expect(screen.queryByText(/Start FastAPI/)).toBeNull();
+    } finally {
+      (global as { __DEV__?: boolean }).__DEV__ = originalDev;
+    }
   });
 });
