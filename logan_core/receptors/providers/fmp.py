@@ -42,6 +42,24 @@ QUOTE_CACHE_TTL_SECONDS = 30 * 60  # 30 minutes -- the freshness-sensitive path
 # reduces real FMP call volume (this is an *additional* endpoint call this
 # block introduces; see the ADR's FMP capability audit).
 PROFILE_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+# V2.3A.1 field investigation (2026-08-28): a live production incident --
+# NVDA's real earnings beat (reported 2026-08-26, correctly notification-
+# worthy) intermittently vanished from the feed entirely ("Nothing to show
+# yet") on polls where FMP's shared daily quota happened to be exhausted at
+# the exact moment this entity's 6-hour earnings cache entry expired and a
+# refetch was attempted. The report itself hadn't changed or gone stale --
+# only the *refetch attempt* failed -- but get_or_fetch's original
+# uncached-on-error behavior (correct for endpoints where staleness is
+# actually misleading, e.g. quotes) meant a purely transient refetch failure
+# was indistinguishable from "no qualifying earnings," dropping an entity
+# that was still completely valid and recent. A quarterly earnings report
+# does not become wrong 6 hours and 1 second after it was last confirmed --
+# this grace window is what lets fetch_latest_earnings keep serving it
+# through a provider outage instead of the opportunity silently
+# disappearing. Deliberately NOT applied to quotes/grades (still fail
+# immediately on a refetch error, no grace) -- those are the genuinely
+# freshness-sensitive paths where serving stale data *would* be misleading.
+EARNINGS_STALE_GRACE_SECONDS = 24 * 60 * 60  # 24 hours beyond the 6h TTL
 # V2.2 hosted-validation follow-up (see fetch_benchmark_quote's own
 # docstring): a market/sector benchmark quote is additional call volume on
 # top of every live ticker's own quote/earnings/grades calls -- a long TTL
@@ -81,6 +99,7 @@ class FmpResponseCache:
         entity_id: str,
         ttl_seconds: float,
         fetch: Callable[[], object],
+        stale_grace_seconds: float = 0.0,
     ) -> object:
         key = (endpoint, entity_id)
         now = self._clock()
@@ -88,11 +107,31 @@ class FmpResponseCache:
         if entry is not None and (now - entry.cached_at) < ttl_seconds:
             return entry.value
 
-        # Deliberately not try/except-wrapped: a raised FmpProviderError
-        # propagates straight out, uncached, so it is never mistaken for a
-        # real "no data" response and never poisons the cache for other
-        # callers sharing it.
-        value = fetch()
+        # A raised FmpProviderError still propagates uncached by default
+        # (stale_grace_seconds == 0, every pre-V2.3A.1 caller) -- never
+        # mistaken for a real "no data" response, never poisons the cache
+        # for other callers sharing it. When a caller opts into a grace
+        # window (see fetch_latest_earnings: a quarterly report doesn't
+        # become wrong minutes after its TTL lapses) and a fetch failure
+        # happens while a still-within-grace stale entry exists, that entry
+        # is served instead -- its own `cached_at` is left untouched, so the
+        # very next call still attempts a real refetch rather than treating
+        # this as a fresh success.
+        try:
+            value = fetch()
+        except FmpProviderError as exc:
+            if (
+                stale_grace_seconds > 0
+                and entry is not None
+                and (now - entry.cached_at) < ttl_seconds + stale_grace_seconds
+            ):
+                print(
+                    f"[fmp-cache] {endpoint}/{entity_id}: refetch failed "
+                    f"({exc}), serving stale cache (age={now - entry.cached_at:.0f}s) "
+                    "rather than dropping a still-valid recent result"
+                )
+                return entry.value
+            raise
         self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
         return value
 
@@ -215,6 +254,7 @@ class FmpEarningsProvider:
             entity_id,
             EARNINGS_CACHE_TTL_SECONDS,
             lambda: self._fetch_latest_earnings_uncached(entity_id),
+            stale_grace_seconds=EARNINGS_STALE_GRACE_SECONDS,
         )  # type: ignore[return-value]
 
     def _fetch_latest_earnings_uncached(

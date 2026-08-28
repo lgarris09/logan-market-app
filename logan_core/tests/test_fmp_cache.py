@@ -20,6 +20,7 @@ import pytest
 
 from logan_core.receptors.providers import (
     EARNINGS_CACHE_TTL_SECONDS,
+    EARNINGS_STALE_GRACE_SECONDS,
     GRADE_CACHE_TTL_SECONDS,
     QUOTE_CACHE_TTL_SECONDS,
     FmpEarningsProvider,
@@ -351,6 +352,124 @@ def test_legitimate_no_data_response_is_cached_not_treated_as_an_error():
     assert first is None
     assert second is None
     assert call_count == 1
+
+
+# --- Stale-serve-on-refetch-failure grace window (V2.3A.1 field fix) -------
+#
+# Real production incident (2026-08-28): NVDA's real, notification-worthy
+# earnings beat (reported 2026-08-26) intermittently vanished from the feed
+# entirely ("Nothing to show yet") on polls where FMP's daily quota was
+# exhausted at the exact moment this entity's 6-hour earnings cache entry
+# expired and a refetch was attempted -- a purely transient refetch failure,
+# not a real "no qualifying earnings" result, but get_or_fetch's original
+# behavior (correctly uncached-on-error, so a genuine outage is retried
+# rather than remembered as "no data") made the two indistinguishable to
+# every caller above it.
+
+
+def test_stale_earnings_are_served_when_a_refetch_fails_within_the_grace_window():
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _earnings_response(eps_actual=1.05)
+        return httpx.Response(429, text="rate limited")
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+
+    first = provider.fetch_latest_earnings("NVDA")
+    assert first is not None
+    assert first.actual_eps == 1.05
+
+    # Past the 6h TTL (a real refetch is now attempted), but nowhere near
+    # the 24h grace window on top of it -- the refetch fails (quota outage),
+    # and the still-recent, still-correct report is served instead of the
+    # entity disappearing.
+    clock.advance(EARNINGS_CACHE_TTL_SECONDS + 60)
+    second = provider.fetch_latest_earnings("NVDA")
+
+    assert second is not None
+    assert second.actual_eps == 1.05
+    assert call_count == 2  # the refetch was genuinely attempted, not skipped
+
+
+def test_stale_earnings_grace_expires_eventually_and_then_raises():
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _earnings_response()
+        return httpx.Response(429, text="rate limited")
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+
+    provider.fetch_latest_earnings("NVDA")
+    # Past both the TTL *and* the full stale grace window -- a report this
+    # old, during an outage this long, is no longer safe to keep presenting
+    # as current; this must fail loudly, the same as the pre-fix behavior,
+    # not silently keep serving increasingly ancient data forever.
+    clock.advance(EARNINGS_CACHE_TTL_SECONDS + EARNINGS_STALE_GRACE_SECONDS + 1)
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+
+
+def test_a_successful_refetch_within_the_grace_window_still_updates_the_cache():
+    """The grace window is a fallback for *failures*, not a reason to stop
+    trying -- once FMP recovers, the next real success must replace the
+    stale value and reset the TTL clock, not keep serving the old one."""
+    responses_served = []
+
+    def handler(request):
+        response = _earnings_response(eps_actual=1.05 if not responses_served else 2.22)
+        responses_served.append(response)
+        return response
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+
+    first = provider.fetch_latest_earnings("NVDA")
+    assert first.actual_eps == 1.05
+
+    clock.advance(EARNINGS_CACHE_TTL_SECONDS + 60)
+    second = provider.fetch_latest_earnings("NVDA")
+
+    assert second.actual_eps == 2.22  # the real, newer report -- not stale 1.05
+
+
+def test_quotes_still_fail_immediately_on_a_refetch_error_no_stale_grace():
+    """Deliberate asymmetry: quotes are the genuinely freshness-sensitive
+    path (Sprint 3.6.9's own reasoning for QUOTE_CACHE_TTL_SECONDS being the
+    shortest TTL) -- serving a stale price as if current would be actively
+    misleading, unlike a quarterly earnings report. fetch_quote must never
+    opt into the earnings-only grace window."""
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _quote_response(price=150.0)
+        return httpx.Response(429, text="rate limited")
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _market_data_provider(handler, cache)
+
+    provider.fetch_quote("NVDA")
+    clock.advance(QUOTE_CACHE_TTL_SECONDS + 1)
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_quote("NVDA")
 
 
 # --- Shared-cache path (the actual production topology) ---------------------
