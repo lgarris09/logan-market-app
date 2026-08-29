@@ -30,6 +30,7 @@ import { shouldShowOverflowFade } from "../lib/cardOverflow";
 import { humanizeSignalType } from "../lib/signalType";
 import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { describeSinceLastLooked } from "../lib/sinceLastLooked";
+import { unwatchOpportunity, watchOpportunity } from "../lib/watch";
 import { FeedItem } from "../types/loganFeed";
 
 // Opportunity Card redesign (owner rendering reference): the header
@@ -497,6 +498,35 @@ export function Vessel({
       : sinceLastLooked?.tone === "degraded"
         ? theme.warning
         : theme.textSecondary;
+
+  // Minimal STRATUS Watch (V2.3E): local optimistic state so a tap updates
+  // the UI immediately rather than waiting for the next ~60s poll to echo
+  // it back via item.is_watched -- reverted if the API call itself fails.
+  // Resyncs to the server's own value whenever it changes underneath this
+  // (a fresh poll, or the same entity watched/unwatched from another
+  // screen) via the effect below, exactly mirroring how AttentionField
+  // already treats item.is_watched as the source of truth.
+  const [watched, setWatched] = useState(item.is_watched);
+  const [watchPending, setWatchPending] = useState(false);
+  useEffect(() => {
+    setWatched(item.is_watched);
+  }, [item.is_watched]);
+
+  const toggleWatch = async () => {
+    if (watchPending) return;
+    const wasWatched = watched;
+    setWatchPending(true);
+    setWatched(!wasWatched);
+    const result = wasWatched
+      ? await unwatchOpportunity(item.entity_id, item.event_id)
+      : await watchOpportunity(item.entity_id, item.event_id);
+    setWatchPending(false);
+    if (result === null) {
+      setWatched(wasWatched); // revert -- the request itself failed
+      return;
+    }
+    setWatched(result.watched);
+  };
 
   // Owner device feedback: a flat dormantSize*0.25 shift put the icon in
   // the top quadrant on typical-size bubbles, but on smaller ones --
@@ -1122,36 +1152,83 @@ export function Vessel({
 
                       <RecommendationPanel recommendation={item.delivered_item.recommendation} />
 
-                      {/* Sprint 3.6.7 Block 4: launches Ask STRATUS with
-                          this opportunity's real event_id attached (see
-                          ask.tsx's `isContextual` handling) -- the minimal
-                          per-card entry point the block's own scope called
-                          for, styled like ask.tsx's own starterRow rather
-                          than introducing a new button treatment. */}
-                      <Pressable
-                        style={styles.askButton}
-                        onPress={() =>
-                          router.push({
-                            pathname: "/ask",
-                            params: {
-                              eventId: item.event_id,
-                              entityId: item.entity_id,
-                              displayName: item.display_name,
-                              domain: item.domain,
+                      {/* Minimal STRATUS Watch (V2.3E): "STRATUS, keep
+                          watching this for me." Reuses askButton's own pill
+                          treatment (same shape, tinted when active) rather
+                          than a bookmark-style icon/label -- deliberately
+                          framed as delegating monitoring to STRATUS, not a
+                          generic social-media save. Sits in its own row
+                          alongside Ask STRATUS so both single-tap actions
+                          read as peers, not a hidden-settings toggle. */}
+                      <View style={styles.actionRow}>
+                        <Pressable
+                          style={[
+                            styles.askButton,
+                            watched && {
+                              borderColor: theme.success + "60",
+                              backgroundColor: theme.success + "12",
                             },
-                          })
-                        }
-                        accessibilityRole="button"
-                        accessibilityLabel={`Ask STRATUS about ${item.display_name}`}
-                      >
-                        <Ionicons
-                          name="chatbubble-ellipses-outline"
-                          size={13}
-                          color={theme.textSecondary}
-                        />
-                        <Text style={styles.askButtonText}>Ask STRATUS about this</Text>
-                        <Ionicons name="chevron-forward" size={13} color={theme.textSecondary} />
-                      </Pressable>
+                          ]}
+                          onPress={toggleWatch}
+                          disabled={watchPending}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: watched }}
+                          accessibilityLabel={
+                            watched
+                              ? `Stop watching ${item.display_name}`
+                              : `Watch ${item.display_name}`
+                          }
+                        >
+                          <Ionicons
+                            name={watched ? "telescope" : "telescope-outline"}
+                            size={13}
+                            color={watched ? theme.success : theme.textSecondary}
+                          />
+                          <Text
+                            style={[
+                              styles.askButtonText,
+                              watched && { color: theme.success },
+                            ]}
+                          >
+                            {watched ? "Watching" : "Watch"}
+                          </Text>
+                        </Pressable>
+
+                        {/* Sprint 3.6.7 Block 4: launches Ask STRATUS with
+                            this opportunity's real event_id attached (see
+                            ask.tsx's `isContextual` handling) -- the minimal
+                            per-card entry point the block's own scope called
+                            for, styled like ask.tsx's own starterRow rather
+                            than introducing a new button treatment. */}
+                        <Pressable
+                          style={styles.askButton}
+                          onPress={() =>
+                            router.push({
+                              pathname: "/ask",
+                              params: {
+                                eventId: item.event_id,
+                                entityId: item.entity_id,
+                                displayName: item.display_name,
+                                domain: item.domain,
+                              },
+                            })
+                          }
+                          accessibilityRole="button"
+                          accessibilityLabel={`Ask STRATUS about ${item.display_name}`}
+                        >
+                          <Ionicons
+                            name="chatbubble-ellipses-outline"
+                            size={13}
+                            color={theme.textSecondary}
+                          />
+                          <Text style={styles.askButtonText}>Ask STRATUS about this</Text>
+                          <Ionicons
+                            name="chevron-forward"
+                            size={13}
+                            color={theme.textSecondary}
+                          />
+                        </Pressable>
+                      </View>
 
                       {/* Opportunity Card redesign: footer metadata stays
                           visually quiet -- LAST UPDATED (+ RELATED SIGNALS
@@ -1401,6 +1478,10 @@ const styles = StyleSheet.create({
     letterSpacing: tracking.label,
   },
   sectionText: { color: theme.textSecondary, fontSize: 13, fontFamily: font.body, lineHeight: 19 },
+  // Minimal STRATUS Watch (V2.3E): houses the Watch pill beside Ask
+  // STRATUS's own -- each button keeps its own vertical margin (below),
+  // this just lays them out side by side rather than stacked.
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   askButton: {
     flexDirection: "row",
     alignItems: "center",

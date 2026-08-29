@@ -74,6 +74,7 @@ const fullyPopulatedItem: FeedItem = {
     detail: "Confidence strengthened from 0.62 to 0.72.",
     evaluated_at: "2026-08-29T00:00:00Z",
   } satisfies SinceLastLookedSummary,
+  is_watched: true,
 };
 
 // The inert-default shape every pre-V2.3C caller/fixture gets when
@@ -94,6 +95,7 @@ const inertItem: FeedItem = {
   trajectory_reason: null,
   evidence: null,
   since_last_looked: null,
+  is_watched: false,
 };
 
 // The "first_view" shape: lifecycle tracking is active, but this user has
@@ -123,6 +125,12 @@ describe("FeedItem/EvidenceSnapshot contract", () => {
     expect(inertItem.trajectory).toBe("STEADY");
     expect(inertItem.evidence).toBeNull();
     expect(inertItem.since_last_looked).toBeNull();
+    expect(inertItem.is_watched).toBe(false);
+  });
+
+  it("accepts is_watched independent of lifecycle tracking", () => {
+    expect(fullyPopulatedItem.is_watched).toBe(true);
+    expect(inertItem.is_watched).toBe(false);
   });
 
   it("accepts a material_change since_last_looked summary", () => {

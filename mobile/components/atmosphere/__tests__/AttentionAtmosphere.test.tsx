@@ -71,6 +71,7 @@ function makeItem(id: string, rank: number): FeedItem {
     trajectory_reason: null,
     evidence: null,
     since_last_looked: null,
+    is_watched: false,
   };
 }
 

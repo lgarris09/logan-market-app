@@ -190,6 +190,12 @@ export type FeedItem = {
   // changed since this user last looked" -- rendered as-is, never
   // re-derived from opportunity_revision/user_sync_status on this side.
   since_last_looked: SinceLastLookedSummary | null;
+
+  // Minimal STRATUS Watch (V2.3E). Whether this user has explicitly asked
+  // STRATUS to keep watching this opportunity -- deliberately NOT gated
+  // behind lifecycle tracking the way the fields above are (a user can
+  // watch any opportunity they can see, live-tracked or not).
+  is_watched: boolean;
 };
 
 export type DemoFeedResponse = {

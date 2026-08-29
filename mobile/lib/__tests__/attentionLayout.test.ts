@@ -49,6 +49,7 @@ function makeItem(
     trajectory_reason: null,
     evidence: null,
     since_last_looked: null,
+    is_watched: false,
     delivered_item: {
       event_id: id,
       surface: "wheel",
