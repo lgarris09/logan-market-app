@@ -92,36 +92,19 @@ function ConfiguredAccountScreen() {
   );
 }
 
-export function signInMethodLabel(user: ReturnType<typeof useUser>["user"]): string {
-  // Bug fix: user.externalAccounts is account-wide -- every OAuth provider
-  // ever linked to this Clerk user, for the account's entire lifetime, not
-  // "how did I sign in this session." A device that once tried Google
-  // OAuth (even in an earlier test) keeps that externalAccounts entry
-  // forever, so checking it first showed "Signed in with Google" for a
-  // later, genuinely email-code sign-in. The primary email's own
-  // verification.strategy is the real signal for how *that specific
-  // identifier* was verified ("email_code"/"email_link" vs
-  // "oauth_google"/"oauth_apple"/...) -- check that first, and only fall
-  // back to the account-wide externalAccounts list when the primary email
-  // itself carries no verification info at all (e.g. no primary email
-  // exists yet).
-  const emailStrategy = user?.primaryEmailAddress?.verification?.strategy;
-  if (emailStrategy === "email_code" || emailStrategy === "email_link") {
-    return "Email";
-  }
-  if (emailStrategy?.startsWith("oauth_")) {
-    const provider = emailStrategy.slice("oauth_".length);
-    return provider.charAt(0).toUpperCase() + provider.slice(1);
-  }
-  const externalProvider = user?.externalAccounts?.[0]?.provider;
-  if (externalProvider) {
-    return externalProvider.charAt(0).toUpperCase() + externalProvider.slice(1);
-  }
-  if (user?.primaryEmailAddress) {
-    return "Email";
-  }
-  return "STRATUS account";
-}
+// Removed (2026-08-29): a "Signed in with X" provider badge was here, but
+// no data Clerk exposes reliably answers "which method established the
+// *current* active session" once you're past the sign-in flow itself.
+// Checked directly (@clerk/shared's own type definitions): SessionResource
+// has no strategy/method field at all (just timestamps, tokens,
+// factorVerificationAge); EmailAddress.verification.strategy reflects that
+// *identifier's* own verification history (permanently "oauth_google" if
+// the email was first verified via Google, even for a later, genuinely
+// different email-code sign-in -- confirmed live, this is exactly the bug
+// that shipped); externalAccounts is the whole account's linked-provider
+// list, not session-specific; UserResource.lastSignInAt is a timestamp
+// only, no method. Rather than show a label that can silently be wrong,
+// removed the badge entirely -- honest omission over a guess.
 
 function AccountAndSettings({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const { user } = useUser();
@@ -166,9 +149,6 @@ function AccountAndSettings({ onSignOut }: { onSignOut: () => Promise<void> }) {
         <ProfileAvatar user={(user as ProfileAvatarUser | null) ?? null} size={72} />
         <Text style={styles.profileName}>{user?.fullName || identifier}</Text>
         <Text style={styles.identifierText}>{identifier}</Text>
-        <View style={styles.methodPill}>
-          <Text style={styles.methodPillText}>Signed in with {signInMethodLabel(user)}</Text>
-        </View>
       </View>
 
       <InterestsSection />
@@ -452,16 +432,6 @@ const styles = StyleSheet.create({
     fontSize: type.label,
     color: theme.muted,
   },
-  methodPill: {
-    marginTop: spacing.sm,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: radius.pill,
-    paddingVertical: 4,
-    paddingHorizontal: spacing.md,
-  },
-  methodPillText: { fontFamily: font.metadata, fontSize: type.micro, color: theme.textSecondary },
   section: { marginBottom: spacing.lg },
   sectionLabel: {
     fontFamily: font.metadata,

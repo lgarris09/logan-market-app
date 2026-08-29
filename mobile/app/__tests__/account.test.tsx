@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 
-import AccountScreen, { signInMethodLabel } from "../account";
+import AccountScreen from "../account";
 
 // Same @expo/vector-icons mocking convention as app/__tests__/index.test.tsx.
 jest.mock("@expo/vector-icons", () => {
@@ -46,7 +46,13 @@ jest.mock("@clerk/expo", () => ({
       hasImage: false,
       imageUrl: "",
       primaryEmailAddress: { emailAddress: "ada@example.com" },
-      externalAccounts: [],
+      // Deliberately non-empty, mirroring the real bug scenario: an
+      // account-wide externalAccounts entry from an earlier/different
+      // sign-in method must never resurrect a "Signed in with X" badge --
+      // there shouldn't be one at all anymore (see account.tsx's own
+      // removal comment for why no Clerk data reliably answers "how was
+      // *this* session established").
+      externalAccounts: [{ provider: "google" }],
     },
   }),
 }));
@@ -56,12 +62,23 @@ describe("AccountScreen (signed in)", () => {
     mockSignOut.mockClear();
   });
 
-  it("shows the signed-in profile with the real identifier and sign-in method", async () => {
+  it("shows the signed-in profile with the real identifier", async () => {
     render(<AccountScreen />);
 
     await waitFor(() => expect(screen.getByText("ada@example.com")).toBeTruthy());
     expect(screen.getByText("Ada Lovelace")).toBeTruthy();
-    expect(screen.getByText("Signed in with Email")).toBeTruthy();
+  });
+
+  it("never shows a 'Signed in with X' provider badge", async () => {
+    // Regression test: no Clerk data reliably identifies which method
+    // established the *current* session (see account.tsx's own removal
+    // comment) -- the badge must stay gone, not silently reappear derived
+    // from the account-wide externalAccounts list this mock deliberately
+    // includes.
+    render(<AccountScreen />);
+    await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeTruthy());
+
+    expect(screen.queryByText(/Signed in with/i)).toBeNull();
   });
 
   it("calls Clerk's real signOut when Sign out is pressed", async () => {
@@ -87,86 +104,5 @@ describe("AccountScreen (signed in)", () => {
     await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeTruthy());
 
     expect(screen.getByLabelText("About STRATUS")).toBeTruthy();
-  });
-});
-
-describe("signInMethodLabel", () => {
-  it("labels an email-code sign-in as Email even when a stale Google externalAccount exists", () => {
-    // The real bug: a device that once tried Google OAuth (even in an
-    // earlier, unrelated test) keeps that externalAccounts entry on the
-    // Clerk user forever -- it must never override a later, genuinely
-    // email-code sign-in.
-    const user = {
-      primaryEmailAddress: {
-        emailAddress: "ada@example.com",
-        verification: { strategy: "email_code" },
-      },
-      externalAccounts: [{ provider: "google" }],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Email");
-  });
-
-  it("labels an email-link sign-in as Email", () => {
-    const user = {
-      primaryEmailAddress: {
-        emailAddress: "ada@example.com",
-        verification: { strategy: "email_link" },
-      },
-      externalAccounts: [],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Email");
-  });
-
-  it("labels a genuine Google OAuth sign-in as Google", () => {
-    const user = {
-      primaryEmailAddress: {
-        emailAddress: "ada@example.com",
-        verification: { strategy: "oauth_google" },
-      },
-      externalAccounts: [{ provider: "google" }],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Google");
-  });
-
-  it("labels a genuine Apple OAuth sign-in as Apple", () => {
-    const user = {
-      primaryEmailAddress: {
-        emailAddress: "ada@example.com",
-        verification: { strategy: "oauth_apple" },
-      },
-      externalAccounts: [{ provider: "apple" }],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Apple");
-  });
-
-  it("falls back to the externalAccounts list when the primary email carries no verification strategy", () => {
-    const user = {
-      primaryEmailAddress: { emailAddress: "ada@example.com" },
-      externalAccounts: [{ provider: "google" }],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Google");
-  });
-
-  it("falls back to Email when there is no external account and no verification strategy", () => {
-    const user = {
-      primaryEmailAddress: { emailAddress: "ada@example.com" },
-      externalAccounts: [],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("Email");
-  });
-
-  it("falls back to a generic label when there is no email and no external account", () => {
-    const user = {
-      primaryEmailAddress: null,
-      externalAccounts: [],
-    } as unknown as Parameters<typeof signInMethodLabel>[0];
-
-    expect(signInMethodLabel(user)).toBe("STRATUS account");
   });
 });
