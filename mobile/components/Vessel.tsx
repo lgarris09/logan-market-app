@@ -1237,15 +1237,18 @@ export function Vessel({
                       {/* Opportunity Card redesign: footer metadata stays
                           visually quiet -- LAST UPDATED (+ RELATED SIGNALS
                           when real, non-fabricated connection data exists)
-                          beside a standing "analysis, not advice" line. That
-                          line is authored product copy (same category as
-                          "STRATUS TAKE"/"WHY IT MATTERS NOW" as fixed section
-                          labels elsewhere in this file), not per-item data --
-                          it reinforces the app's analysis-vs-advice
-                          boundary (PRODUCT.md) rather than crossing it, and
-                          is always shown regardless of what (if anything)
-                          the real, item-specific required_disclaimers below
-                          it contain. */}
+                          beside the real, item-specific required_disclaimers.
+                          Bug fix (2026-08-29 device validation): this used
+                          to render a hardcoded "analysis, not advice" line
+                          *and* map over required_disclaimers separately --
+                          but PolicyEngine always includes that exact same
+                          sentence as required_disclaimers[0]
+                          (logan_core/policy/engine.py's ANALYSIS_DISCLAIMER),
+                          so every card showed it twice. required_disclaimers
+                          is the single source now -- still always present
+                          (PolicyEngine never omits the analysis-vs-advice
+                          line), plus any domain-specific addition (e.g. the
+                          betting-domain gambling disclaimer) joined after it. */}
                       <View style={styles.footerRow}>
                         <View style={styles.footerLeft}>
                           {relatedCount > 0 && (
@@ -1261,16 +1264,9 @@ export function Vessel({
                         </View>
                         <View style={styles.footerDivider} />
                         <Text style={styles.footerDisclaimer}>
-                          This is analysis and context, not financial or betting advice. You
-                          decide what to do next.
+                          {item.delivered_item.required_disclaimers.join(" ")}
                         </Text>
                       </View>
-
-                      {item.delivered_item.required_disclaimers.map((d) => (
-                        <Text key={d} style={styles.disclaimerText}>
-                          {d}
-                        </Text>
-                      ))}
                     </Animated.View>
                   </Animated.ScrollView>
                   {shouldShowOverflowFade(detailContentH, detailContainerH) && (
@@ -1534,11 +1530,4 @@ const styles = StyleSheet.create({
     letterSpacing: tracking.metadata,
   },
   metaValue: { color: theme.textSecondary, fontSize: 12, fontFamily: font.bodyMedium },
-  disclaimerText: {
-    color: theme.muted,
-    fontSize: type.micro,
-    fontFamily: font.body,
-    lineHeight: 15,
-    marginTop: spacing.sm,
-  },
 });
