@@ -205,6 +205,15 @@ class AccountLinkConflictError(Exception):
     that victim's existing account -- gaining standing read/write access to
     it, not merely one-time anonymous impersonation. `main.py`'s route maps
     this to `HTTPException(409)`.
+
+    Also raised (2026-08-29 audit finding) when `anonymous_user_id` is one
+    of the reserved constants (`LOCAL_FOUNDER_USER_ID`/
+    `BETA_ANONYMOUS_USER_ID`) -- see link_account's own reserved-identity
+    guard below for the exact hijack this closes: `create_account()`'s
+    `INSERT OR IGNORE` means a never-before-linked reserved id would
+    otherwise pass straight through the cross-identity check above (it
+    isn't linked to anyone yet) and permanently bind the caller's external
+    identity to the founder/demo account.
     """
 
 
@@ -249,13 +258,26 @@ def link_account(
       active identity going forward.
 
     Raises `AccountLinkConflictError` when `anonymous_user_id` is already
-    claimed by a *different* external identity -- see that exception's own
-    docstring for the exact hijack scenario this closes.
+    claimed by a *different* external identity, or is one of the reserved
+    identity constants (`LOCAL_FOUNDER_USER_ID`/`BETA_ANONYMOUS_USER_ID`) --
+    see that exception's own docstring for the exact hijack scenarios this
+    closes.
     """
     with _state_lock:
         existing = _lookup_identity(provider, external_subject)
         if existing is not None:
             return existing, False
+
+        # 2026-08-29 audit finding: checked before the cross-identity check
+        # below, and regardless of whether the reserved id has ever been
+        # linked to anyone yet -- a never-before-linked reserved id would
+        # otherwise pass the cross-identity check (it isn't linked to a
+        # *different* identity; it isn't linked to anyone) and permanently
+        # bind this caller's external identity to the founder/demo account.
+        if anonymous_user_id in (LOCAL_FOUNDER_USER_ID, BETA_ANONYMOUS_USER_ID):
+            raise AccountLinkConflictError(
+                "This identity cannot be linked to an account."
+            )
 
         if _is_linked_to_a_different_identity(
             anonymous_user_id, provider, external_subject

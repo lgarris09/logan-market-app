@@ -296,6 +296,81 @@ def test_link_conflict_does_not_disturb_the_victims_existing_data():
     assert len(orchestrator.deps.memory_store.query(user_id=victim_device)) >= 1
 
 
+def test_link_rejects_claiming_the_founder_reserved_identity():
+    """2026-08-29 audit finding: `demo_user` (LOCAL_FOUNDER_USER_ID) has
+    never been linked to anyone at the point of this test, so it would
+    otherwise pass the cross-identity check above (not linked to a
+    *different* identity -- not linked to anyone) and let any valid Clerk
+    session permanently claim the founder/demo account. Must be a hard
+    409, exactly like claiming a known victim's id."""
+    response = client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": LOCAL_FOUNDER_USER_ID},
+        headers=_bearer("clerk_reserved_attacker_1"),
+    )
+    assert response.status_code == 409
+
+    resolved = resolve_user_id(
+        x_stratus_user_id=None,
+        authorization=_bearer_value("clerk_reserved_attacker_1"),
+    )
+    assert resolved != LOCAL_FOUNDER_USER_ID
+
+
+def test_link_rejects_claiming_the_beta_anonymous_reserved_identity():
+    """Same hijack shape as the founder constant, for the shared
+    no-header production bucket (BETA_ANONYMOUS_USER_ID)."""
+    response = client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": BETA_ANONYMOUS_USER_ID},
+        headers=_bearer("clerk_reserved_attacker_2"),
+    )
+    assert response.status_code == 409
+
+    resolved = resolve_user_id(
+        x_stratus_user_id=None,
+        authorization=_bearer_value("clerk_reserved_attacker_2"),
+    )
+    assert resolved != BETA_ANONYMOUS_USER_ID
+
+
+def test_link_still_succeeds_for_an_ordinary_anonymous_uuid():
+    """The reserved-identity guard must reject exactly the two reserved
+    constants -- nothing else. An ordinary device-generated id continues
+    to link exactly as before."""
+    anon_id = f"anon-{uuid4()}"
+    response = client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": anon_id},
+        headers=_bearer("clerk_ordinary_device"),
+    )
+    assert response.status_code == 200
+    assert response.json()["stratus_user_id"] == anon_id
+    assert response.json()["upgraded_existing_identity"] is True
+
+
+def test_signed_out_device_still_resolves_via_its_own_anonymous_header():
+    """Documents the current, intentional sign-out behavior (ADR-069):
+    Clerk JWTs are stateless, and sign-out is purely a client-side session
+    clear -- there is no server-side revocation. After linking, the same
+    device's own anonymous header (i.e. what it sends once it has "signed
+    out" and stopped presenting a Bearer token) still resolves to the same
+    canonical identity, exactly as before linking. This is by design, not
+    a bug -- this test exists so the behavior is captured, not silently
+    left untested."""
+    anon_id = f"anon-{uuid4()}"
+    client.post(
+        "/v1/account/link",
+        json={"anonymous_user_id": anon_id},
+        headers=_bearer("clerk_signout_case"),
+    )
+
+    signed_out_resolution = resolve_user_id(
+        x_stratus_user_id=anon_id, authorization=None
+    )
+    assert signed_out_resolution == anon_id
+
+
 def test_after_linking_authenticated_requests_resolve_to_the_linked_identity():
     anon_id = f"anon-{uuid4()}"
     subject = "clerk_full_flow"
