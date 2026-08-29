@@ -331,3 +331,69 @@ def test_a_fresh_successful_fetch_after_restart_replaces_the_persisted_value(
     store.close()
     assert persisted_report.actual_eps == 2.50
     assert persisted_observed_at > backdated
+
+
+# --- V2.3A.1 closeout: startup restoration observability -------------------
+
+
+def test_startup_logs_restoration_count_and_staleness(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("STRATUS_LIVE_NVDA_EARNINGS", "true")
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpEarningsProvider",
+        lambda **kwargs: _mock_fmp_provider(
+            _nvda_entries_handler([REPORTED_BEAT]), **kwargs
+        ),
+    )
+    reset_pipeline_state()
+    run_demo_feed()  # first process: persists a real observation for NVDA
+
+    _simulated_restart()
+    capsys.readouterr()  # discard first-process output
+    run_demo_feed()  # second process: this call triggers _get_orchestrator()
+
+    captured = capsys.readouterr()
+    assert (
+        "[earnings-cache] restored 1 durable observation(s) at startup" in captured.out
+    )
+    assert "NVDA(age=" in captured.out
+    assert "within_stale_grace=" in captured.out
+
+
+def test_startup_logs_no_restoration_when_store_is_empty(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("STRATUS_LIVE_NVDA_EARNINGS", "true")
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_STATE_DB_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpEarningsProvider",
+        lambda **kwargs: _mock_fmp_provider(_rate_limited_handler, **kwargs),
+    )
+    reset_pipeline_state()
+
+    run_demo_feed()
+
+    captured = capsys.readouterr()
+    assert (
+        "[earnings-cache] no durable observations to restore at startup" in captured.out
+    )
+
+
+def test_corrupt_durable_row_is_skipped_not_fatal(tmp_path):
+    """V2.3A.1 closeout edge-case fix: a malformed row must never crash
+    startup -- it's skipped, and every other valid row still loads."""
+    db_path = tmp_path / "earnings.db"
+    store = EarningsCacheStore(db_path)
+    store._conn.execute(  # noqa: SLF001 -- direct corruption for this test only
+        "INSERT INTO earnings_observations (entity_id, report_json, observed_at) "
+        "VALUES (?, ?, ?)",
+        ("BADROW", "{not valid json", datetime.now(timezone.utc).isoformat()),
+    )
+    store._conn.commit()  # noqa: SLF001
+    store.close()
+
+    reloaded = EarningsCacheStore(db_path)
+    restored = reloaded.load_all()
+    reloaded.close()
+
+    assert "BADROW" not in restored

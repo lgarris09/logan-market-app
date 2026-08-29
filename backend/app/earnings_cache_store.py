@@ -60,16 +60,31 @@ class EarningsCacheStore:
         self._conn.commit()
 
     def load_all(self) -> dict[str, tuple[EarningsReport, datetime]]:
+        """V2.3A.1 closeout edge-case fix: a single malformed row (a future
+        schema change, manual edit, or disk corruption) must never take down
+        the entire backend startup -- every other durable store's load_all()
+        in this file family has this same latent exposure, but this is new
+        code, so it gets the more defensive behavior here rather than
+        inheriting the gap. A row that fails to parse is skipped and logged
+        (entity_id and error only -- never raw payload content), and every
+        other entity's valid recovery still proceeds normally.
+        """
         rows = self._conn.execute(
             "SELECT entity_id, report_json, observed_at FROM earnings_observations"
         ).fetchall()
-        return {
-            row["entity_id"]: (
-                EarningsReport.model_validate_json(row["report_json"]),
-                datetime.fromisoformat(row["observed_at"]),
-            )
-            for row in rows
-        }
+        result: dict[str, tuple[EarningsReport, datetime]] = {}
+        for row in rows:
+            try:
+                result[row["entity_id"]] = (
+                    EarningsReport.model_validate_json(row["report_json"]),
+                    datetime.fromisoformat(row["observed_at"]),
+                )
+            except (ValueError, TypeError) as exc:
+                print(
+                    f"[earnings-cache] skipping unreadable durable row for "
+                    f"{row['entity_id']}: {exc}"
+                )
+        return result
 
     def save(
         self, entity_id: str, report: EarningsReport, observed_at: datetime

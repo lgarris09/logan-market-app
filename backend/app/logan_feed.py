@@ -45,6 +45,8 @@ from logan_core.receptors import (  # noqa: E402
     tesla_ai_partnership_corroboration,
 )
 from logan_core.receptors.providers import (  # noqa: E402
+    EARNINGS_CACHE_TTL_SECONDS,
+    EARNINGS_STALE_GRACE_SECONDS,
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
@@ -452,12 +454,42 @@ def _get_orchestrator() -> Orchestrator:
                     _earnings_cache_store = EarningsCacheStore(
                         earnings_cache_store_db_path()
                     )
-                    for entity_id, (
-                        report,
-                        observed_at,
-                    ) in _earnings_cache_store.load_all().items():
-                        seed_earnings_from_durable_observation(
-                            entity_id, report, observed_at
+                    restored = _earnings_cache_store.load_all()
+                    # V2.3A.1 closeout: the one observability gap the
+                    # 2026-08-29 hosted audit flagged -- there was previously
+                    # no way to see, from logs alone, whether a restart
+                    # actually recovered anything durable versus starting
+                    # with a genuinely empty store. Safe identifiers only
+                    # (tickers, ages) -- no payload content, no secrets.
+                    # Age is computed from each observation's own wall-clock
+                    # observed_at (see seed_earnings_from_durable_observation's
+                    # own docstring) -- never this process's start time.
+                    if restored:
+                        summaries = []
+                        for entity_id, (_report, observed_at) in restored.items():
+                            seed_earnings_from_durable_observation(
+                                entity_id, _report, observed_at
+                            )
+                            age_hours = (
+                                datetime.now(timezone.utc) - observed_at
+                            ).total_seconds() / 3600.0
+                            grace_hours = (
+                                EARNINGS_CACHE_TTL_SECONDS
+                                + EARNINGS_STALE_GRACE_SECONDS
+                            ) / 3600.0
+                            within_grace = age_hours < grace_hours
+                            summaries.append(
+                                f"{entity_id}(age={age_hours:.1f}h, "
+                                f"within_stale_grace={within_grace})"
+                            )
+                        print(
+                            f"[earnings-cache] restored {len(restored)} durable "
+                            f"observation(s) at startup: {', '.join(summaries)}"
+                        )
+                    else:
+                        print(
+                            "[earnings-cache] no durable observations to restore "
+                            "at startup"
                         )
 
             deps = (
