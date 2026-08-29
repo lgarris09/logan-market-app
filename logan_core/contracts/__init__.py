@@ -17,7 +17,13 @@ from .common import (
 from .community import CommunitySignal
 from .confidence import ConclusionConfidence
 from .feedback import FeedbackSignal, InferredIntent, InteractionType, OutcomeRecord
-from .learning import MemoryWrite
+from .learning import (
+    LearnedTrait,
+    LearningReport,
+    MemoryWrite,
+    NotLearnedTrait,
+    ObservedBehaviorSummary,
+)
 from .lifecycle import (
     EvidenceSnapshot,
     LifecycleDelta,
@@ -28,7 +34,7 @@ from .lifecycle import (
     OpportunityRevision,
     TrajectoryState,
 )
-from .memory import MemoryRecord, RecordType
+from .memory import CORRECTION_TYPE_SUPPRESS_ENTITY, MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
 from .opportunity import AttentionRecommendation, Dimensions
 from .policy import PolicyResult
@@ -83,6 +89,7 @@ __all__ = [
     "CommunitySignal",
     "MemoryRecord",
     "RecordType",
+    "CORRECTION_TYPE_SUPPRESS_ENTITY",
     "UserModel",
     "Interest",
     "Holding",
@@ -112,6 +119,10 @@ __all__ = [
     "InferredIntent",
     "OutcomeRecord",
     "MemoryWrite",
+    "LearningReport",
+    "LearnedTrait",
+    "NotLearnedTrait",
+    "ObservedBehaviorSummary",
     "LifecycleState",
     "MeaningfulChangeType",
     "LifecycleSnapshot",

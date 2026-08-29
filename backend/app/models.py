@@ -153,3 +153,18 @@ class UnwatchResponse(BaseModel):
     # that was never watched). Same telemetry-gating role as
     # WatchResponse.created above.
     removed: bool
+
+
+class SuppressLearningRequest(BaseModel):
+    """V2.3B Personal Learning Phase 1: "stop treating this as a preference
+    for me." Deliberately just an entity_id (+ optional domain) -- no
+    free-text reason, no trait-key picker -- see learning.py's own module
+    docstring for the exact scope boundary this mirrors from watch.py."""
+
+    entity_id: str = Field(min_length=1, max_length=128)
+    domain: Optional[Domain] = None
+
+
+class SuppressLearningResponse(BaseModel):
+    entity_id: str
+    suppressed: bool = True

@@ -5,12 +5,15 @@ from typing import AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from logan_core.contracts import LearningReport
+
 from .account_lifecycle import purge_user_data
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
 from .ask_llm_provider import ConversationTurn
 from .clerk_auth import ClerkClaims
 from .config import cors_allowed_origins, legacy_memory_db_path, startup_config_summary
 from .data import DEMO_OPPORTUNITIES
+from .learning import get_learning_report, suppress_entity_learning
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
     DemoFeedResponse,
@@ -45,6 +48,8 @@ from .models import (
     RecordInteractionResponse,
     RegisterPushTokenRequest,
     RegisterPushTokenResponse,
+    SuppressLearningRequest,
+    SuppressLearningResponse,
     UnwatchResponse,
     WatchRequest,
     WatchResponse,
@@ -92,6 +97,11 @@ _TELEMETRY_RATE_LIMIT = (60, 60.0)  # 60 requests / 60s
 # row) without materially bounding legitimate use -- same posture as every
 # other limit in this block.
 _WATCH_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
+# V2.3B Personal Learning Phase 1: the report is read-only and cheap (no
+# external calls), generous like every other read route; suppression is a
+# deliberate, occasional user action, same posture as Watch's own limit.
+_LEARNING_REPORT_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
+_LEARNING_SUPPRESS_RATE_LIMIT = (20, 60.0)  # 20 requests / 60s
 
 
 async def _notification_poll_loop() -> None:
@@ -307,6 +317,33 @@ def remove_watch_route(
     check_rate_limit("watch", user_id, *_WATCH_RATE_LIMIT)
     removed = remove_watch(user_id, entity_id)
     return UnwatchResponse(entity_id=entity_id, watched=False, removed=removed)
+
+
+@app.get("/v1/learning/report", response_model=LearningReport)
+def get_learning_report_route(
+    user_id: str = Depends(resolve_user_id),
+) -> LearningReport:
+    """V2.3B Personal Learning Phase 1: a human-readable inspection report
+    of what STRATUS has observed, learned, and deliberately declined to
+    infer for the resolved caller -- read-only, scoped to the caller's own
+    identity exactly like every other route here (there is no path for one
+    user to inspect another's learned profile).
+    """
+    check_rate_limit("learning_report", user_id, *_LEARNING_REPORT_RATE_LIMIT)
+    return get_learning_report(user_id)
+
+
+@app.post("/v1/learning/suppress", response_model=SuppressLearningResponse)
+def suppress_learning_route(
+    request: SuppressLearningRequest, user_id: str = Depends(resolve_user_id)
+) -> SuppressLearningResponse:
+    """V2.3B Personal Learning Phase 1: "stop treating this as a preference
+    for me." Only ever affects the caller's own resolved `user_id` -- same
+    identity-scoping discipline as Watch's own routes above.
+    """
+    check_rate_limit("learning_suppress", user_id, *_LEARNING_SUPPRESS_RATE_LIMIT)
+    suppress_entity_learning(user_id, request.entity_id, request.domain)
+    return SuppressLearningResponse(entity_id=request.entity_id, suppressed=True)
 
 
 @app.post("/v1/telemetry/events", response_model=TelemetryEventResponse)

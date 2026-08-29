@@ -728,3 +728,15 @@ class Orchestrator:
             feedback, user_id, domain, entities, content
         )
         return feedback, write
+
+    def run_suppress_entity_learning(
+        self,
+        user_id: str,
+        entity_id: str,
+        domain: Optional[Domain] = None,
+    ) -> MemoryWrite:
+        """V2.3B Personal Learning Phase 1 -- explicit trait correction/
+        suppression ("stop treating this as a preference"). Orchestrator
+        remains the sole caller of LearningEngine from outside logan_core,
+        exactly as every other Learning entry point above."""
+        return self.deps.learning_engine.suppress_entity(user_id, entity_id, domain)

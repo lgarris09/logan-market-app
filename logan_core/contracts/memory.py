@@ -28,6 +28,18 @@ RecordType = Literal[
 ]
 
 
+# V2.3B Personal Learning Phase 1 -- the one correction_type this codebase's
+# general-purpose trait-suppression mechanism writes (see
+# logan_core/learning/engine.py's LearningEngine.suppress_entity() and
+# logan_core/user_model/model.py's _apply_corrections()). Deliberately a
+# distinct, structured content shape from the pre-existing memory_inbox_reject
+# correction_record (which carries a caller-supplied `content` with no fixed
+# shape) -- _apply_corrections only ever acts on a correction_record whose
+# content is a dict with this exact key, so an older memory_inbox_reject
+# record is never misinterpreted as an entity suppression.
+CORRECTION_TYPE_SUPPRESS_ENTITY = "suppress_entity"
+
+
 class MemoryRecord(BaseModel):
     schema_version: str = "1.0"
     record_id: UUID

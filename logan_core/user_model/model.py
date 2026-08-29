@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from logan_core.contracts import (
+    CORRECTION_TYPE_SUPPRESS_ENTITY,
     BehaviorPattern,
     DecisionTraceEntry,
     Domain,
@@ -183,6 +184,13 @@ class UserModelBuilder:
             base.holdings,
             latest_engagement_by_entity,
             now,
+            decision_trace,
+        )
+        established_behaviors, interests = _apply_corrections(
+            established_behaviors,
+            interests,
+            memory_records,
+            latest_engagement_by_entity,
             decision_trace,
         )
 
@@ -579,3 +587,118 @@ def _fold_exposure_evidence(
     ]
 
     return updated_behaviors, updated_interests
+
+
+# V2.3B Personal Learning Phase 1 -- explicit user correction/suppression
+# ("that's not relevant to me" / "stop treating this as a preference").
+# Deliberately the LAST fold applied in build(), after fresh evidence,
+# decay, and exposure fatigue have all already run -- a correction always
+# wins over whatever this rebuild would otherwise conclude, but never
+# rewrites the underlying feedback_record/exposure_record history itself
+# (this only filters *derived* Interests/BehaviorPatterns, every rebuild,
+# from the same immutable memory_records -- see this function's own
+# docstring). Never touches explicit interests/holdings -- corrections are
+# a tool for walking back an *inferred* conclusion, not for editing a
+# user's own stated holdings/interests (a distinct, existing concept).
+def suppressed_entities(memory_records: list[MemoryRecord]) -> dict[str, datetime]:
+    """Every entity_id this user has explicitly corrected/suppressed (see
+    `_apply_corrections` below), mapped to the most recent such correction's
+    timestamp. Public (not `_`-prefixed) because the Personal Learning
+    inspection report (logan_core/learning/report.py) needs the exact same
+    reading of "what did the user correct, and when" that `_apply_corrections`
+    itself uses -- extracted here once so the two can never drift apart.
+    """
+    suppressed_at: dict[str, datetime] = {}
+    for record in memory_records:
+        if record.record_type != "correction_record":
+            continue
+        content = record.content
+        if (
+            not isinstance(content, dict)
+            or content.get("correction_type") != CORRECTION_TYPE_SUPPRESS_ENTITY
+        ):
+            continue
+        entity_id = content.get("entity_id")
+        if not entity_id:
+            continue
+        suppressed_at[entity_id] = max(
+            suppressed_at.get(entity_id, record.created_at), record.created_at
+        )
+    return suppressed_at
+
+
+def _apply_corrections(
+    established_behaviors: list[BehaviorPattern],
+    interests: list[Interest],
+    memory_records: list[MemoryRecord],
+    latest_engagement_by_entity: dict[str, datetime],
+    decision_trace: list[DecisionTraceEntry],
+) -> tuple[list[BehaviorPattern], list[Interest]]:
+    """A correction_record with content `{"correction_type": "suppress_entity",
+    "entity_id": ...}` suppresses every inferred trait tied to that entity_id
+    as of the correction's own timestamp -- but only until *new* qualifying
+    evidence, dated strictly after the correction, re-earns it from scratch
+    (a correction resets the evidence clock for that entity, it is not a
+    permanent ban.) This is what "a deterministic rebuild must continue to
+    respect corrections" means in practice: every rebuild re-derives the
+    suppression from the same correction_record, it is never a one-time
+    mutation of the interest/behavior itself.
+
+    `latest_engagement_by_entity` (from _fold_behavioral_evidence, same call)
+    is the real underlying evidence timestamp for an entity recomputed this
+    call -- required because Interest.last_updated is itself stamped to
+    `now` by that fold step regardless of how old its qualifying evidence
+    actually is, so it cannot be compared against the correction's timestamp
+    directly. BehaviorPattern.last_reinforced has no such problem (it is
+    already the real evidence timestamp), so behaviors compare against it
+    directly, unchanged.
+    """
+    suppressed_at = suppressed_entities(memory_records)
+
+    if not suppressed_at:
+        return established_behaviors, interests
+
+    kept_behaviors = []
+    for pattern in established_behaviors:
+        entity_id = (
+            pattern.label[len("engaged_with_") :]
+            if pattern.label.startswith("engaged_with_")
+            else None
+        )
+        cutoff = suppressed_at.get(entity_id) if entity_id else None
+        if cutoff is not None and (
+            pattern.last_reinforced is None or pattern.last_reinforced <= cutoff
+        ):
+            decision_trace.append(
+                DecisionTraceEntry(
+                    layer="user_model",
+                    rule=f"correction: suppressed established_behavior {pattern.label!r} "
+                    f"per user correction at {cutoff.isoformat()}",
+                    timestamp=cutoff,
+                )
+            )
+            continue
+        kept_behaviors.append(pattern)
+
+    kept_interests = []
+    for interest in interests:
+        cutoff = (
+            suppressed_at.get(interest.topic) if interest.source == "inferred" else None
+        )
+        if cutoff is not None:
+            evidence_at = latest_engagement_by_entity.get(
+                interest.topic, interest.last_updated
+            )
+            if evidence_at <= cutoff:
+                decision_trace.append(
+                    DecisionTraceEntry(
+                        layer="user_model",
+                        rule=f"correction: suppressed inferred Interest {interest.topic!r} "
+                        f"per user correction at {cutoff.isoformat()}",
+                        timestamp=cutoff,
+                    )
+                )
+                continue
+        kept_interests.append(interest)
+
+    return kept_behaviors, kept_interests

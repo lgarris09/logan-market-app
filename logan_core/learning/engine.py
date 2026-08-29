@@ -3,6 +3,7 @@ from typing import Literal, Optional
 from uuid import UUID, uuid4
 
 from logan_core.contracts import (
+    CORRECTION_TYPE_SUPPRESS_ENTITY,
     Domain,
     FeedbackSignal,
     MemoryRecord,
@@ -255,6 +256,54 @@ class LearningEngine:
             # confidence=1.0 the same way Memory Inbox confirm/reject
             # (explicit, deliberate) already use 1.0, not FeedbackEngine's
             # ambiguity-scaled range.
+            confidence=1.0,
+            authorized_at=now,
+        )
+
+    def suppress_entity(
+        self,
+        user_id: str,
+        entity_id: str,
+        domain: Optional[Domain] = None,
+        now: Optional[datetime] = None,
+    ) -> MemoryWrite:
+        """V2.3B Personal Learning Phase 1 -- an explicit, deliberate 'stop
+        treating this as a preference for me' correction, distinct from
+        Memory Inbox confirm/reject (that flow reviews one specific proposed
+        Memory record; this suppresses whatever UserModelBuilder currently
+        infers about one entity, going forward). Same maximum-confidence,
+        immediate-write discipline as run_memory_inbox_confirm/reject --
+        explicit corrections are never queued for review, never deduped, and
+        never routed through FeedbackEngine's ambiguity-scaled interpretation
+        (there is nothing ambiguous about a user explicitly saying this is
+        wrong). See user_model/model.py's _apply_corrections() for how this
+        record is read back on every subsequent rebuild -- this method only
+        ever writes the fact of the correction, it never itself mutates any
+        existing Interest/BehaviorPattern.
+        """
+        now = now or datetime.now(timezone.utc)
+        record = MemoryRecord(
+            record_id=uuid4(),
+            user_id=user_id,
+            record_type="correction_record",
+            content={
+                "correction_type": CORRECTION_TYPE_SUPPRESS_ENTITY,
+                "entity_id": entity_id,
+            },
+            domain=domain,
+            entities=[entity_id],
+            source_layer="learning_system",
+            created_at=now,
+            decay_weight=1.0,
+            operational_ref=None,
+        )
+        self._memory_store.write(record, writer="learning_system")
+        return MemoryWrite(
+            write_id=uuid4(),
+            write_type="new_record",
+            target="memory",
+            content=record,
+            source_signal=None,
             confidence=1.0,
             authorized_at=now,
         )

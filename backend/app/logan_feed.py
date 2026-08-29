@@ -549,32 +549,7 @@ def _get_user_model(
     with _state_lock:
         existing = _user_models.get(user_id)
         if existing is None:
-            if user_id == LOCAL_FOUNDER_USER_ID:
-                seeded = UserModelBuilder().seed(
-                    user_id=user_id,
-                    holdings=[
-                        Holding(
-                            domain="stocks",
-                            entity_id="NVDA",
-                            display_name="NVIDIA",
-                            added_at=now,
-                        )
-                    ],
-                    interests=[
-                        Interest(
-                            domain="social",
-                            topic="AI_SECTOR",
-                            weight=0.8,
-                            source="explicit",
-                            created_at=now,
-                            last_updated=now,
-                        )
-                    ],
-                    risk_tolerance="moderate",
-                )
-            else:
-                seeded = UserModelBuilder().seed(user_id=user_id)
-            _user_models[user_id] = seeded
+            _user_models[user_id] = _seed_user_model(user_id, now)
         else:
             memory_records = orchestrator.deps.memory_store.query(user_id=user_id)
             _user_models[user_id] = UserModelBuilder().build(
@@ -583,6 +558,42 @@ def _get_user_model(
                 base=existing,
             )
         return _user_models[user_id]
+
+
+def _seed_user_model(user_id: str, now: datetime) -> UserModel:
+    """The blank/founder-seeded starting point _get_user_model() gives a
+    user_id it has never seen before -- extracted so V2.3B Personal
+    Learning's report endpoint (backend/app/learning.py) can build a
+    complete, independent UserModel (seed + full memory_records fold) on its
+    very first call for a user_id, without depending on _get_user_model()'s
+    own "first call just seeds, folding starts on the second call" cache-
+    priming order (a report must be correct on the very first call, unlike
+    the real polling path, which always gets a second call soon after).
+    """
+    if user_id == LOCAL_FOUNDER_USER_ID:
+        return UserModelBuilder().seed(
+            user_id=user_id,
+            holdings=[
+                Holding(
+                    domain="stocks",
+                    entity_id="NVDA",
+                    display_name="NVIDIA",
+                    added_at=now,
+                )
+            ],
+            interests=[
+                Interest(
+                    domain="social",
+                    topic="AI_SECTOR",
+                    weight=0.8,
+                    source="explicit",
+                    created_at=now,
+                    last_updated=now,
+                )
+            ],
+            risk_tolerance="moderate",
+        )
+    return UserModelBuilder().seed(user_id=user_id)
 
 
 def _max_opt(a: Optional[int], b: Optional[int]) -> Optional[int]:
