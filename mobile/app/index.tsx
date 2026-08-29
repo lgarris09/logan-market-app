@@ -572,7 +572,7 @@ export default function AttentionFieldScreen() {
               <>
                 <Text style={styles.errorTitle}>Nothing to show yet</Text>
                 <Text style={styles.errorText}>
-                  STRATUS isn&apos;t tracking any opportunities right now.
+                  No opportunities currently meet your attention threshold.
                 </Text>
               </>
             )}

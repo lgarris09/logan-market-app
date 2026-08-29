@@ -36,6 +36,70 @@ export type DeliveredItem = {
   recommendation?: Recommendation;
 };
 
+// V2.3C Block P: mirrors logan_core.contracts.lifecycle's own Literal
+// definitions exactly (Python is authoritative; no shared-schema codegen
+// exists in this project, so these are kept in sync by hand). "none" is a
+// real, expected MeaningfulChangeType value -- most polls produce no
+// meaningful change at all.
+export type LifecycleState =
+  | "new"
+  | "developing"
+  | "high_attention"
+  | "monitoring"
+  | "cooling"
+  | "stale"
+  | "expired";
+
+export type MeaningfulChangeType =
+  | "none"
+  | "new_opportunity"
+  | "confidence_increased"
+  | "confidence_decreased"
+  | "new_signal_appeared"
+  | "convergence_formed"
+  | "aged_to_cooling"
+  | "aged_to_stale"
+  | "aged_to_expired"
+  | "reactivated"
+  | "personal_relevance_increased"
+  | "personal_relevance_decreased"
+  | "trajectory_strengthening"
+  | "trajectory_weakening"
+  | "trajectory_reversing"
+  | "trajectory_reaccelerated";
+
+export type TrajectoryState = "STRENGTHENING" | "STEADY" | "WEAKENING" | "REVERSING";
+
+// Mirrors opportunity_lifecycle/sync.py's SyncStatus exactly.
+export type UserSyncStatus =
+  | "UP_TO_DATE"
+  | "NEW_TO_USER"
+  | "UPDATED_SINCE_SEEN"
+  | "NOTIFIED_BUT_UNSEEN";
+
+// Mirrors logan_core.contracts.lifecycle.EvidenceSnapshot -- every field
+// individually optional since a real provider may supply some (price)
+// without others (sector, beta) depending on what's reachable that poll.
+export type EvidenceSnapshot = {
+  schema_version: string;
+  entity_id: string;
+  price: number | null;
+  trigger_price: number | null;
+  price_change_since_trigger_pct: number | null;
+  price_change_since_last_revision_pct: number | null;
+  market_change_pct: number | null;
+  relative_to_market_pct: number | null;
+  sector: string | null;
+  sector_change_pct: number | null;
+  relative_to_sector_pct: number | null;
+  volume: number | null;
+  average_volume: number | null;
+  volume_ratio: number | null;
+  beta: number | null;
+  beta_normalized_move_pct: number | null;
+  evaluated_at: string;
+};
+
 export type FeedItem = {
   event_id: string;
   entity_id: string;
@@ -69,6 +133,28 @@ export type FeedItem = {
   // in the pipeline). Used as the honest source for the Attention Field
   // vessel's small reason tag -- see lib/signalType.ts.
   signal_type: string;
+
+  // --- V2.3C Block P: Stock Opportunity Logic V2/V2.1/V2.2 fields --------
+  // Mirrors backend/app/logan_feed.py's FeedItem exactly. All optional/
+  // default-inert (null, false, "none", "STEADY") whenever lifecycle
+  // tracking isn't active for this entity (demo mode, no live tickers
+  // configured) -- absence means "not available for this item," never an
+  // error. Added here as a type-only contract update (V2.3C Block P) --
+  // no UI currently renders these; that remains a separate, deliberate
+  // product decision, not something to wire silently as a side effect of
+  // fixing this type gap.
+  lifecycle_state: LifecycleState | null;
+  is_updated: boolean;
+  meaningful_change_type: MeaningfulChangeType | null;
+  lifecycle_reason: string | null;
+  last_meaningful_change_at: string | null;
+  thesis_age_hours: number | null;
+  opportunity_revision: number | null;
+  user_sync_status: UserSyncStatus | null;
+  trajectory: TrajectoryState;
+  previous_trajectory: TrajectoryState;
+  trajectory_reason: string | null;
+  evidence: EvidenceSnapshot | null;
 };
 
 export type DemoFeedResponse = {

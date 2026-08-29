@@ -58,6 +58,18 @@ function makeItem(id: string, rank: number): FeedItem {
     connected_event_ids: [],
     is_new_for_user: false,
     signal_type: "test_signal",
+    lifecycle_state: null,
+    is_updated: false,
+    meaningful_change_type: null,
+    lifecycle_reason: null,
+    last_meaningful_change_at: null,
+    thesis_age_hours: null,
+    opportunity_revision: null,
+    user_sync_status: null,
+    trajectory: "STEADY",
+    previous_trajectory: "STEADY",
+    trajectory_reason: null,
+    evidence: null,
   };
 }
 

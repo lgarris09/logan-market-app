@@ -89,6 +89,11 @@ describe("AttentionFieldScreen", () => {
     render(<AttentionFieldScreen />);
 
     await waitFor(() => expect(screen.getByText("Nothing to show yet")).toBeTruthy());
+    // V2.3C Block 13: restrained, honest healthy-but-sparse language --
+    // distinct from the provider-degraded copy asserted below.
+    expect(
+      screen.getByText("No opportunities currently meet your attention threshold.")
+    ).toBeTruthy();
   });
 
   // V2.3A.1 field reliability work: a zero-item response caused by a genuine
