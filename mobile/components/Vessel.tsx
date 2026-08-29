@@ -29,6 +29,7 @@ import { resolveSymbol } from "../lib/symbolResolver";
 import { shouldShowOverflowFade } from "../lib/cardOverflow";
 import { humanizeSignalType } from "../lib/signalType";
 import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
+import { describeSinceLastLooked } from "../lib/sinceLastLooked";
 import { FeedItem } from "../types/loganFeed";
 
 // Opportunity Card redesign (owner rendering reference): the header
@@ -485,6 +486,17 @@ export function Vessel({
   const stratusTake =
     item.delivered_item.why_it_matters_to_me?.trim() || item.delivered_item.why_it_matters?.trim();
   const lastUpdated = relativeTimeFrom(item.delivered_item.delivered_at);
+  // V2.3D ("Since You Last Looked"): null for first_view and for an absent
+  // summary (lifecycle tracking not active) -- see describeSinceLastLooked's
+  // own docstring. All delta semantics are already decided server-side;
+  // this is presentation only.
+  const sinceLastLooked = describeSinceLastLooked(item.since_last_looked);
+  const sinceLastLookedColor =
+    sinceLastLooked?.tone === "material"
+      ? theme.accent
+      : sinceLastLooked?.tone === "degraded"
+        ? theme.warning
+        : theme.textSecondary;
 
   // Owner device feedback: a flat dormantSize*0.25 shift put the icon in
   // the top quadrant on typical-size bubbles, but on smaller ones --
@@ -1031,6 +1043,50 @@ export function Vessel({
                             </Text>
                           </View>
                           <Text style={styles.sectionText}>{stratusTake}</Text>
+                        </View>
+                      )}
+
+                      {/* V2.3D ("Since You Last Looked"): reuses STRATUS
+                          TAKE's own bordered-panel treatment (same shape,
+                          different color per tone) rather than inventing a
+                          new panel style -- material_change gets STRATUS
+                          Orange (unseen/material system change, per the
+                          locked visual hierarchy), no_material_change a
+                          quiet neutral gray (reassurance, not an alert),
+                          degraded the warning amber (honest about
+                          unavailable live data, distinct from both). Absent
+                          entirely for first_view -- see
+                          describeSinceLastLooked's own docstring. */}
+                      {!!sinceLastLooked && (
+                        <View
+                          style={[
+                            styles.takePanel,
+                            {
+                              borderColor: sinceLastLookedColor + "40",
+                              backgroundColor: sinceLastLookedColor + "0D",
+                            },
+                          ]}
+                        >
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[
+                                styles.sectionIconWrap,
+                                { borderColor: sinceLastLookedColor },
+                              ]}
+                            >
+                              <Ionicons
+                                name={sinceLastLooked.icon as any}
+                                size={13}
+                                color={sinceLastLookedColor}
+                              />
+                            </View>
+                            <Text
+                              style={[styles.sectionLabel, { color: sinceLastLookedColor }]}
+                            >
+                              {sinceLastLooked.label}
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{sinceLastLooked.text}</Text>
                         </View>
                       )}
 

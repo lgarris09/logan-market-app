@@ -4,7 +4,7 @@
 // this file fails to typecheck (tsc --noEmit / this test file's own
 // import), catching drift immediately rather than silently. No shared-
 // schema codegen exists in this project; this is the manual guard.
-import { EvidenceSnapshot, FeedItem } from "../loganFeed";
+import { EvidenceSnapshot, FeedItem, SinceLastLookedSummary } from "../loganFeed";
 
 const fullEvidence: EvidenceSnapshot = {
   schema_version: "1.0",
@@ -65,6 +65,15 @@ const fullyPopulatedItem: FeedItem = {
   previous_trajectory: "STEADY",
   trajectory_reason: "Relative performance improved.",
   evidence: fullEvidence,
+  since_last_looked: {
+    schema_version: "1.0",
+    entity_id: "NVDA",
+    user_id: "user-1",
+    status: "material_change",
+    change_type: "confidence_increased",
+    detail: "Confidence strengthened from 0.62 to 0.72.",
+    evaluated_at: "2026-08-29T00:00:00Z",
+  } satisfies SinceLastLookedSummary,
 };
 
 // The inert-default shape every pre-V2.3C caller/fixture gets when
@@ -84,6 +93,23 @@ const inertItem: FeedItem = {
   previous_trajectory: "STEADY",
   trajectory_reason: null,
   evidence: null,
+  since_last_looked: null,
+};
+
+// The "first_view" shape: lifecycle tracking is active, but this user has
+// never opened this opportunity before -- change_type/detail stay null, no
+// "since you last looked" language should ever be derived from this.
+const firstViewItem: FeedItem = {
+  ...fullyPopulatedItem,
+  since_last_looked: {
+    schema_version: "1.0",
+    entity_id: "NVDA",
+    user_id: "user-1",
+    status: "first_view",
+    change_type: null,
+    detail: null,
+    evaluated_at: "2026-08-29T00:00:00Z",
+  } satisfies SinceLastLookedSummary,
 };
 
 describe("FeedItem/EvidenceSnapshot contract", () => {
@@ -96,5 +122,20 @@ describe("FeedItem/EvidenceSnapshot contract", () => {
     expect(inertItem.lifecycle_state).toBeNull();
     expect(inertItem.trajectory).toBe("STEADY");
     expect(inertItem.evidence).toBeNull();
+    expect(inertItem.since_last_looked).toBeNull();
+  });
+
+  it("accepts a material_change since_last_looked summary", () => {
+    expect(fullyPopulatedItem.since_last_looked?.status).toBe("material_change");
+    expect(fullyPopulatedItem.since_last_looked?.change_type).toBe(
+      "confidence_increased"
+    );
+    expect(fullyPopulatedItem.since_last_looked?.detail).toBeTruthy();
+  });
+
+  it("accepts a first_view since_last_looked summary with no change language", () => {
+    expect(firstViewItem.since_last_looked?.status).toBe("first_view");
+    expect(firstViewItem.since_last_looked?.change_type).toBeNull();
+    expect(firstViewItem.since_last_looked?.detail).toBeNull();
   });
 });

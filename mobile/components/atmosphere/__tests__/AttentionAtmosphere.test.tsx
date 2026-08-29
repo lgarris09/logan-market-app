@@ -70,6 +70,7 @@ function makeItem(id: string, rank: number): FeedItem {
     previous_trajectory: "STEADY",
     trajectory_reason: null,
     evidence: null,
+    since_last_looked: null,
   };
 }
 

@@ -27,6 +27,7 @@ function makeItem(category: string): FeedItem {
     previous_trajectory: "STEADY",
     trajectory_reason: null,
     evidence: null,
+    since_last_looked: null,
     delivered_item: {
       event_id: "evt-1",
       surface: "wheel",

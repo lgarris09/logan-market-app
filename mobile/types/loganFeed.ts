@@ -77,6 +77,34 @@ export type UserSyncStatus =
   | "UPDATED_SINCE_SEEN"
   | "NOTIFIED_BUT_UNSEEN";
 
+// V2.3D ("Since You Last Looked"). Mirrors opportunity_lifecycle/sync.py's
+// SinceLastLookedStatus exactly. A deliberately stricter question than
+// UserSyncStatus above -- keyed to last_opened_revision (a real card
+// disclosure), never last_seen_revision (which advances on a mere
+// impression). "first_view" means this user has never opened this
+// opportunity before -- present the briefing normally, no "since you last
+// looked" language of any kind.
+export type SinceLastLookedStatus =
+  | "first_view"
+  | "material_change"
+  | "no_material_change"
+  | "degraded";
+
+// Mirrors opportunity_lifecycle/sync.py's SinceLastLookedSummary exactly.
+// change_type/detail are only ever populated for "material_change" --
+// detail is the backend's own already-authored natural-language sentence
+// (the same OpportunityRevision.reason logan_core's tracker.py produces
+// elsewhere), never re-derived or re-worded on this side.
+export type SinceLastLookedSummary = {
+  schema_version: string;
+  entity_id: string;
+  user_id: string;
+  status: SinceLastLookedStatus;
+  change_type: MeaningfulChangeType | null;
+  detail: string | null;
+  evaluated_at: string;
+};
+
 // Mirrors logan_core.contracts.lifecycle.EvidenceSnapshot -- every field
 // individually optional since a real provider may supply some (price)
 // without others (sector, beta) depending on what's reachable that poll.
@@ -155,6 +183,13 @@ export type FeedItem = {
   previous_trajectory: TrajectoryState;
   trajectory_reason: string | null;
   evidence: EvidenceSnapshot | null;
+
+  // V2.3D ("Since You Last Looked"). null whenever lifecycle tracking isn't
+  // active for this entity -- same additive discipline as every field
+  // above. This is the single backend-authoritative answer to "what
+  // changed since this user last looked" -- rendered as-is, never
+  // re-derived from opportunity_revision/user_sync_status on this side.
+  since_last_looked: SinceLastLookedSummary | null;
 };
 
 export type DemoFeedResponse = {
