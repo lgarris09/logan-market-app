@@ -53,6 +53,13 @@ from .notifications import (
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
 from .rate_limit import check_rate_limit
+from .telemetry import record_batch, record_event
+from .telemetry_models import (
+    TelemetryEventBatchRequest,
+    TelemetryEventBatchResponse,
+    TelemetryEventRequest,
+    TelemetryEventResponse,
+)
 from .user_context import (
     AccountLinkConflictError,
     link_account,
@@ -71,6 +78,11 @@ _ASK_RATE_LIMIT = (20, 300.0)  # 20 requests / 5 minutes
 _NOTIFICATIONS_REGISTER_RATE_LIMIT = (10, 60.0)  # 10 requests / 60s
 _ACCOUNT_LINK_RATE_LIMIT = (10, 60.0)  # 10 requests / 60s
 _ACCOUNT_DELETE_RATE_LIMIT = (5, 300.0)  # 5 requests / 5 minutes
+# V2.3C Telemetry: generous enough for a normal session's worth of real UI
+# actions (card opens, ask turns) without materially bounding legitimate
+# use -- exists to bound automated/scripted abuse, same posture as every
+# other limit in this block.
+_TELEMETRY_RATE_LIMIT = (60, 60.0)  # 60 requests / 60s
 
 
 async def _notification_poll_loop() -> None:
@@ -255,6 +267,38 @@ def record_interaction_route(
         duration_ms=request.duration_ms,
     )
     return RecordInteractionResponse(recorded=True)
+
+
+@app.post("/v1/telemetry/events", response_model=TelemetryEventResponse)
+def record_telemetry_event_route(
+    request: TelemetryEventRequest, user_id: str = Depends(resolve_user_id)
+) -> TelemetryEventResponse:
+    """V2.3C Telemetry: records what happened, never decides what it means
+    (see telemetry.py's module docstring). `user_id` resolves server-side
+    from the same identity headers every other authenticated route uses --
+    the request body has no user_id field for a client to spoof. Malformed
+    or unsupported-vocabulary events are rejected by TelemetryEventRequest's
+    own validation before this handler ever runs (FastAPI's standard 422).
+    """
+    check_rate_limit("telemetry", user_id, *_TELEMETRY_RATE_LIMIT)
+    try:
+        event = record_event(user_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return TelemetryEventResponse(event_id=event.event_id)
+
+
+@app.post("/v1/telemetry/events/batch", response_model=TelemetryEventBatchResponse)
+def record_telemetry_event_batch_route(
+    request: TelemetryEventBatchRequest, user_id: str = Depends(resolve_user_id)
+) -> TelemetryEventBatchResponse:
+    """Bounded batch form (at most 25 events, enforced by
+    TelemetryEventBatchRequest itself) so mobile doesn't need one HTTP
+    round-trip per event. Each event is validated/persisted independently --
+    one bad event's business-logic rejection (see telemetry.record_batch)
+    never discards the rest of a real batch."""
+    check_rate_limit("telemetry", user_id, *_TELEMETRY_RATE_LIMIT)
+    return record_batch(user_id, request)
 
 
 @app.post("/v1/account/link", response_model=LinkAccountResponse)

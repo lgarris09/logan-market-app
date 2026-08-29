@@ -34,6 +34,7 @@ def _reset_logan_feed_pipeline_state():
     from backend.app.logan_feed import reset_pipeline_state
     from backend.app.notifications import reset_notification_state
     from backend.app.rate_limit import reset_rate_limits
+    from backend.app.telemetry import reset_telemetry_state
     from backend.app.user_context import reset_account_state
     from logan_core.receptors.providers.fmp import reset_fmp_cache
 
@@ -43,6 +44,7 @@ def _reset_logan_feed_pipeline_state():
     reset_rate_limits()
     reset_account_state()
     reset_clerk_jwks_cache()
+    reset_telemetry_state()
     yield
     reset_pipeline_state()
     reset_notification_state()
@@ -50,3 +52,4 @@ def _reset_logan_feed_pipeline_state():
     reset_rate_limits()
     reset_account_state()
     reset_clerk_jwks_cache()
+    reset_telemetry_state()

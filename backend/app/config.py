@@ -231,6 +231,20 @@ def earnings_cache_store_db_path() -> Path:
     return memory_store_db_path().parent / "earnings_observations.db"
 
 
+def telemetry_store_db_path() -> Path:
+    """V2.3C Telemetry: the durable SQLite file backing the append-only
+    telemetry event history (see telemetry_store.py) when
+    memory_persistence_enabled() is true -- mirrors every other store's
+    identical pattern here: a separate file, same durable directory, own
+    independent schema. Defaults to a sibling `telemetry_events.db`;
+    overridable via STRATUS_TELEMETRY_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_TELEMETRY_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "telemetry_events.db"
+
+
 def revision_store_db_path() -> Path:
     """Stock Opportunity Logic V2.1 (User Sync Gap): the durable SQLite file
     backing each entity's meaningful-revision history (see
