@@ -23,6 +23,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from logan_core.contracts import MeaningfulChangeType, OpportunityRevision
+
 # UP_TO_DATE: the user has seen the current global revision already --
 #   nothing to surface as "updated."
 # NEW_TO_USER: this user has never seen this opportunity at any revision,
@@ -140,5 +142,156 @@ def compute_user_sync_delta(
         last_opened_revision=opened,
         status=status,
         is_new_or_updated_for_user=status != "UP_TO_DATE",
+        evaluated_at=now,
+    )
+
+
+# --- "Since You Last Looked" (V2.3D) -----------------------------------------
+#
+# A deliberately stricter, narrower question than compute_user_sync_delta
+# above: not "has this user seen the current revision" (last_seen_revision,
+# which advances on a mere impression -- see UserOpportunityKnowledge's own
+# docstring), but "what materially changed since this user last *opened* this
+# opportunity" (last_opened_revision, which only advances on a real card
+# disclosure -- see backend/app/logan_feed.py's record_interaction). The
+# product requirement this exists for is explicit that fetching a feed,
+# briefly appearing off-screen, or the app merely launching must never be
+# mistaken for "the user looked at this" -- last_opened_revision is the one
+# existing pointer in this codebase already held to that exact bar, so this
+# reuses it rather than inventing a second, parallel "has looked" concept.
+
+SinceLastLookedStatus = Literal[
+    "first_view",
+    "material_change",
+    "no_material_change",
+    "degraded",
+]
+
+
+class SinceLastLookedSummary(BaseModel):
+    """The deterministic answer to "what should STRATUS tell this user
+    changed since they last deliberately opened this opportunity" --
+    computed fresh on every feed request, never itself persisted (mirrors
+    UserSyncDelta's own "derived read over durable pointers" discipline).
+
+    `status`:
+    - "first_view": this user has never opened this opportunity before
+      (last_opened_revision is None). The caller must present the briefing
+      normally, with no "Since You Last Looked" language at all -- there is
+      nothing to compare against.
+    - "no_material_change": the user has opened this opportunity at or after
+      its current revision -- nothing has changed since their last look.
+    - "material_change": the user's last opened revision is behind the
+      current revision, and at least one durable, objective (global,
+      not personal-relevance-only -- see OpportunityRevisionStore's own
+      "is_global_meaningful" gating) revision exists in between.
+    - "degraded": would otherwise be "no_material_change", but this poll's
+      live data was genuinely unreachable (provider_degraded) -- STRATUS
+      cannot honestly vouch for "nothing changed" when it couldn't check.
+      Deliberately does NOT override "material_change": a durable revision
+      already on record is a historical fact unaffected by whether *this*
+      poll's own live fetch succeeded.
+
+    `change_type`/`detail` are only ever populated for "material_change" --
+    `change_type` is the MeaningfulChangeType of the most recent qualifying
+    revision since the user's last open (the freshest fact, not a full
+    activity log), and `detail` is that same revision's own already-authored
+    natural-language `reason` (see OpportunityRevision.reason) -- reused
+    verbatim, never re-derived or re-worded here, so there is exactly one
+    place in this codebase that authors this sentence.
+    """
+
+    schema_version: str = "1.0"
+    entity_id: str
+    user_id: str
+    status: SinceLastLookedStatus
+    change_type: Optional[MeaningfulChangeType] = None
+    detail: Optional[str] = None
+    evaluated_at: datetime
+
+
+_NO_MATERIAL_CHANGE_DETAIL = (
+    "No major change since your last look. STRATUS is still monitoring."
+)
+_DEGRADED_DETAIL = (
+    "Live data was temporarily unavailable this check -- STRATUS can't confirm "
+    "whether anything changed since your last look."
+)
+_MATERIAL_CHANGE_FALLBACK_DETAIL = (
+    "STRATUS detected a meaningful change since your last look, but the "
+    "specific details from that revision aren't available."
+)
+
+
+def compute_since_last_looked(
+    entity_id: str,
+    user_id: str,
+    current_revision: Optional[int],
+    knowledge: Optional[UserOpportunityKnowledge],
+    revisions_since_last_open: list[OpportunityRevision],
+    provider_degraded: bool,
+    now: datetime,
+) -> Optional[SinceLastLookedSummary]:
+    """Pure, deterministic comparison -- no I/O, no storage access. The
+    caller (backend/app/logan_feed.py) owns fetching `knowledge` and
+    filtering `revisions_since_last_open` to entries with
+    `revision > knowledge.last_opened_revision` from the durable
+    OpportunityRevisionStore; this function only ever reasons about what
+    it's handed.
+
+    Returns None when lifecycle/revision tracking isn't active for this
+    entity at all (current_revision is None) -- there is nothing to compare,
+    the same "additive, absent means not available" discipline every other
+    lifecycle-adjacent FeedItem field already follows.
+    """
+    if current_revision is None:
+        return None
+
+    opened = knowledge.last_opened_revision if knowledge else None
+
+    if opened is None:
+        return SinceLastLookedSummary(
+            entity_id=entity_id,
+            user_id=user_id,
+            status="first_view",
+            evaluated_at=now,
+        )
+
+    if opened >= current_revision:
+        if provider_degraded:
+            return SinceLastLookedSummary(
+                entity_id=entity_id,
+                user_id=user_id,
+                status="degraded",
+                detail=_DEGRADED_DETAIL,
+                evaluated_at=now,
+            )
+        return SinceLastLookedSummary(
+            entity_id=entity_id,
+            user_id=user_id,
+            status="no_material_change",
+            detail=_NO_MATERIAL_CHANGE_DETAIL,
+            evaluated_at=now,
+        )
+
+    if revisions_since_last_open:
+        latest = max(revisions_since_last_open, key=lambda r: r.revision)
+        return SinceLastLookedSummary(
+            entity_id=entity_id,
+            user_id=user_id,
+            status="material_change",
+            change_type=latest.change_type,
+            detail=latest.reason,
+            evaluated_at=now,
+        )
+
+    # The revision counter advanced, but no matching durable history row
+    # exists (e.g. persistence was toggled off across the gap) -- an honest
+    # generic signal, never a fabricated specific reason.
+    return SinceLastLookedSummary(
+        entity_id=entity_id,
+        user_id=user_id,
+        status="material_change",
+        detail=_MATERIAL_CHANGE_FALLBACK_DETAIL,
         evaluated_at=now,
     )

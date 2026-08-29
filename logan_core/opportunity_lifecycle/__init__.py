@@ -1,7 +1,10 @@
 from .sync import (
+    SinceLastLookedStatus,
+    SinceLastLookedSummary,
     SyncStatus,
     UserOpportunityKnowledge,
     UserSyncDelta,
+    compute_since_last_looked,
     compute_user_sync_delta,
 )
 from .tracker import (
@@ -24,4 +27,7 @@ __all__ = [
     "UserSyncDelta",
     "SyncStatus",
     "compute_user_sync_delta",
+    "SinceLastLookedStatus",
+    "SinceLastLookedSummary",
+    "compute_since_last_looked",
 ]

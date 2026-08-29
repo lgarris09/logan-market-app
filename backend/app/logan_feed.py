@@ -33,7 +33,9 @@ from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.memory import MemoryStore  # noqa: E402
 from logan_core.opportunity_lifecycle import (  # noqa: E402
     OpportunityLifecycleTracker,
+    SinceLastLookedSummary,
     UserOpportunityKnowledge,
+    compute_since_last_looked,
     compute_user_sync_delta,
 )
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
@@ -1300,6 +1302,18 @@ class FeedItem(BaseModel):
     # `delivered_item` is already a typed sub-object on this same contract.
     evidence: EvidenceSnapshot | None = None
 
+    # Stock Opportunity Logic V2.3D ("Since You Last Looked"). None whenever
+    # lifecycle/revision tracking isn't active for this entity -- same
+    # additive discipline as every field above. Deliberately keyed to
+    # last_opened_revision (a real card disclosure), never
+    # last_seen_revision (which advances on a mere impression) -- see
+    # opportunity_lifecycle/sync.py's compute_since_last_looked docstring
+    # for why. This is the single backend-authoritative answer to "what
+    # changed since this user last looked" -- the mobile layer renders it,
+    # it never re-derives this comparison from opportunity_revision/
+    # user_sync_status itself.
+    since_last_looked: SinceLastLookedSummary | None = None
+
 
 class DemoFeedResponse(BaseModel):
     items: list[FeedItem]
@@ -1622,12 +1636,49 @@ def _run_feed_pipeline(
             current_revision = (
                 r.lifecycle_delta.new_revision if r.lifecycle_delta else None
             )
+            user_knowledge = _get_user_knowledge(user_id, canonical.entity_id)
             sync_delta = (
                 compute_user_sync_delta(
                     entity_id=canonical.entity_id,
                     user_id=user_id,
                     current_revision=current_revision,
-                    knowledge=_get_user_knowledge(user_id, canonical.entity_id),
+                    knowledge=user_knowledge,
+                    now=now,
+                )
+                if current_revision is not None
+                else None
+            )
+
+            # Stock Opportunity Logic V2.3D ("Since You Last Looked"): only
+            # worth a durable-history lookup when there is actually a gap to
+            # explain -- last_opened_revision is None (first_view) or already
+            # at/past current_revision (no_material_change/degraded) need no
+            # history at all (see compute_since_last_looked's own docstring).
+            opened_revision = (
+                user_knowledge.last_opened_revision if user_knowledge else None
+            )
+            revisions_since_last_open = (
+                [
+                    rev
+                    for rev in _revision_store.history_for_entity(canonical.entity_id)
+                    if rev.revision > opened_revision
+                ]
+                if (
+                    _revision_store is not None
+                    and current_revision is not None
+                    and opened_revision is not None
+                    and opened_revision < current_revision
+                )
+                else []
+            )
+            since_last_looked = (
+                compute_since_last_looked(
+                    entity_id=canonical.entity_id,
+                    user_id=user_id,
+                    current_revision=current_revision,
+                    knowledge=user_knowledge,
+                    revisions_since_last_open=revisions_since_last_open,
+                    provider_degraded=provider_degraded,
                     now=now,
                 )
                 if current_revision is not None
@@ -1701,6 +1752,7 @@ def _run_feed_pipeline(
                     evidence=(
                         r.lifecycle_delta.evidence if r.lifecycle_delta else None
                     ),
+                    since_last_looked=since_last_looked,
                 )
             )
             # Sprint 3.6.7 Block 4: retains a richer slice of this same
