@@ -21,7 +21,8 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { font, radius, spacing, theme, tracking, type } from "../constants/theme";
-import { ConfidenceRing } from "./ConfidenceRing";
+import { AttentionBadge } from "./AttentionBadge";
+import { attentionJudgmentFor, attentionToneFor } from "../lib/attentionJudgment";
 import { EntitySymbol } from "./EntitySymbol";
 import { RecommendationPanel } from "./RecommendationPanel";
 import { relativeTimeFrom } from "../lib/relativeTime";
@@ -209,6 +210,12 @@ export function Vessel({
 }) {
   const symbol = resolveSymbol(item);
   const instability = 1 - item.confidence_score; // low confidence -> more visible flicker
+  // Replaces the old confidence-percentage ring/label (2026-08-29 product
+  // decision): a plain "how much attention does this deserve right now"
+  // judgment, derived from the field's own existing surface decision --
+  // see lib/attentionJudgment.ts.
+  const attentionJudgment = attentionJudgmentFor(item.delivered_item.surface);
+  const attentionTone = attentionToneFor(attentionJudgment);
   // Already 0..1 and rank-derived (see attentionLayout.ts) -- no raw score is
   // ever available here, per ADR-029.
   const prominence = layout.prominence;
@@ -845,9 +852,10 @@ export function Vessel({
             </View>
           </Animated.View>
 
-          {/* Owner reference (Field Bias mockup, Sprint 3.6): name + real
-              confidence percentage + a short real-data reason tag.
-              `maxWidth` is derived from this vessel's own bubble diameter
+          {/* Owner reference (Field Bias mockup, Sprint 3.6): name + an
+              attention judgment (see lib/attentionJudgment.ts -- replaces
+              the old confidence percentage, 2026-08-29) + a short real-data
+              reason tag. `maxWidth` is derived from this vessel's own bubble diameter
               via LABEL_WIDTH_FRACTION -- the same fraction
               attentionLayout.ts's minDiameterForLabel used to grow this
               vessel's `size` in the first place, so ordinarily the text
@@ -877,8 +885,9 @@ export function Vessel({
                   { color: symbol.color },
                   layout.labelTier === "compact" && styles.restLabelPctCompact,
                 ]}
+                numberOfLines={2}
               >
-                {Math.round(item.confidence_score * 100)}%
+                {attentionJudgment}
               </Text>
               <Text
                 style={[
@@ -1007,12 +1016,7 @@ export function Vessel({
                         </View>
                       </View>
                     </View>
-                    <ConfidenceRing
-                      score={item.confidence_score}
-                      label={item.confidence_label}
-                      color={symbol.color}
-                      size={76}
-                    />
+                    <AttentionBadge judgment={attentionJudgment} tone={attentionTone} width={76} />
                   </Animated.View>
 
                   <Animated.Text style={[styles.headline, headlineStyle]} numberOfLines={4}>
@@ -1358,18 +1362,18 @@ const styles = StyleSheet.create({
   restLabelIconWrap: {
     opacity: 0.82,
   },
-  // The confidence percentage is real data (confidence_score), shown
-  // up-front on the field itself rather than only after opening the card --
-  // large and in the vessel's category color so it reads as the headline
-  // number, with tabular figures so the digit width doesn't shift as
-  // different vessels show different values.
+  // The attention judgment (see lib/attentionJudgment.ts) is real data,
+  // shown up-front on the field itself rather than only after opening the
+  // card -- in the vessel's category color so it still reads as a headline
+  // cue, sized for a short word phrase rather than the old fixed-width
+  // percentage this replaced (2026-08-29).
   restLabelPct: {
-    fontSize: 17,
+    fontSize: 12,
     fontFamily: font.heading,
-    fontVariant: ["tabular-nums"],
     marginTop: 1,
+    textAlign: "center",
   },
-  restLabelPctCompact: { fontSize: 13 },
+  restLabelPctCompact: { fontSize: 10 },
   // The reason tag: real signal_type (see lib/signalType.ts), not a
   // hand-authored phrase -- quietest text on the vessel, instrument-label
   // treatment (small, wide-tracked, muted), subordinate to both the name
