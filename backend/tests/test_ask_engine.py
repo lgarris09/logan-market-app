@@ -64,14 +64,14 @@ def test_personal_relevance_question_uses_why_it_matters_to_me():
 def test_personal_relevance_question_notes_inferred_basis():
     context = _context(connection_basis="inferred", personal_relevance=0.55)
     answer = answer_question(context, "Is this relevant to me?")
-    assert "0.55" in answer
-    assert "inferred" in answer.lower() or "past engagement" in answer.lower()
+    assert "0.55" not in answer
+    assert "past engagement" in answer.lower()
 
 
-def test_confidence_question_reports_score_and_label():
+def test_confidence_question_reports_label_not_raw_score():
     context = _context(confidence_score=0.72, confidence_label="Moderate")
     answer = answer_question(context, "How confident are you in this?")
-    assert "0.72" in answer
+    assert "0.72" not in answer
     assert "moderate" in answer.lower()
 
 
@@ -172,3 +172,98 @@ def test_answer_never_mentions_internal_rank_score():
         answer = answer_question(context, question)
         assert "internal_rank_score" not in answer
         assert "rank_score" not in answer
+
+
+def test_no_answer_ever_states_a_raw_confidence_or_relevance_decimal():
+    """2026-08-29 Ask STRATUS copy audit: device validation found raw
+    decimals ("confidence 0.59", "personal relevance 0.20") leaking into
+    consumer-facing answers. None of the deterministic answers should ever
+    state one, for any routed question type."""
+    context = _context(confidence_score=0.5950000373143596, personal_relevance=0.1987)
+    for question in [
+        "what changed",
+        "why now",
+        "why does this matter",
+        "how confident are you",
+        "is this relevant to me",
+        "what would weaken this",
+        "what would make this more important",
+        "what could invalidate this",
+        "what should i watch next",
+        "which signals",
+        "what evidence is strongest",
+        "converging",
+        "stronger than",
+        "how is this different from last time",
+        "random gibberish",
+    ]:
+        answer = answer_question(context, question)
+        assert "0.59" not in answer
+        assert "0.20" not in answer
+        assert "0.1987" not in answer
+
+
+# --- New question categories (2026-08-29: "make Ask materially smarter") --
+
+
+def test_strengthen_answer_reframes_limiting_factors_positively():
+    context = _context(
+        limiting_factors=["Only one independent source has corroborated this so far."]
+    )
+    answer = answer_question(context, "What would make this more important?")
+    assert "another independent source" in answer.lower()
+
+
+def test_strengthen_answer_includes_alternatives_as_what_could_invalidate():
+    context = _context(
+        limiting_factors=["Some expected event details are missing."],
+        alternatives=["This could also reflect noise, a single-source report."],
+    )
+    answer = answer_question(context, "What could invalidate this?")
+    assert "noise" in answer.lower()
+
+
+def test_strengthen_answer_with_no_limiting_factors_is_honest():
+    context = _context(limiting_factors=[], alternatives=[])
+    answer = answer_question(context, "What should I watch next?")
+    assert "nothing currently limits" in answer.lower()
+
+
+def test_evidence_quality_answer_names_strongest_and_weakest():
+    context = _context(
+        trigger_codes=["STOCK_EARNINGS_BEAT"],
+        limiting_factors=["Only one independent source has corroborated this so far."],
+    )
+    answer = answer_question(context, "What evidence is strongest here?")
+    assert "earnings beat" in answer.lower()
+    assert "corroborated" in answer.lower()
+
+
+def test_evidence_quality_answer_with_no_limiting_factors_is_honest():
+    context = _context(trigger_codes=["STOCK_EARNINGS_BEAT"], limiting_factors=[])
+    answer = answer_question(context, "What's the weakest evidence here?")
+    assert "doesn't currently flag" in answer.lower()
+
+
+def test_since_last_looked_answer_uses_sync_summary_when_present():
+    context = _context(
+        user_sync_status="UPDATED_SINCE_SEEN", sync_summary="Real sync summary text."
+    )
+    answer = answer_question(
+        context, "How is this different from the last time I looked?"
+    )
+    assert answer == "Real sync summary text."
+
+
+def test_since_last_looked_answer_falls_back_to_lifecycle_reason():
+    context = _context(
+        sync_summary=None, lifecycle_reason="Real lifecycle reason text."
+    )
+    answer = answer_question(context, "What's different since last time?")
+    assert answer == "Real lifecycle reason text."
+
+
+def test_since_last_looked_answer_falls_back_to_what_happened_when_nothing_tracked():
+    context = _context(sync_summary=None, lifecycle_reason=None)
+    answer = answer_question(context, "How is this different from before?")
+    assert answer == context.what_happened

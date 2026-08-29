@@ -92,8 +92,8 @@ def _convergence_answer(context: OpportunityContext) -> str:
     return (
         f"Yes -- {len(context.convergence_sources)} distinct signal types have "
         f"genuinely converged for {context.display_name} within STRATUS's 30-minute "
-        f"window: {sources}. That's a real, registered convergence "
-        "(STOCK_CONVERGENCE_MULTI_SOURCE), not just one signal reported multiple ways."
+        f"window: {sources}. That's a real, registered pattern, not just one signal "
+        "reported multiple ways."
     )
 
 
@@ -105,12 +105,12 @@ def _confidence_answer(context: OpportunityContext) -> str:
         "speculation": "weakly supported right now -- treat this as an early, unconfirmed read",
     }.get(context.classification, "evaluated using STRATUS's standard confidence model")
     base = (
-        f"STRATUS rates this {context.confidence_label.lower()} confidence "
-        f"({context.confidence_score:.2f} on a 0-1 scale) -- {classification_explainer}."
+        f"STRATUS has {context.confidence_label.lower()} evidence for this -- "
+        f"{classification_explainer}."
     )
     if context.limiting_factors:
         base += (
-            " What's currently limiting that confidence: "
+            " What's currently limiting that: "
             + "; ".join(f.rstrip(".") for f in context.limiting_factors)
             + "."
         )
@@ -129,11 +129,92 @@ def _limiting_factors_answer(context: OpportunityContext) -> str:
         parts.append("Worth keeping in mind: " + " ".join(context.alternatives))
     if not parts:
         return (
-            f"Nothing currently limits STRATUS's read on this -- confidence is "
+            f"Nothing currently limits STRATUS's read on this -- evidence is "
             f"{context.confidence_label.lower()} with no flagged limiting factors right now. "
             "That can still change as new signals come in."
         )
     return " ".join(parts)
+
+
+# What would need to change for each known limiting factor to stop being one --
+# a deterministic, positively-framed counterpart of the exact same closed set of
+# strings ConclusionConfidenceEngine can produce (logan_core/conclusion_confidence/
+# engine.py), never an invented reason. The fallback branch below handles any
+# future limiting-factor text this map hasn't been extended to cover yet.
+_STRENGTHEN_COUNTERPART = {
+    "Only one independent source has corroborated this so far.": (
+        "another independent source confirming the same signal"
+    ),
+    "Some expected event details are missing.": (
+        "more complete event details coming in"
+    ),
+    "Contradicting signals exist for this event.": (
+        "the contradicting signals resolving in the same direction"
+    ),
+}
+
+
+def _strengthen_weaken_answer(context: OpportunityContext) -> str:
+    """Answers "what would make this more/less important," "what could
+    invalidate this," and "what should I watch next" -- the positive-framed
+    counterpart to _limiting_factors_answer above, built from the exact same
+    real data (limiting_factors, alternatives), never a new inferred reason."""
+    if not context.limiting_factors:
+        parts = [
+            "Nothing currently limits STRATUS's read on this, so there's no specific "
+            "gap left to close right now -- that can still change as new signals "
+            "come in."
+        ]
+    else:
+        strengtheners = [
+            _STRENGTHEN_COUNTERPART.get(f, f"addressing this: {f.rstrip('.').lower()}")
+            for f in context.limiting_factors
+        ]
+        parts = ["This would matter more if: " + "; ".join(strengtheners) + "."]
+    if context.alternatives:
+        parts.append(
+            "What could make this wrong instead: " + " ".join(context.alternatives)
+        )
+    return " ".join(parts)
+
+
+def _since_last_looked_answer(context: OpportunityContext) -> str:
+    """Answers "how is this different from the last time I looked" -- grounds
+    in the same user-specific sync summary the card itself uses (never a
+    fresh comparison invented here), falling back to the objective lifecycle
+    reason, then the plain what-happened narrative, when sync/lifecycle
+    tracking isn't active for this entity."""
+    if context.sync_summary is not None:
+        return context.sync_summary
+    if context.lifecycle_reason is not None:
+        return context.lifecycle_reason
+    return context.what_happened
+
+
+def _evidence_quality_answer(context: OpportunityContext) -> str:
+    """Answers "what evidence is strongest/weakest" by combining the real
+    fired triggers (strongest side) with the real limiting_factors (weakest
+    side) -- the same two data sources _signals_answer/_limiting_factors_answer
+    already draw from, just synthesized into one comparative answer."""
+    real_codes = [
+        c for c in context.trigger_codes if c != "STOCK_CONVERGENCE_MULTI_SOURCE"
+    ]
+    if real_codes:
+        labels = ", ".join(_trigger_label(c) for c in real_codes)
+        strongest = f"The strongest evidence here is {labels}."
+    else:
+        strongest = _signals_answer(context)
+    if context.limiting_factors:
+        weakest = (
+            "The weakest part right now: "
+            + "; ".join(f.rstrip(".") for f in context.limiting_factors)
+            + "."
+        )
+    else:
+        weakest = (
+            "STRATUS doesn't currently flag any specific weak point in the evidence."
+        )
+    return f"{strongest} {weakest}"
 
 
 def _personal_answer(context: OpportunityContext) -> str:
@@ -145,8 +226,8 @@ def _personal_answer(context: OpportunityContext) -> str:
     if context.connection_basis == "inferred":
         return (
             f"{context.why_it_matters_to_me} This is based on STRATUS's read of your "
-            f"past engagement (personal relevance {context.personal_relevance:.2f}), not "
-            "an explicit holding or interest -- it can grow or fade as your behavior does."
+            "past engagement, not an explicit holding or interest -- it can grow or "
+            "fade as your behavior does."
         )
     return context.why_it_matters_to_me
 
@@ -167,9 +248,8 @@ def _dominant_signal_answer(context: OpportunityContext) -> str:
     return (
         f"This opportunity currently combines {len(real_codes)} signals: {labels}. "
         "STRATUS doesn't rank one as definitively 'stronger' in isolation -- each "
-        "contributes its own registered confidence weight, and the strongest single "
-        f"one currently drives the {context.confidence_label.lower()} overall confidence "
-        f"({context.confidence_score:.2f})."
+        "contributes its own weight, and the strongest single one currently drives "
+        f"the {context.confidence_label.lower()} overall evidence STRATUS has for this."
     )
 
 
@@ -200,6 +280,18 @@ def answer_question(context: OpportunityContext, message: str) -> str:
     if _matches(
         text,
         [
+            "strongest evidence",
+            "weakest evidence",
+            "best evidence",
+            "worst evidence",
+            "what evidence",
+            "which evidence",
+        ],
+    ):
+        return _evidence_quality_answer(context)
+    if _matches(
+        text,
+        [
             "what signal",
             "which signal",
             "what's driving",
@@ -209,6 +301,23 @@ def answer_question(context: OpportunityContext, message: str) -> str:
         ],
     ):
         return _signals_answer(context)
+    if _matches(
+        text,
+        [
+            "more important",
+            "matter more",
+            "bigger deal",
+            "invalidate",
+            "stronger case",
+            "increase your confidence",
+            "make you more confident",
+            "watch next",
+            "watch for",
+            "should i watch",
+            "should i track",
+        ],
+    ):
+        return _strengthen_weaken_answer(context)
     if _matches(
         text,
         [
@@ -250,6 +359,19 @@ def answer_question(context: OpportunityContext, message: str) -> str:
         return _personal_answer(context)
     if _matches(
         text,
+        [
+            "last time",
+            "since i last looked",
+            "since you last looked",
+            "different from before",
+            "how is this different",
+            "compared to before",
+            "compared to last time",
+        ],
+    ):
+        return _since_last_looked_answer(context)
+    if _matches(
+        text,
         ["why now", "why today", "timing", "urgent", "matter right now", "matter now"],
     ):
         return context.why_now or context.why_it_matters
@@ -263,7 +385,7 @@ def answer_question(context: OpportunityContext, message: str) -> str:
 
     return (
         f"{context.headline} {context.what_happened} {context.why_it_matters} "
-        f"Confidence: {context.confidence_label.lower()} ({context.confidence_score:.2f}). "
+        f"STRATUS has {context.confidence_label.lower()} evidence for this. "
         "Ask what changed, why it matters, which signals are involved, or what would "
         "weaken this for more detail."
     )
