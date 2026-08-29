@@ -472,6 +472,283 @@ def test_quotes_still_fail_immediately_on_a_refetch_error_no_stale_grace():
         provider.fetch_quote("NVDA")
 
 
+# --- Restart-recovery seeding (V2.3A.1 field reliability work) -------------
+#
+# A hosted-production audit (2026-08-28/29) confirmed live that d482af8's
+# stale-grace fix above only protects an outage that happens *while the
+# process keeps running* -- FmpResponseCache is process-lifetime, in-memory
+# only, so a restart during an ongoing FMP outage empties it along with
+# everything else, leaving grace with nothing to fall back to until this
+# process's own first successful fetch. seed_stale_entry (and
+# backend/app/earnings_cache_store.py's durable store, which calls it via
+# seed_earnings_from_durable_observation) closes that gap. These tests cover
+# the generic cache primitive directly; test_earnings_cache_persistence.py
+# (backend/tests/) covers the full durable-store/restart integration.
+
+
+def test_seed_stale_entry_lets_a_refetch_failure_fall_back_immediately():
+    """A freshly-started process, seeded with a recovered observation, must
+    be able to serve it on the very first call if FMP is already down --
+    with zero prior in-process fetch of its own."""
+
+    def handler(request):
+        return httpx.Response(429, text="rate limited")
+
+    from logan_core.receptors.providers import EarningsReport
+
+    clock = _FakeClock(start=1000.0)
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+    report = EarningsReport(
+        entity_id="NVDA",
+        actual_eps=1.87,
+        consensus_eps=0.98,
+        source_id="fmp",
+        source_name="Financial Modeling Prep",
+        report_timestamp="2026-08-26T00:00:00+00:00",
+    )
+    # Seeded as though observed 1 hour ago -- well within both the 6h TTL and
+    # the 24h grace window on top of it.
+    cache.seed_stale_entry("earnings", "NVDA", report, age_seconds=60 * 60)
+
+    result = provider.fetch_latest_earnings("NVDA")
+
+    assert result is not None
+    assert result.actual_eps == 1.87
+
+
+def test_seeded_entry_within_ttl_is_served_without_any_fetch_attempt():
+    """A recovered observation younger than the normal TTL should behave
+    exactly like any other still-fresh cache entry -- no network call at all,
+    not even an attempted one."""
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, text="rate limited")
+
+    from logan_core.receptors.providers import EarningsReport
+
+    clock = _FakeClock(start=5000.0)
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+    report = EarningsReport(
+        entity_id="NVDA",
+        actual_eps=2.22,
+        consensus_eps=2.09,
+        source_id="fmp",
+        source_name="Financial Modeling Prep",
+        report_timestamp="2026-08-26T00:00:00+00:00",
+    )
+    cache.seed_stale_entry("earnings", "NVDA", report, age_seconds=60)
+
+    result = provider.fetch_latest_earnings("NVDA")
+
+    assert result is not None
+    assert result.actual_eps == 2.22
+    assert call_count == 0  # served straight from the seeded entry, TTL-fresh
+
+
+def test_seeded_entry_outside_ttl_but_within_grace_is_served_on_failure():
+    def handler(request):
+        return httpx.Response(429, text="rate limited")
+
+    from logan_core.receptors.providers import EarningsReport
+
+    clock = _FakeClock(start=0.0)
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+    report = EarningsReport(
+        entity_id="NVDA",
+        actual_eps=1.87,
+        consensus_eps=0.98,
+        source_id="fmp",
+        source_name="Financial Modeling Prep",
+        report_timestamp="2026-08-26T00:00:00+00:00",
+    )
+    # Past the 6h TTL (a real refetch is attempted) but nowhere near the
+    # additional 24h grace window -- the same shape as
+    # test_stale_earnings_are_served_when_a_refetch_fails_within_the_grace_window
+    # above, except the entry came from durable recovery, not this process's
+    # own earlier fetch.
+    cache.seed_stale_entry(
+        "earnings", "NVDA", report, age_seconds=EARNINGS_CACHE_TTL_SECONDS + 60
+    )
+
+    result = provider.fetch_latest_earnings("NVDA")
+
+    assert result is not None
+    assert result.actual_eps == 1.87
+
+
+def test_seeded_entry_outside_ttl_and_grace_is_rejected():
+    def handler(request):
+        return httpx.Response(429, text="rate limited")
+
+    from logan_core.receptors.providers import EarningsReport
+
+    clock = _FakeClock(start=0.0)
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+    report = EarningsReport(
+        entity_id="NVDA",
+        actual_eps=1.87,
+        consensus_eps=0.98,
+        source_id="fmp",
+        source_name="Financial Modeling Prep",
+        report_timestamp="2026-08-26T00:00:00+00:00",
+    )
+    # A durably-recovered observation this old is no longer safe to present
+    # as current, exactly like a same-process entry that aged past grace --
+    # this must fail loudly, not silently keep serving ancient data forever.
+    cache.seed_stale_entry(
+        "earnings",
+        "NVDA",
+        report,
+        age_seconds=EARNINGS_CACHE_TTL_SECONDS + EARNINGS_STALE_GRACE_SECONDS + 1,
+    )
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+
+
+def test_a_successful_fetch_replaces_a_recovered_seeded_value():
+    """Recovery is a bridge, not a ceiling -- once FMP responds again, the
+    real, newer report must replace the recovered one and reset the TTL
+    clock, exactly like the same-process grace-recovery precedent above."""
+    from logan_core.receptors.providers import EarningsReport
+
+    def handler(request):
+        return _earnings_response(eps_actual=2.22)
+
+    clock = _FakeClock(start=0.0)
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+    old_report = EarningsReport(
+        entity_id="NVDA",
+        actual_eps=1.05,
+        consensus_eps=0.98,
+        source_id="fmp",
+        source_name="Financial Modeling Prep",
+        report_timestamp="2026-05-28T00:00:00+00:00",
+    )
+    cache.seed_stale_entry(
+        "earnings", "NVDA", old_report, age_seconds=EARNINGS_CACHE_TTL_SECONDS + 60
+    )
+
+    result = provider.fetch_latest_earnings("NVDA")
+
+    assert result.actual_eps == 2.22  # the real, fresh report -- not the seeded 1.05
+
+
+# --- on_successful_fetch: the durable-persistence write hook ---------------
+
+
+def test_on_successful_fetch_fires_once_for_a_genuine_fresh_success():
+    observations = []
+
+    def handler(request):
+        return _earnings_response(eps_actual=1.87)
+
+    cache = FmpResponseCache(clock=_FakeClock())
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    provider = FmpEarningsProvider(
+        api_key="test-key-not-real",
+        client=client,
+        cache=cache,
+        on_successful_fetch=lambda entity_id, report, observed_at: observations.append(
+            (entity_id, report, observed_at)
+        ),
+    )
+
+    report = provider.fetch_latest_earnings("NVDA")
+
+    assert len(observations) == 1
+    entity_id, observed_report, observed_at = observations[0]
+    assert entity_id == "NVDA"
+    assert observed_report is report
+    assert observed_at is not None
+
+
+def test_on_successful_fetch_does_not_fire_on_a_cache_hit():
+    """The whole point of persisting only genuine observations: a TTL cache
+    hit never calls FMP at all, so it must never re-report itself as a new
+    observation either."""
+    observations = []
+
+    def handler(request):
+        return _earnings_response(eps_actual=1.87)
+
+    cache = FmpResponseCache(clock=_FakeClock())
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    provider = FmpEarningsProvider(
+        api_key="test-key-not-real",
+        client=client,
+        cache=cache,
+        on_successful_fetch=lambda entity_id, report, observed_at: observations.append(
+            entity_id
+        ),
+    )
+
+    provider.fetch_latest_earnings("NVDA")
+    provider.fetch_latest_earnings("NVDA")  # served from cache, no real fetch
+
+    assert len(observations) == 1
+
+
+def test_on_successful_fetch_never_fires_on_a_failure():
+    def handler(request):
+        return httpx.Response(429, text="rate limited")
+
+    observations = []
+    cache = FmpResponseCache(clock=_FakeClock())
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    provider = FmpEarningsProvider(
+        api_key="test-key-not-real",
+        client=client,
+        cache=cache,
+        on_successful_fetch=lambda entity_id, report, observed_at: observations.append(
+            entity_id
+        ),
+    )
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+
+    assert observations == []
+
+
+def test_on_successful_fetch_does_not_fire_for_a_genuine_no_data_result():
+    """A real 'no earnings on file' None is a successful call, but there is
+    no payload to persist for restart-recovery purposes -- the callback is
+    earnings-report-shaped, not a generic 'any successful call' hook."""
+    observations = []
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    cache = FmpResponseCache(clock=_FakeClock())
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    provider = FmpEarningsProvider(
+        api_key="test-key-not-real",
+        client=client,
+        cache=cache,
+        on_successful_fetch=lambda entity_id, report, observed_at: observations.append(
+            entity_id
+        ),
+    )
+
+    result = provider.fetch_latest_earnings("NVDA")
+
+    assert result is None
+    assert observations == []
+
+
 # --- Shared-cache path (the actual production topology) ---------------------
 
 

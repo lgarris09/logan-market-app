@@ -216,6 +216,21 @@ def lifecycle_store_db_path() -> Path:
     return memory_store_db_path().parent / "lifecycle_state.db"
 
 
+def earnings_cache_store_db_path() -> Path:
+    """V2.3A.1 field reliability work: the durable SQLite file backing
+    FmpEarningsProvider's last-successful-earnings-observation-per-entity_id
+    (see earnings_cache_store.py) when memory_persistence_enabled() is true
+    -- mirrors lifecycle_store_db_path()'s identical pattern: a separate
+    file, same durable directory, own independent schema. Defaults to a
+    sibling `earnings_observations.db`; overridable via
+    STRATUS_EARNINGS_CACHE_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_EARNINGS_CACHE_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "earnings_observations.db"
+
+
 def revision_store_db_path() -> Path:
     """Stock Opportunity Logic V2.1 (User Sync Gap): the durable SQLite file
     backing each entity's meaningful-revision history (see

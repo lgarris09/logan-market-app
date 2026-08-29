@@ -182,7 +182,15 @@ def opportunities(
     if category is None:
         return response
     filtered = [item for item in response.items if item.category == category.lower()]
-    return OpportunitiesResponse(items=filtered, generated_at=response.generated_at)
+    # V2.3A.1 fix: this reconstruction was dropping provider_degraded back to
+    # its default False, so a genuine live-data outage would misreport as
+    # "healthy" on a category-filtered request -- forward it from the
+    # unfiltered response, same as generated_at already is.
+    return OpportunitiesResponse(
+        items=filtered,
+        generated_at=response.generated_at,
+        provider_degraded=response.provider_degraded,
+    )
 
 
 @app.post("/v1/notifications/review", response_model=NotificationsReviewResponse)

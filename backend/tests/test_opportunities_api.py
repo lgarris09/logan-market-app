@@ -83,6 +83,34 @@ def test_opportunities_route_unknown_category_returns_empty():
     assert response.json()["items"] == []
 
 
+def test_opportunities_route_category_filter_preserves_provider_degraded(monkeypatch):
+    """V2.3A.1 propagation bug, fixed alongside the earnings-cache-store
+    reliability work: the category-filter branch in main.py's opportunities()
+    reconstructs OpportunitiesResponse from the filtered item list -- before
+    this fix, that reconstruction silently reset provider_degraded to its
+    default False, so a genuine live-data outage would misreport as
+    "healthy" on any category-filtered request even though the unfiltered
+    response correctly flagged it."""
+    from backend.app.opportunities import OpportunitiesResponse
+
+    unfiltered = run_opportunities(LOCAL_FOUNDER_USER_ID)
+    degraded_response = OpportunitiesResponse(
+        items=unfiltered.items,
+        generated_at=unfiltered.generated_at,
+        provider_degraded=True,
+    )
+    monkeypatch.setattr(
+        "backend.app.main.run_opportunities", lambda user_id: degraded_response
+    )
+
+    response = client.get("/v1/opportunities", params={"category": "stocks"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) > 0  # the filter itself still worked
+    assert payload["provider_degraded"] is True
+
+
 def test_demo_feed_route_still_works_but_is_deprecated():
     demo_route = next(
         r for r in app.routes if isinstance(r, APIRoute) and r.path == "/v1/demo/feed"

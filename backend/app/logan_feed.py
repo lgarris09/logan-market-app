@@ -48,6 +48,7 @@ from logan_core.receptors.providers import (  # noqa: E402
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
+    seed_earnings_from_durable_observation,
 )
 from logan_core.trigger_detection import (  # noqa: E402
     StocksTriggerEvaluator,
@@ -64,6 +65,7 @@ from .ask_context import (  # noqa: E402
 )
 from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
+    earnings_cache_store_db_path,
     lifecycle_store_db_path,
     live_data_only_mode,
     live_stock_tickers,
@@ -72,6 +74,7 @@ from .config import (  # noqa: E402
     revision_store_db_path,
     user_knowledge_store_db_path,
 )
+from .earnings_cache_store import EarningsCacheStore  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
 from .revision_store import OpportunityRevisionStore  # noqa: E402
@@ -115,6 +118,15 @@ _orchestrator: Orchestrator | None = None
 # lifecycle tracking purely in-memory, same discipline as memory_store.
 _lifecycle_tracker: OpportunityLifecycleTracker | None = None
 _lifecycle_store: LifecycleStore | None = None
+# V2.3A.1 field reliability work: durable last-successful-earnings-
+# observation store (see earnings_cache_store.py) -- same construction/
+# gating discipline as _lifecycle_store immediately above (None unless
+# live_stock_tickers() is configured AND memory_persistence_enabled()).
+# Read at every _live_earnings_raw_signal() call (write-through on a
+# genuine fresh success, via FmpEarningsProvider's on_successful_fetch);
+# seeded into logan_core's shared FmpResponseCache exactly once, at
+# _get_orchestrator() construction time -- see its own comment there.
+_earnings_cache_store: EarningsCacheStore | None = None
 # Stock Opportunity Logic V2.1 (User Sync Gap): durable global revision
 # history (_revision_store) and per-user knowledge pointers
 # (_user_knowledge_store / _user_knowledge_cache) -- same construction/
@@ -398,10 +410,11 @@ def _get_orchestrator() -> Orchestrator:
             # byte-for-byte the pre-Sprint-3.6.9 behavior. Persisted the
             # same way memory_store is, independently of the live-data gate
             # -- see lifecycle_store.py.
-            global _lifecycle_tracker, _lifecycle_store
+            global _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
             global _revision_store, _user_knowledge_store, _user_knowledge_cache
             _lifecycle_tracker = None
             _lifecycle_store = None
+            _earnings_cache_store = None
             _revision_store = None
             _user_knowledge_store = None
             _user_knowledge_cache = {}
@@ -426,6 +439,26 @@ def _get_orchestrator() -> Orchestrator:
                         _user_knowledge_cache[
                             (knowledge.user_id, knowledge.entity_id)
                         ] = knowledge
+                    # V2.3A.1 field reliability work: durable last-successful-
+                    # earnings-observation store, gated identically to
+                    # _lifecycle_store above (its own docstring has the full
+                    # incident this closes). Seeded into logan_core's shared,
+                    # process-lifetime FmpResponseCache exactly once, here,
+                    # so fetch_latest_earnings's stale-grace fallback has
+                    # something to serve from immediately after this fresh
+                    # process start -- before this existed, a provider
+                    # outage spanning a restart had nothing to bridge with
+                    # until this process's own first successful fetch.
+                    _earnings_cache_store = EarningsCacheStore(
+                        earnings_cache_store_db_path()
+                    )
+                    for entity_id, (
+                        report,
+                        observed_at,
+                    ) in _earnings_cache_store.load_all().items():
+                        seed_earnings_from_durable_observation(
+                            entity_id, report, observed_at
+                        )
 
             deps = (
                 PipelineDependencies(
@@ -630,7 +663,19 @@ def _live_earnings_raw_signal(
     qualifies right now (see the V2.3A.1 ADR).
     """
     try:
-        provider = FmpEarningsProvider()
+        # V2.3A.1 field reliability work: on_successful_fetch writes through
+        # to the durable earnings-observation store exactly once per genuine
+        # fresh HTTP success (never a cache hit, never a failure -- see
+        # FmpEarningsProvider._fetch_and_observe's own docstring) -- None
+        # when persistence isn't active, matching every other durable
+        # store's gating in this file.
+        provider = FmpEarningsProvider(
+            on_successful_fetch=(
+                _earnings_cache_store.save
+                if _earnings_cache_store is not None
+                else None
+            )
+        )
     except FmpProviderError as exc:
         print(f"[live-stocks] {ticker}: provider unavailable, source=fixture: {exc}")
         return None, True
@@ -871,7 +916,7 @@ def reset_pipeline_state() -> None:
     deliberate cross-request persistence) should call this between runs -- see
     backend/tests/test_opportunities_api.py and test_logan_feed.py.
     """
-    global _orchestrator, _lifecycle_tracker, _lifecycle_store
+    global _orchestrator, _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
     global _revision_store, _user_knowledge_store, _user_knowledge_cache
     with _state_lock:
         if _orchestrator is not None:
@@ -884,6 +929,8 @@ def reset_pipeline_state() -> None:
             _orchestrator.deps.memory_store.close()
         if _lifecycle_store is not None:
             _lifecycle_store.close()
+        if _earnings_cache_store is not None:
+            _earnings_cache_store.close()
         if _revision_store is not None:
             _revision_store.close()
         if _user_knowledge_store is not None:
@@ -891,6 +938,7 @@ def reset_pipeline_state() -> None:
         _orchestrator = None
         _lifecycle_tracker = None
         _lifecycle_store = None
+        _earnings_cache_store = None
         _revision_store = None
         _user_knowledge_store = None
         _user_knowledge_cache = {}

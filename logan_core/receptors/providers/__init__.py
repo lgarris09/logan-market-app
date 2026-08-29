@@ -36,6 +36,7 @@ from .fmp import (
     FmpProviderError,
     FmpResponseCache,
     reset_fmp_cache,
+    seed_earnings_from_durable_observation,
 )
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "FmpProviderError",
     "FmpResponseCache",
     "reset_fmp_cache",
+    "seed_earnings_from_durable_observation",
     "FMP_SOURCE_ID",
     "FMP_SOURCE_NAME",
     "FMP_API_KEY_ENV_VAR",

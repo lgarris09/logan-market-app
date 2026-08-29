@@ -138,6 +138,36 @@ class FmpResponseCache:
     def clear(self) -> None:
         self._entries.clear()
 
+    def seed_stale_entry(
+        self, endpoint: str, entity_id: str, value: object, age_seconds: float
+    ) -> None:
+        """V2.3A.1 field reliability work -- recovery-only primitive: pre-
+        populates a cache entry as though it had been fetched `age_seconds`
+        ago, without performing a fetch or touching TTL/grace decision logic
+        itself (it only ever writes `self._entries`; `get_or_fetch`'s own
+        comparisons are completely unmodified). Exists so a durably-
+        persisted last-successful observation (see
+        seed_earnings_from_durable_observation below) can seed this
+        process-lifetime cache immediately after a fresh process start --
+        before this existed, a caller with `stale_grace_seconds > 0` had
+        nothing to fall back to until its own first successful fetch *this
+        process*, meaning a provider outage spanning a restart was never
+        bridgeable no matter how recent the real last observation actually
+        was (confirmed live against the hosted deployment, 2026-08-29).
+
+        `age_seconds` must be real wall-clock elapsed time since that
+        original successful observation -- never this process's own uptime,
+        a monotonic reading, or a file's mtime. This is the one place a
+        durable, wall-clock timestamp is translated into this cache's
+        internal monotonic `cached_at` bookkeeping, so every existing
+        `(now - entry.cached_at) < ...` comparison downstream keeps working
+        completely unchanged regardless of whether an entry came from a real
+        fetch this process made or was recovered from durable storage.
+        """
+        self._entries[(endpoint, entity_id)] = _FmpCacheEntry(
+            value=value, cached_at=self._clock() - age_seconds
+        )
+
 
 _shared_fmp_cache = FmpResponseCache()
 
@@ -148,6 +178,29 @@ def reset_fmp_cache() -> None:
     convention for process-lifetime state.
     """
     _shared_fmp_cache.clear()
+
+
+def seed_earnings_from_durable_observation(
+    entity_id: str, report: EarningsReport, observed_at: datetime
+) -> None:
+    """V2.3A.1 field reliability work -- backend-startup-only recovery hook
+    (see backend/app/earnings_cache_store.py and logan_feed.py's
+    _get_orchestrator): seeds the shared, process-lifetime FmpResponseCache
+    with the durably-persisted last-successful earnings observation for
+    `entity_id`, so fetch_latest_earnings's stale-grace fallback has
+    something to serve immediately after a fresh process start, even before
+    any real fetch has been attempted this process's lifetime.
+
+    `observed_at` must be the real wall-clock UTC moment the ORIGINAL fetch
+    actually succeeded (see FmpEarningsProvider's own `on_successful_fetch`
+    callback below, the only place that timestamp is captured) -- never this
+    process's own start time. Age is computed fresh, right now, from that
+    timestamp, which is what makes grace eligibility measure the true
+    staleness of the underlying earnings data across any number of
+    restarts, not "how long has this process happened to be running."
+    """
+    age_seconds = max((datetime.now(timezone.utc) - observed_at).total_seconds(), 0.0)
+    _shared_fmp_cache.seed_stale_entry("earnings", entity_id, report, age_seconds)
 
 
 # Sprint 3.6.6B — the first live market-data provider. Financial Modeling
@@ -219,6 +272,9 @@ class FmpEarningsProvider:
         base_url: str = FMP_BASE_URL,
         client: Optional[httpx.Client] = None,
         cache: Optional[FmpResponseCache] = None,
+        on_successful_fetch: Optional[
+            Callable[[str, EarningsReport, datetime], None]
+        ] = None,
     ) -> None:
         # API key comes only from environment configuration (explicit
         # `api_key` param is for tests to inject a fake one -- never a
@@ -247,15 +303,41 @@ class FmpEarningsProvider:
         # instance (often with a fake clock) so cache state/expiry never
         # leaks between test cases.
         self._cache = cache if cache is not None else _shared_fmp_cache
+        # V2.3A.1 field reliability work: optional, backend-owned durable-
+        # persistence hook (see backend/app/earnings_cache_store.py) -- never
+        # None-checked by anything in this class beyond _fetch_and_observe
+        # below, and every existing caller/test that doesn't pass it gets
+        # byte-for-byte unchanged behavior.
+        self._on_successful_fetch = on_successful_fetch
 
     def fetch_latest_earnings(self, entity_id: str) -> Optional[EarningsReport]:
         return self._cache.get_or_fetch(
             "earnings",
             entity_id,
             EARNINGS_CACHE_TTL_SECONDS,
-            lambda: self._fetch_latest_earnings_uncached(entity_id),
+            lambda: self._fetch_and_observe(entity_id),
             stale_grace_seconds=EARNINGS_STALE_GRACE_SECONDS,
         )  # type: ignore[return-value]
+
+    def _fetch_and_observe(self, entity_id: str) -> Optional[EarningsReport]:
+        """V2.3A.1 field reliability work: thin wrapper around
+        `_fetch_latest_earnings_uncached` so `on_successful_fetch` fires
+        exactly once per genuine, fresh, successful HTTP round-trip --
+        never on a TTL cache hit (`get_or_fetch` returns early on those
+        without ever calling this lambda at all -- see its own docstring)
+        and never on a failure (an FmpProviderError raised inside
+        `_fetch_latest_earnings_uncached` propagates from here before this
+        method's own success path runs, so a failed response can never reach
+        durable storage -- see EarningsCacheStore's own docstring on why
+        that matters). A genuine "no earnings on file" result (`None`, not
+        an error) deliberately does NOT invoke the callback either -- there
+        is no payload to persist for restart-recovery purposes, matching
+        earnings_cache_store.py's "minimum successful payload" scope.
+        """
+        report = self._fetch_latest_earnings_uncached(entity_id)
+        if report is not None and self._on_successful_fetch is not None:
+            self._on_successful_fetch(entity_id, report, datetime.now(timezone.utc))
+        return report
 
     def _fetch_latest_earnings_uncached(
         self, entity_id: str
