@@ -31,10 +31,13 @@ failing silently until someone re-registers.
 """
 
 import re
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, cast
 from uuid import UUID
 
 import httpx
+
+from logan_core.contracts import MeaningfulChangeType
 
 from .config import memory_persistence_enabled, notification_store_db_path
 from .logan_feed import FeedItem, get_alert_eligible_items, mark_user_notified
@@ -326,9 +329,30 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
                 # get_alert_eligible_items -- eligibility alone is not a
                 # send). A no-op per item when opportunity_revision is None
                 # (lifecycle/revision tracking not active for that entity).
+                #
+                # V2.4A (Notification Hygiene): also records this dispatch's
+                # own meaningful_change_type (the same one decide_notification()
+                # already evaluated to allow it through) alongside the
+                # revision/timestamp, so a later poll's cooldown check can
+                # tell a repeat of the same kind of change apart from a
+                # materially different one.
+                dispatch_time = datetime.now(timezone.utc)
                 for item in eligible:
                     mark_user_notified(
-                        user_id, item.entity_id, item.opportunity_revision
+                        user_id,
+                        item.entity_id,
+                        item.opportunity_revision,
+                        now=dispatch_time,
+                        # FeedItem.meaningful_change_type is deliberately
+                        # typed str | None on the public API contract (see
+                        # logan_feed.py's own FeedItem), but this value only
+                        # ever originates from LifecycleDelta.change_type,
+                        # which *is* the tight MeaningfulChangeType Literal --
+                        # safe to narrow back here at this internal boundary.
+                        change_type=cast(
+                            Optional[MeaningfulChangeType],
+                            item.meaningful_change_type,
+                        ),
                     )
                 total_dispatched += len(eligible)
             except Exception as exc:  # noqa: BLE001 -- see comment above

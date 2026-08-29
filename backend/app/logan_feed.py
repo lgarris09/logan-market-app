@@ -25,6 +25,7 @@ from logan_core.contracts import (  # noqa: E402
     InteractionType,
     Interest,
     MarketEvidenceInput,
+    MeaningfulChangeType,
     OpportunityRevision,
     RawSignal,
     UserModel,
@@ -32,11 +33,13 @@ from logan_core.contracts import (  # noqa: E402
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.memory import MemoryStore  # noqa: E402
 from logan_core.opportunity_lifecycle import (  # noqa: E402
+    NotificationDecision,
     OpportunityLifecycleTracker,
     SinceLastLookedSummary,
     UserOpportunityKnowledge,
     compute_since_last_looked,
     compute_user_sync_delta,
+    decide_notification,
 )
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
@@ -166,6 +169,14 @@ _user_models: dict[str, UserModel] = {}
 # knowing an event_id). Refreshed wholesale, per user, on every
 # `_run_feed_pipeline(user_id)` call.
 _opportunity_context_caches: dict[str, OpportunityContextCache] = {}
+
+# V2.4A (Notification Hygiene): per-user, refreshed wholesale on every
+# `_run_feed_pipeline(user_id)` call -- exposed via get_notification_decisions()
+# purely for observability/testing ("why did/didn't STRATUS send this"),
+# mirroring _opportunity_context_caches' own per-user-cache shape rather
+# than widening _run_feed_pipeline's own return signature (which many
+# existing call sites already unpack by position).
+_notification_decisions_cache: dict[str, list[NotificationDecision]] = {}
 
 # Sprint 3.6.7 Block 4: bounded, process-lifetime Ask STRATUS session store.
 # Deliberately not persisted to SQLite -- session continuity is a short-lived
@@ -600,6 +611,8 @@ def _advance_user_knowledge(
     seen_revision: Optional[int] = None,
     notified_revision: Optional[int] = None,
     opened_revision: Optional[int] = None,
+    notified_at: Optional[datetime] = None,
+    notified_change_type: Optional[MeaningfulChangeType] = None,
 ) -> None:
     """The single UPSERT path for `UserOpportunityKnowledge` -- one row per
     (user_id, entity_id), pointers only ever advanced (via `_max_opt`), never
@@ -607,6 +620,14 @@ def _advance_user_knowledge(
     write (all three revisions None) still updates `updated_at`, which is
     harmless and keeps this the one code path every caller uses rather than
     special-casing "nothing to advance."
+
+    V2.4A (Notification Hygiene): `notified_at`/`notified_change_type` are
+    metadata about the same real dispatch `notified_revision` already
+    represents, not their own independent monotonic pointers -- set
+    together (never via `_max_opt`, since "which MeaningfulChangeType was
+    the last notification about" has no ordering to take a max of),
+    carried forward unchanged when this call isn't the notification path
+    (every other caller passes neither).
     """
     key = (user_id, entity_id)
     existing = _user_knowledge_cache.get(key)
@@ -623,6 +644,16 @@ def _advance_user_knowledge(
         last_opened_revision=_max_opt(
             existing.last_opened_revision if existing else None, opened_revision
         ),
+        last_notified_at=(
+            notified_at
+            if notified_at is not None
+            else (existing.last_notified_at if existing else None)
+        ),
+        last_notified_change_type=(
+            notified_change_type
+            if notified_change_type is not None
+            else (existing.last_notified_change_type if existing else None)
+        ),
         updated_at=now,
     )
     _user_knowledge_cache[key] = updated
@@ -635,6 +666,7 @@ def mark_user_notified(
     entity_id: str,
     revision: Optional[int],
     now: Optional[datetime] = None,
+    change_type: Optional[MeaningfulChangeType] = None,
 ) -> None:
     """Called by notifications.py immediately after a real Expo dispatch
     succeeds for one (user, item) pair -- the only place
@@ -644,6 +676,12 @@ def mark_user_notified(
     "this user was notified." A no-op when `revision` is None (lifecycle/
     revision tracking not active for this entity) -- there is nothing to
     advance a pointer against.
+
+    V2.4A (Notification Hygiene): `change_type` is this dispatch's own
+    MeaningfulChangeType (the same one decide_notification() already
+    evaluated to allow this send) -- recorded alongside the revision/
+    timestamp so a later cooldown check can tell a repeat of the same kind
+    of change apart from a materially different one.
     """
     if revision is None:
         return
@@ -653,6 +691,8 @@ def mark_user_notified(
             entity_id,
             now or datetime.now(timezone.utc),
             notified_revision=revision,
+            notified_at=now or datetime.now(timezone.utc),
+            notified_change_type=change_type,
         )
 
 
@@ -994,6 +1034,7 @@ def reset_pipeline_state() -> None:
         _user_models.clear()
         _opportunity_context_caches.clear()
         _ask_sessions.clear()
+        _notification_decisions_cache.clear()
 
 
 def purge_user(user_id: str) -> None:
@@ -1020,6 +1061,7 @@ def purge_user(user_id: str) -> None:
         _baseline_established.discard(user_id)
         _user_models.pop(user_id, None)
         _opportunity_context_caches.pop(user_id, None)
+        _notification_decisions_cache.pop(user_id, None)
         for key in [k for k in _ask_sessions if k[0] == user_id]:
             del _ask_sessions[key]
 
@@ -1458,10 +1500,15 @@ def _run_feed_pipeline(
     # response so a poll degraded by a real provider outage is never
     # presented identically to a poll where nothing currently qualifies.
     provider_degraded = False
+    # V2.4A (Notification Hygiene): per-ticker (not just the aggregate
+    # above) so a notification decision for one entity is never suppressed
+    # by a *different* entity's provider failure this same poll.
+    ticker_provider_failed: dict[str, bool] = {}
     for ticker in live_tickers:
         live_earnings_signal, earnings_provider_failed = _live_earnings_raw_signal(
             ticker, now
         )
+        ticker_provider_failed[ticker] = earnings_provider_failed
         if earnings_provider_failed:
             provider_degraded = True
         if live_earnings_signal is not None:
@@ -1787,28 +1834,49 @@ def _run_feed_pipeline(
         # public FeedItem contract (same discipline as internal_rank_score,
         # ADR-029). PrioritizedItem.interruption=="alert" is the existing,
         # already-computed bar for "urgent enough to interrupt" (Prioritization
-        # Engine); reused here as the notification-eligibility gate rather than
-        # inventing a second threshold. Independent of is_first_load's badge
-        # silencing above -- a first-ever poll after a backend restart can
-        # still be alert-eligible for push purposes even though the in-app
-        # badge intentionally starts quiet.
-        # Stock Opportunity Logic V2: "opportunity qualifies as alert" is no
-        # longer, by itself, "send a notification" -- when lifecycle
-        # tracking is active for this entity, a notification additionally
-        # requires the poll's own LifecycleDelta to be notification-worthy
-        # (a real, evidence-backed transition -- see
-        # opportunity_lifecycle/tracker.py's own NOTIFICATION_WORTHY set).
-        # r.lifecycle_delta is None whenever lifecycle tracking isn't active
-        # for this call (demo mode, no live tickers configured) -- that case
-        # keeps the exact pre-Sprint-3.6.9 behavior unchanged, matching the
-        # gating precedent live_stock_tickers() already established for
-        # trigger_detector/convergence_tracker above.
-        alert_event_ids = [
-            r.event.event_id
-            for _, r in results
-            if r.prioritized_item.interruption == "alert"
-            and (r.lifecycle_delta is None or r.lifecycle_delta.is_notification_worthy)
-        ]
+        # Engine) -- Field-worthy, not push-worthy: still just a pre-filter
+        # here, never sufficient alone for a lifecycle-tracked entity.
+        #
+        # V2.4A (Notification Hygiene): the core invariant this block
+        # establishes -- "re-showing is okay, re-alerting requires a
+        # meaningful new reason" -- lives in decide_notification()
+        # (opportunity_lifecycle/notification_gate.py), applied here per
+        # entity. r.lifecycle_delta is None whenever lifecycle tracking
+        # isn't active for this call (demo mode, no live tickers
+        # configured); that case keeps the exact pre-V2.4A/pre-Sprint-3.6.9
+        # behavior unchanged -- there is no revision concept to dedup
+        # against for a simulated entity, so interruption=="alert" alone
+        # still suffices, same as always. Every decision (sent or
+        # suppressed, and why) is recorded in _notification_decisions_cache
+        # purely for observability/testing -- never itself a gate on
+        # anything.
+        alert_event_ids = []
+        notification_decisions: list[NotificationDecision] = []
+        for entity_id, r in results:
+            if r.prioritized_item.interruption != "alert":
+                continue
+            if r.lifecycle_delta is None:
+                alert_event_ids.append(r.event.event_id)
+                continue
+            decision = decide_notification(
+                entity_id=entity_id,
+                user_id=user_id,
+                current_revision=r.lifecycle_delta.new_revision,
+                is_notification_worthy=r.lifecycle_delta.is_notification_worthy,
+                change_type=r.lifecycle_delta.change_type,
+                knowledge=_get_user_knowledge(user_id, entity_id),
+                provider_degraded=ticker_provider_failed.get(entity_id, False),
+                now=now,
+            )
+            notification_decisions.append(decision)
+            print(
+                f"[notifications] {user_id}/{entity_id}: {decision.reason} "
+                f"(should_notify={decision.should_notify}, "
+                f"revision={r.lifecycle_delta.new_revision})"
+            )
+            if decision.should_notify:
+                alert_event_ids.append(r.event.event_id)
+        _notification_decisions_cache[user_id] = notification_decisions
 
     return items, now, alert_event_ids, provider_degraded
 
@@ -1841,3 +1909,16 @@ def get_alert_eligible_items(user_id: str) -> list[FeedItem]:
     items, _now, alert_event_ids, _provider_degraded = _run_feed_pipeline(user_id)
     alert_ids = set(alert_event_ids)
     return [item for item in items if item.event_id in alert_ids]
+
+
+def get_notification_decisions(user_id: str) -> list[NotificationDecision]:
+    """V2.4A (Notification Hygiene): observability into "why did/didn't
+    STRATUS send this" -- every lifecycle-tracked entity's decide_notification()
+    verdict from `user_id`'s most recent `_run_feed_pipeline()` call (a demo/
+    non-lifecycle-tracked entity never appears here at all -- there is no
+    revision-based decision to make for it). Runs the pipeline fresh, same
+    as get_alert_eligible_items, so this always reflects the current poll,
+    not a stale cached one.
+    """
+    _run_feed_pipeline(user_id)
+    return list(_notification_decisions_cache.get(user_id, []))

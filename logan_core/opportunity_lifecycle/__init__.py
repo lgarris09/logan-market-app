@@ -1,3 +1,9 @@
+from .notification_gate import (
+    NOTIFICATION_COOLDOWN,
+    NotificationDecision,
+    NotificationDecisionReason,
+    decide_notification,
+)
 from .sync import (
     SinceLastLookedStatus,
     SinceLastLookedSummary,
@@ -30,4 +36,8 @@ __all__ = [
     "SinceLastLookedStatus",
     "SinceLastLookedSummary",
     "compute_since_last_looked",
+    "NOTIFICATION_COOLDOWN",
+    "NotificationDecision",
+    "NotificationDecisionReason",
+    "decide_notification",
 ]

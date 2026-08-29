@@ -41,12 +41,35 @@ class UserKnowledgeStore:
             "  PRIMARY KEY (user_id, entity_id)"
             ")"
         )
+        # V2.4A (Notification Hygiene): additive-only migration for an
+        # existing durable file from before these two columns existed --
+        # never drops/recreates the table, so a hosted deployment's real
+        # `user_opportunity_knowledge.db` keeps every existing row exactly
+        # as it was, just with these two new columns defaulting to NULL
+        # (== "never notified yet", the correct/honest value for a row that
+        # predates notification-hygiene tracking).
+        existing_columns = {
+            row["name"]
+            for row in self._conn.execute(
+                "PRAGMA table_info(user_opportunity_knowledge)"
+            ).fetchall()
+        }
+        if "last_notified_at" not in existing_columns:
+            self._conn.execute(
+                "ALTER TABLE user_opportunity_knowledge ADD COLUMN last_notified_at TEXT"
+            )
+        if "last_notified_change_type" not in existing_columns:
+            self._conn.execute(
+                "ALTER TABLE user_opportunity_knowledge "
+                "ADD COLUMN last_notified_change_type TEXT"
+            )
         self._conn.commit()
 
     def load_all(self) -> list[UserOpportunityKnowledge]:
         rows = self._conn.execute(
             "SELECT user_id, entity_id, last_seen_revision, "
-            "last_notified_revision, last_opened_revision, updated_at "
+            "last_notified_revision, last_opened_revision, "
+            "last_notified_at, last_notified_change_type, updated_at "
             "FROM user_opportunity_knowledge"
         ).fetchall()
         return [
@@ -56,6 +79,8 @@ class UserKnowledgeStore:
                 last_seen_revision=row["last_seen_revision"],
                 last_notified_revision=row["last_notified_revision"],
                 last_opened_revision=row["last_opened_revision"],
+                last_notified_at=row["last_notified_at"],
+                last_notified_change_type=row["last_notified_change_type"],
                 updated_at=row["updated_at"],
             )
             for row in rows
@@ -65,11 +90,14 @@ class UserKnowledgeStore:
         self._conn.execute(
             "INSERT INTO user_opportunity_knowledge "
             "(user_id, entity_id, last_seen_revision, last_notified_revision, "
-            "last_opened_revision, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "last_opened_revision, last_notified_at, last_notified_change_type, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(user_id, entity_id) DO UPDATE SET "
             "last_seen_revision=excluded.last_seen_revision, "
             "last_notified_revision=excluded.last_notified_revision, "
             "last_opened_revision=excluded.last_opened_revision, "
+            "last_notified_at=excluded.last_notified_at, "
+            "last_notified_change_type=excluded.last_notified_change_type, "
             "updated_at=excluded.updated_at",
             (
                 knowledge.user_id,
@@ -77,6 +105,12 @@ class UserKnowledgeStore:
                 knowledge.last_seen_revision,
                 knowledge.last_notified_revision,
                 knowledge.last_opened_revision,
+                (
+                    knowledge.last_notified_at.isoformat()
+                    if knowledge.last_notified_at
+                    else None
+                ),
+                knowledge.last_notified_change_type,
                 knowledge.updated_at.isoformat(),
             ),
         )

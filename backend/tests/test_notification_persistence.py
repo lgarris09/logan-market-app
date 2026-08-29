@@ -112,6 +112,10 @@ def test_enabled_mode_dispatch_dedup_survives_restart_no_duplicate_push(
         # no-op for this fake item -- lifecycle/revision tracking isn't
         # under test in this dedup-focused test.
         opportunity_revision = None
+        # V2.4A (Notification Hygiene): mark_user_notified() also reads this
+        # now -- None is the correct, honest value alongside
+        # opportunity_revision=None above.
+        meaningful_change_type = None
 
         class delivered_item:  # noqa: N801 -- mirrors the real FeedItem shape
             headline = "NVDA: earnings beat"

@@ -70,6 +70,19 @@ class UserOpportunityKnowledge(BaseModel):
     `last_seen_revision`, tracked separately per the product requirement to
     distinguish "surfaced" from "opened" wherever the app can honestly tell
     the difference.
+
+    `last_notified_at`/`last_notified_change_type` (V2.4A -- Notification
+    Hygiene): metadata about that same most-recent real dispatch, not a
+    second monotonic pointer -- both are simply overwritten together with
+    `last_notified_revision` on each fresh notification (see
+    backend/app/logan_feed.py's `mark_user_notified`), never independently
+    advanced. Exists so `decide_notification()` (notification_gate.py) can
+    apply a small, deterministic cooldown against *repeated notifications of
+    the same kind of change* without needing a separate history table --
+    `last_notified_change_type` records which MeaningfulChangeType the last
+    notification was actually about, so a later, *different* change_type
+    (e.g. a reversal following a strengthening) is recognized as materially
+    distinct and never held back by that cooldown.
     """
 
     schema_version: str = "1.0"
@@ -78,6 +91,8 @@ class UserOpportunityKnowledge(BaseModel):
     last_seen_revision: Optional[int] = Field(default=None, ge=1)
     last_notified_revision: Optional[int] = Field(default=None, ge=1)
     last_opened_revision: Optional[int] = Field(default=None, ge=1)
+    last_notified_at: Optional[datetime] = None
+    last_notified_change_type: Optional[MeaningfulChangeType] = None
     updated_at: datetime
 
 
