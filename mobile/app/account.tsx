@@ -92,10 +92,30 @@ function ConfiguredAccountScreen() {
   );
 }
 
-function signInMethodLabel(user: ReturnType<typeof useUser>["user"]): string {
-  const provider = user?.externalAccounts?.[0]?.provider;
-  if (provider) {
+export function signInMethodLabel(user: ReturnType<typeof useUser>["user"]): string {
+  // Bug fix: user.externalAccounts is account-wide -- every OAuth provider
+  // ever linked to this Clerk user, for the account's entire lifetime, not
+  // "how did I sign in this session." A device that once tried Google
+  // OAuth (even in an earlier test) keeps that externalAccounts entry
+  // forever, so checking it first showed "Signed in with Google" for a
+  // later, genuinely email-code sign-in. The primary email's own
+  // verification.strategy is the real signal for how *that specific
+  // identifier* was verified ("email_code"/"email_link" vs
+  // "oauth_google"/"oauth_apple"/...) -- check that first, and only fall
+  // back to the account-wide externalAccounts list when the primary email
+  // itself carries no verification info at all (e.g. no primary email
+  // exists yet).
+  const emailStrategy = user?.primaryEmailAddress?.verification?.strategy;
+  if (emailStrategy === "email_code" || emailStrategy === "email_link") {
+    return "Email";
+  }
+  if (emailStrategy?.startsWith("oauth_")) {
+    const provider = emailStrategy.slice("oauth_".length);
     return provider.charAt(0).toUpperCase() + provider.slice(1);
+  }
+  const externalProvider = user?.externalAccounts?.[0]?.provider;
+  if (externalProvider) {
+    return externalProvider.charAt(0).toUpperCase() + externalProvider.slice(1);
   }
   if (user?.primaryEmailAddress) {
     return "Email";

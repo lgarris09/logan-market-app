@@ -130,7 +130,15 @@ export default function RootLayout() {
         {/* V2.3A -- reachable from index.tsx's menu regardless of whether
             Clerk is configured: shows "Continue as guest" info when it
             isn't, and the real sign-in/sign-out UI when it is. */}
-        <Stack.Screen name="account" options={{ title: "Account" }} />
+        {/* Bug fix: index.tsx has headerShown: false and no title, so
+            React Navigation's default back-button label (which shows the
+            *previous* screen's title) fell back to the raw route name
+            "index". headerBackButtonDisplayMode: "minimal" shows just the
+            chevron -- normal consumer back treatment, no route-name leak. */}
+        <Stack.Screen
+          name="account"
+          options={{ title: "Account", headerBackButtonDisplayMode: "minimal" }}
+        />
         {/* Developer/Diagnostics only -- reachable only via app/index.tsx's
             single __DEV__-gated "Developer / Diagnostics" menu row. */}
         <Stack.Screen name="dev-diagnostics" options={{ title: "Developer / Diagnostics" }} />

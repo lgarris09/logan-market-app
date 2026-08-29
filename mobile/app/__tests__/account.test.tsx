@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 
-import AccountScreen from "../account";
+import AccountScreen, { signInMethodLabel } from "../account";
 
 // Same @expo/vector-icons mocking convention as app/__tests__/index.test.tsx.
 jest.mock("@expo/vector-icons", () => {
@@ -87,5 +87,86 @@ describe("AccountScreen (signed in)", () => {
     await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeTruthy());
 
     expect(screen.getByLabelText("About STRATUS")).toBeTruthy();
+  });
+});
+
+describe("signInMethodLabel", () => {
+  it("labels an email-code sign-in as Email even when a stale Google externalAccount exists", () => {
+    // The real bug: a device that once tried Google OAuth (even in an
+    // earlier, unrelated test) keeps that externalAccounts entry on the
+    // Clerk user forever -- it must never override a later, genuinely
+    // email-code sign-in.
+    const user = {
+      primaryEmailAddress: {
+        emailAddress: "ada@example.com",
+        verification: { strategy: "email_code" },
+      },
+      externalAccounts: [{ provider: "google" }],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Email");
+  });
+
+  it("labels an email-link sign-in as Email", () => {
+    const user = {
+      primaryEmailAddress: {
+        emailAddress: "ada@example.com",
+        verification: { strategy: "email_link" },
+      },
+      externalAccounts: [],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Email");
+  });
+
+  it("labels a genuine Google OAuth sign-in as Google", () => {
+    const user = {
+      primaryEmailAddress: {
+        emailAddress: "ada@example.com",
+        verification: { strategy: "oauth_google" },
+      },
+      externalAccounts: [{ provider: "google" }],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Google");
+  });
+
+  it("labels a genuine Apple OAuth sign-in as Apple", () => {
+    const user = {
+      primaryEmailAddress: {
+        emailAddress: "ada@example.com",
+        verification: { strategy: "oauth_apple" },
+      },
+      externalAccounts: [{ provider: "apple" }],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Apple");
+  });
+
+  it("falls back to the externalAccounts list when the primary email carries no verification strategy", () => {
+    const user = {
+      primaryEmailAddress: { emailAddress: "ada@example.com" },
+      externalAccounts: [{ provider: "google" }],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Google");
+  });
+
+  it("falls back to Email when there is no external account and no verification strategy", () => {
+    const user = {
+      primaryEmailAddress: { emailAddress: "ada@example.com" },
+      externalAccounts: [],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("Email");
+  });
+
+  it("falls back to a generic label when there is no email and no external account", () => {
+    const user = {
+      primaryEmailAddress: null,
+      externalAccounts: [],
+    } as unknown as Parameters<typeof signInMethodLabel>[0];
+
+    expect(signInMethodLabel(user)).toBe("STRATUS account");
   });
 });
