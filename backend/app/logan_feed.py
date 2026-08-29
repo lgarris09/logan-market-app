@@ -83,6 +83,7 @@ from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
 from .revision_store import OpportunityRevisionStore  # noqa: E402
 from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
+from .watch import is_watched  # noqa: E402
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
@@ -1314,6 +1315,15 @@ class FeedItem(BaseModel):
     # user_sync_status itself.
     since_last_looked: SinceLastLookedSummary | None = None
 
+    # Minimal STRATUS Watch (V2.3E): whether this user has explicitly asked
+    # STRATUS to keep watching this opportunity. Deliberately NOT gated
+    # behind lifecycle tracking/live_stock_tickers() the way every V2/V2.1/
+    # V2.2/V2.3D field above is -- a user can watch any opportunity they can
+    # see (including a simulated demo entity), not only a live-tracked
+    # stock. Never affected by provider_degraded: Watch represents user
+    # intent, not current live-data availability.
+    is_watched: bool = False
+
 
 class DemoFeedResponse(BaseModel):
     items: list[FeedItem]
@@ -1753,6 +1763,7 @@ def _run_feed_pipeline(
                         r.lifecycle_delta.evidence if r.lifecycle_delta else None
                     ),
                     since_last_looked=since_last_looked,
+                    is_watched=is_watched(user_id, canonical.entity_id),
                 )
             )
             # Sprint 3.6.7 Block 4: retains a richer slice of this same

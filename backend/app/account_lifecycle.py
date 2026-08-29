@@ -15,7 +15,7 @@ account's deletion must never alter what any other user sees for the same
 real-world opportunity.
 """
 
-from . import logan_feed, notifications, user_context
+from . import logan_feed, notifications, user_context, watch
 
 
 def purge_user_data(stratus_user_id: str) -> None:
@@ -28,6 +28,8 @@ def purge_user_data(stratus_user_id: str) -> None:
     - Per-(user, entity) opportunity-knowledge pointers (V2.1 seen/notified/
       opened revision state).
     - Registered push tokens and notification dispatch/review history.
+    - Minimal STRATUS Watch state (V2.3E) -- every entity this user asked
+      STRATUS to keep watching.
     - The account row and every external-identity mapping pointing at it.
 
     Idempotent -- calling this for a `stratus_user_id` with no data at all
@@ -36,4 +38,5 @@ def purge_user_data(stratus_user_id: str) -> None:
     """
     logan_feed.purge_user(stratus_user_id)
     notifications.purge_user(stratus_user_id)
+    watch.purge_user(stratus_user_id)
     user_context.purge_account_identity(stratus_user_id)

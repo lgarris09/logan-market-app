@@ -374,6 +374,7 @@ def test_live_nvda_response_has_no_internal_or_secret_fields(monkeypatch):
         "trajectory_reason",
         "evidence",
         "since_last_looked",
+        "is_watched",
     }
 
 

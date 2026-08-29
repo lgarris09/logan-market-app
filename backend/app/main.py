@@ -45,6 +45,9 @@ from .models import (
     RecordInteractionResponse,
     RegisterPushTokenRequest,
     RegisterPushTokenResponse,
+    UnwatchResponse,
+    WatchRequest,
+    WatchResponse,
 )
 from .notifications import (
     NOTIFICATION_POLL_INTERVAL_SECONDS,
@@ -66,6 +69,7 @@ from .user_context import (
     require_clerk_claims,
     resolve_user_id,
 )
+from .watch import create_watch, remove_watch
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
 # fixed-window limits for this API's two most expensive/cost-sensitive
@@ -83,6 +87,11 @@ _ACCOUNT_DELETE_RATE_LIMIT = (5, 300.0)  # 5 requests / 5 minutes
 # use -- exists to bound automated/scripted abuse, same posture as every
 # other limit in this block.
 _TELEMETRY_RATE_LIMIT = (60, 60.0)  # 60 requests / 60s
+# Minimal STRATUS Watch (V2.3E): generous enough for real toggling within a
+# session (a user could reasonably watch/unwatch several opportunities in a
+# row) without materially bounding legitimate use -- same posture as every
+# other limit in this block.
+_WATCH_RATE_LIMIT = (30, 60.0)  # 30 requests / 60s
 
 
 async def _notification_poll_loop() -> None:
@@ -267,6 +276,37 @@ def record_interaction_route(
         duration_ms=request.duration_ms,
     )
     return RecordInteractionResponse(recorded=True)
+
+
+@app.post("/v1/watches", response_model=WatchResponse)
+def create_watch_route(
+    request: WatchRequest, user_id: str = Depends(resolve_user_id)
+) -> WatchResponse:
+    """Minimal STRATUS Watch (V2.3E): "STRATUS, keep watching this for me."
+    Idempotent -- repeating this call for an already-watched entity_id is a
+    no-op (`created=False`), never a duplicate record. `user_id` resolves
+    from the standard two-tier header/Bearer path (Sprint 3.6.8 Block 2),
+    same as every other route here -- an authenticated identity is
+    authoritative over an anonymous header exactly as it already is
+    everywhere else, no special-casing for Watch.
+    """
+    check_rate_limit("watch", user_id, *_WATCH_RATE_LIMIT)
+    watch, created = create_watch(user_id, request.entity_id)
+    return WatchResponse(entity_id=watch.entity_id, watched=True, created=created)
+
+
+@app.delete("/v1/watches/{entity_id}", response_model=UnwatchResponse)
+def remove_watch_route(
+    entity_id: str, user_id: str = Depends(resolve_user_id)
+) -> UnwatchResponse:
+    """Idempotent -- removing an entity_id that was never watched (or
+    already removed) is a no-op (`removed=False`), never an error. Only the
+    caller's own resolved `user_id` is ever affected -- there is no path
+    here for one user to remove another's watch.
+    """
+    check_rate_limit("watch", user_id, *_WATCH_RATE_LIMIT)
+    removed = remove_watch(user_id, entity_id)
+    return UnwatchResponse(entity_id=entity_id, watched=False, removed=removed)
 
 
 @app.post("/v1/telemetry/events", response_model=TelemetryEventResponse)

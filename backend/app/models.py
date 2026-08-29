@@ -124,3 +124,32 @@ class LinkAccountResponse(BaseModel):
 class DeleteAccountResponse(BaseModel):
     deleted: bool
     stratus_user_id: str
+
+
+class WatchRequest(BaseModel):
+    """Minimal STRATUS Watch (V2.3E): the one entity this call is asking
+    STRATUS to keep watching. Deliberately no other fields -- no
+    notification-rule, no threshold, no note -- see watch.py's own module
+    docstring for the exact scope boundary."""
+
+    entity_id: str = Field(min_length=1, max_length=128)
+
+
+class WatchResponse(BaseModel):
+    entity_id: str
+    watched: bool
+    # True only when this specific call is the one that genuinely created
+    # the watch -- False for a repeat/idempotent create. The mobile client
+    # uses this to decide whether to emit watch_created telemetry, so a
+    # duplicate request can never produce duplicate telemetry.
+    created: bool
+
+
+class UnwatchResponse(BaseModel):
+    entity_id: str
+    watched: bool
+    # True only when this specific call genuinely removed an existing
+    # watch -- False for a repeat/idempotent removal (or removing something
+    # that was never watched). Same telemetry-gating role as
+    # WatchResponse.created above.
+    removed: bool
