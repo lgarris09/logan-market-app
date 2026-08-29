@@ -74,6 +74,12 @@ export type FeedItem = {
 export type DemoFeedResponse = {
   items: FeedItem[];
   generated_at: string;
+  // V2.3A.1 field reliability work: true iff at least one configured live
+  // ticker's data was genuinely unreachable this poll (a real provider
+  // outage), as opposed to "nothing currently qualifies" -- see
+  // backend/app/logan_feed.py's DemoFeedResponse.provider_degraded. Optional
+  // because older cached/mocked responses in tests may omit it.
+  provider_degraded?: boolean;
 };
 
 // /v1/opportunities' response shape (V3.1.4 BATCH-4) -- same FeedItem shape as the
@@ -82,4 +88,6 @@ export type OpportunitiesResponse = {
   schema_version: string;
   items: FeedItem[];
   generated_at: string;
+  // See DemoFeedResponse.provider_degraded above -- same field, same meaning.
+  provider_degraded?: boolean;
 };

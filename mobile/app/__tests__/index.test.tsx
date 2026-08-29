@@ -39,7 +39,10 @@ jest.mock("../../components/AttentionField", () => ({
 
 const mockedFetchJson = fetchJson as jest.MockedFunction<typeof fetchJson>;
 
-function opportunitiesResult(itemCount: number): ApiResult<OpportunitiesResponse> {
+function opportunitiesResult(
+  itemCount: number,
+  providerDegraded = false
+): ApiResult<OpportunitiesResponse> {
   return {
     status: "success",
     data: {
@@ -48,6 +51,7 @@ function opportunitiesResult(itemCount: number): ApiResult<OpportunitiesResponse
       items: Array.from({ length: itemCount }, (_, i) => ({
         event_id: `event-${i}`,
       })) as unknown as OpportunitiesResponse["items"],
+      provider_degraded: providerDegraded,
     },
   };
 }
@@ -85,6 +89,21 @@ describe("AttentionFieldScreen", () => {
     render(<AttentionFieldScreen />);
 
     await waitFor(() => expect(screen.getByText("Nothing to show yet")).toBeTruthy());
+  });
+
+  // V2.3A.1 field reliability work: a zero-item response caused by a genuine
+  // live-data provider outage (backend's provider_degraded) must render an
+  // honestly different message than "nothing to see" -- an empty field must
+  // never quietly pass off a real outage as "there's genuinely nothing here."
+  it("shows a truthful degraded-data state when zero items is a provider outage, not a genuine empty field", async () => {
+    mockedFetchJson.mockResolvedValue(opportunitiesResult(0, true));
+
+    render(<AttentionFieldScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Live data temporarily unavailable")).toBeTruthy()
+    );
+    expect(screen.queryByText("Nothing to show yet")).toBeNull();
   });
 
   it("shows a timeout state and can retry", async () => {

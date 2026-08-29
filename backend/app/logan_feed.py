@@ -588,22 +588,24 @@ def mark_user_notified(
         )
 
 
-def _live_earnings_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+def _live_earnings_raw_signal(
+    ticker: str, now: datetime
+) -> tuple[RawSignal | None, bool]:
     """Sprint 3.6.6C, generalized Sprint 3.6.8 Block 5 (was
     `_live_nvda_raw_signal`, hardcoded to "NVDA"): attempts to replace a
     configured ticker's simulated fixture with a real FMP-driven earnings
-    signal. Returns None on any failure -- FMP unreachable, auth failure,
-    malformed response, or genuinely no reported earnings on file -- so the
-    caller can fall back to the simulated fixture (in demo mode -- see
+    signal. Returns `(None, ...)` on any failure -- FMP unreachable, auth
+    failure, malformed response, or genuinely no reported earnings on file --
+    so the caller can fall back to the simulated fixture (in demo mode -- see
     config.live_data_only_mode()) or leave the ticker honestly absent (in
     live-data-only mode). Never raises: every FmpProviderError is caught
     here so a live-data hiccup can never take down /v1/opportunities.
     Never silently presents simulated data as live either -- the caller
-    only substitutes this return value in place of whatever it already had
-    for `ticker` when it is not None.
+    only substitutes the first element of this return value in place of
+    whatever it already had for `ticker` when it is not None.
 
-    Also returns None when a real report was fetched but does not satisfy
-    STOCK_EARNINGS_BEAT. A valid provider response is not itself an
+    Also returns `(None, False)` when a real report was fetched but does not
+    satisfy STOCK_EARNINGS_BEAT. A valid provider response is not itself an
     opportunity -- surfacing only happens when the implemented TriggerEvent
     actually fires, not merely because FMP returned some usable data.
     Reuses evaluate_earnings_beat_condition (the same pure function
@@ -614,22 +616,34 @@ def _live_earnings_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
     ADR-045) -- preserving the exact pre-Block-5 substitution semantics
     rather than silently broadening them; see the Block 5 ADR's own
     deferred-items list.
+
+    V2.3A.1 field reliability work: the second element of the returned tuple
+    is `provider_failed` -- true only when this ticker's earnings data could
+    not be obtained at all this poll (provider construction failed, or the
+    fetch itself raised past FmpResponseCache's stale-grace fallback -- see
+    fmp.py's EARNINGS_STALE_GRACE_SECONDS). Deliberately false for "no
+    reported earnings on file" and "fetched but doesn't qualify" -- both are
+    genuine, honest answers about this entity, not a provider hiccup. The
+    caller aggregates this across every configured ticker into a response-
+    level `provider_degraded` flag so a poll where live data was genuinely
+    unreachable is never presented identically to a poll where nothing
+    qualifies right now (see the V2.3A.1 ADR).
     """
     try:
         provider = FmpEarningsProvider()
     except FmpProviderError as exc:
         print(f"[live-stocks] {ticker}: provider unavailable, source=fixture: {exc}")
-        return None
+        return None, True
 
     try:
         report = provider.fetch_latest_earnings(ticker)
     except FmpProviderError as exc:
         print(f"[live-stocks] {ticker}: FMP fetch failed, source=fixture: {exc}")
-        return None
+        return None, True
 
     if report is None:
         print(f"[live-stocks] {ticker}: FMP has no reported earnings, source=fixture")
-        return None
+        return None, False
 
     fired, beat_pct, reason = evaluate_earnings_beat_condition(
         report.actual_eps, report.consensus_eps
@@ -639,14 +653,14 @@ def _live_earnings_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
             f"[live-stocks] {ticker}: real report fetched but STOCK_EARNINGS_BEAT "
             f"did not fire ({reason}), source=fixture"
         )
-        return None
+        return None, False
 
     print(
         f"[live-stocks] {ticker}: using real FMP earnings report dated "
         f"{report.report_timestamp.date()} (source={report.source_id}, "
         f"beat_pct={beat_pct:.2f})"
     )
-    return earnings_report_to_raw_signal(report)
+    return earnings_report_to_raw_signal(report), False
 
 
 def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
@@ -1197,6 +1211,14 @@ class FeedItem(BaseModel):
 class DemoFeedResponse(BaseModel):
     items: list[FeedItem]
     generated_at: datetime
+    # V2.3A.1 field reliability work: true iff at least one configured live
+    # ticker's data was genuinely unreachable this poll (not "no data"/
+    # "doesn't qualify" -- see _live_earnings_raw_signal's docstring).
+    # Default False matches every pre-V2.3A.1 caller/test unchanged; a
+    # client uses this to show an honest "live data temporarily unavailable"
+    # state instead of treating a degraded poll the same as a genuinely
+    # empty one.
+    provider_degraded: bool = False
 
 
 def _spaced_timestamps(now: datetime, count: int, window: timedelta) -> list[datetime]:
@@ -1249,7 +1271,9 @@ def _engagement_samples(entity_id: str, now: datetime) -> list[EngagementSample]
     ]
 
 
-def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUID]]:
+def _run_feed_pipeline(
+    user_id: str,
+) -> tuple[list[FeedItem], datetime, list[UUID], bool]:
     """Runs the simulated entity fixtures (Tesla, NVIDIA, Apple, Bitcoin, Federal
     Reserve, NFL, Music, Polymarket, Markets, Oil, AI) through one shared Orchestrator
     instance and builds the ranked, connected feed for `user_id`.
@@ -1311,8 +1335,18 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
     # or fully simulated, never a blend of the two (see the guards below).
     live_tickers = live_stock_tickers()
     live_substituted: set[str] = set()
+    # V2.3A.1: true iff at least one configured live ticker's earnings data
+    # was genuinely unreachable this poll (not "no data"/"doesn't qualify"
+    # -- see _live_earnings_raw_signal's own docstring). Surfaced on the
+    # response so a poll degraded by a real provider outage is never
+    # presented identically to a poll where nothing currently qualifies.
+    provider_degraded = False
     for ticker in live_tickers:
-        live_earnings_signal = _live_earnings_raw_signal(ticker, now)
+        live_earnings_signal, earnings_provider_failed = _live_earnings_raw_signal(
+            ticker, now
+        )
+        if earnings_provider_failed:
+            provider_degraded = True
         if live_earnings_signal is not None:
             fixtures[ticker] = live_earnings_signal
             live_substituted.add(ticker)
@@ -1620,7 +1654,7 @@ def _run_feed_pipeline(user_id: str) -> tuple[list[FeedItem], datetime, list[UUI
             and (r.lifecycle_delta is None or r.lifecycle_delta.is_notification_worthy)
         ]
 
-    return items, now, alert_event_ids
+    return items, now, alert_event_ids, provider_degraded
 
 
 def run_demo_feed(user_id: str = LOCAL_FOUNDER_USER_ID) -> DemoFeedResponse:
@@ -1632,8 +1666,10 @@ def run_demo_feed(user_id: str = LOCAL_FOUNDER_USER_ID) -> DemoFeedResponse:
     the identity header, matching its own "kept only so existing callers don't
     break" scope.
     """
-    items, now, _alert_event_ids = _run_feed_pipeline(user_id)
-    return DemoFeedResponse(items=items, generated_at=now)
+    items, now, _alert_event_ids, provider_degraded = _run_feed_pipeline(user_id)
+    return DemoFeedResponse(
+        items=items, generated_at=now, provider_degraded=provider_degraded
+    )
 
 
 def get_alert_eligible_items(user_id: str) -> list[FeedItem]:
@@ -1646,6 +1682,6 @@ def get_alert_eligible_items(user_id: str) -> list[FeedItem]:
     parameter -- see notifications.py's own per-user dispatch loop, which
     calls this once per user_id with a registered push token.
     """
-    items, _now, alert_event_ids = _run_feed_pipeline(user_id)
+    items, _now, alert_event_ids, _provider_degraded = _run_feed_pipeline(user_id)
     alert_ids = set(alert_event_ids)
     return [item for item in items if item.event_id in alert_ids]

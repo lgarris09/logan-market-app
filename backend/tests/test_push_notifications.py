@@ -250,7 +250,9 @@ def test_pending_push_notification_full_lifecycle():
     # is deliberately correct either way (see its own docstring) rather than
     # relying on one specific order. This sequence matches the on-device
     # scenario this fix was written for, not a guaranteed runtime ordering.
-    first_load_items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    first_load_items, _now, _alert, _provider_degraded = _run_feed_pipeline(
+        LOCAL_FOUNDER_USER_ID
+    )
     assert all(not item.is_new_for_user for item in first_load_items)
 
     # The next pipeline call in this test's own sequence -- dispatches real
@@ -262,7 +264,7 @@ def test_pending_push_notification_full_lifecycle():
     assert len(pending) == dispatched_count
 
     # Badge == items whose is_new_for_user is True.
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     pushed_items = [item for item in items if item.event_id in pending]
     assert len(pushed_items) == dispatched_count
     assert all(item.is_new_for_user for item in pushed_items)
@@ -276,7 +278,7 @@ def test_pending_push_notification_full_lifecycle():
         first_reviewed
     }
 
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     reviewed_item = next(i for i in items if i.event_id == first_reviewed)
     assert reviewed_item.is_new_for_user is False
     assert sum(1 for item in items if item.is_new_for_user) == dispatched_count - 1
@@ -287,7 +289,7 @@ def test_pending_push_notification_full_lifecycle():
     mark_notifications_reviewed(LOCAL_FOUNDER_USER_ID, remaining)
     assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == set()
 
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert sum(1 for item in items if item.is_new_for_user) == 0
 
 
@@ -336,7 +338,7 @@ def test_first_load_quiet_behavior_preserved_for_never_pushed_items():
     # No token registered, so nothing is ever dispatched -- pending stays
     # empty throughout, and every item's is_new_for_user should follow the
     # pre-existing first-load rule exactly as before this sprint.
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     assert get_pending_push_event_ids(LOCAL_FOUNDER_USER_ID) == set()
     assert all(not item.is_new_for_user for item in items)
 
@@ -373,7 +375,7 @@ def test_mark_notifications_reviewed_clears_pending_through_the_one_endpoint():
 
 
 def _item_for(entity_id: str):
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     return next(i for i in items if i.entity_id == entity_id)
 
 
@@ -452,7 +454,7 @@ def test_notification_body_never_contains_raw_signal_type_phrases():
     a fixture's natural value text (BTC's "volatility spikes on ETF flow
     data" is a genuine sentence, not leaked jargon) -- this checks for the
     template's mechanical LABEL form specifically, not any word overlap."""
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     mechanical_phrases = [
         "trend emerging",
         "line move",
@@ -471,7 +473,7 @@ def test_notification_body_never_contains_raw_signal_type_phrases():
 def test_notification_body_does_not_repeat_the_title_verbatim():
     """The body must never restate item.display_name at its start -- title
     and body are shown together, so a leading repeat is always redundant."""
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     for item in items:
         body = _notification_body(item)
         assert not body.lower().startswith(
@@ -483,7 +485,7 @@ def test_notification_body_is_short_enough_to_scan():
     """Every simulated fixture's transformed body stays well under iOS's
     ~2-line preview -- not a hard contract, just a sanity bound so this
     stays 'concise' as new fixtures are added."""
-    items, _now, _alert = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
+    items, _now, _alert, _provider_degraded = _run_feed_pipeline(LOCAL_FOUNDER_USER_ID)
     for item in items:
         assert len(_notification_body(item)) <= 80
 

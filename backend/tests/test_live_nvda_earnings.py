@@ -139,6 +139,9 @@ def test_enabled_with_real_beat_fires_trigger_and_replaces_nvda_only(monkeypatch
     # Real trigger contribution raised confidence relative to the simulated
     # baseline (0.68 as observed for the simulated fixture pre-change).
     assert nvda.confidence_score > 0.5
+    # V2.3A.1: a genuine success is not "degraded" -- provider_degraded is
+    # strictly about unreachable data, never about which content resulted.
+    assert result.provider_degraded is False
 
     # Every other simulated entity is untouched.
     other_ids = {item.entity_id for item in result.items} - {"NVDA"}
@@ -177,6 +180,9 @@ def test_enabled_with_no_beat_does_not_manufacture_a_fake_opportunity(monkeypatc
     nvda = next(item for item in result.items if item.entity_id == "NVDA")
     assert "guidance raised" in nvda.delivered_item.what_happened
     assert "1.76" not in nvda.delivered_item.what_happened
+    # V2.3A.1: a real, valid report that simply doesn't qualify is a genuine
+    # answer, not a provider hiccup -- must never read as "degraded."
+    assert result.provider_degraded is False
 
 
 # --- 4. FMP/provider failure ------------------------------------------
@@ -199,6 +205,10 @@ def test_enabled_but_fmp_unreachable_falls_back_to_simulated_nvda(monkeypatch):
     nvda = next(item for item in result.items if item.entity_id == "NVDA")
     # Simulated fallback content, not a crash, not a fabricated live result.
     assert "guidance raised" in nvda.delivered_item.what_happened
+    # V2.3A.1: this IS the case provider_degraded exists for -- the data
+    # was genuinely unreachable, not merely absent/non-qualifying, and a
+    # client must be able to tell the difference.
+    assert result.provider_degraded is True
 
 
 def test_enabled_but_no_api_key_falls_back_to_simulated_nvda(monkeypatch):
@@ -213,6 +223,9 @@ def test_enabled_but_no_api_key_falls_back_to_simulated_nvda(monkeypatch):
     assert len(result.items) == 11
     nvda = next(item for item in result.items if item.entity_id == "NVDA")
     assert "guidance raised" in nvda.delivered_item.what_happened
+    # V2.3A.1: a missing credential is a provider-construction failure, the
+    # same "genuinely unreachable" category as a network error.
+    assert result.provider_degraded is True
 
 
 def test_enabled_but_fmp_returns_no_data_falls_back_to_simulated_nvda(monkeypatch):
@@ -227,6 +240,9 @@ def test_enabled_but_fmp_returns_no_data_falls_back_to_simulated_nvda(monkeypatc
     assert len(result.items) == 11
     nvda = next(item for item in result.items if item.entity_id == "NVDA")
     assert "guidance raised" in nvda.delivered_item.what_happened
+    # V2.3A.1: FMP answered successfully with genuinely no reported
+    # earnings on file -- an honest empty answer, not a provider failure.
+    assert result.provider_degraded is False
 
 
 # --- 5. Missing actual EPS / future scheduled earnings --------------------

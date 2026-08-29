@@ -306,7 +306,7 @@ def test_one_users_notification_review_does_not_clear_another_users_badge():
     on their own first call, not from cross-user leakage. Isolating the
     check to before USER_B has any state at all removes that confound.)"""
     reset_pipeline_state()
-    items_a, _now, _alert = _run_feed_pipeline(USER_A)
+    items_a, _now, _alert, _provider_degraded = _run_feed_pipeline(USER_A)
 
     event_ids_a = [item.event_id for item in items_a]
     client.post(

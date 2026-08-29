@@ -89,7 +89,12 @@ const HEADER_LOGO_HEIGHT = HEADER_LOGO_WIDTH / HEADER_LOGO_ASPECT_RATIO;
 type FeedState =
   | { kind: "loading" }
   | { kind: "loaded"; response: OpportunitiesResponse }
-  | { kind: "empty" }
+  // V2.3A.1 field reliability work: `providerDegraded` distinguishes "STRATUS
+  // genuinely has nothing for you right now" from "live data was unreachable
+  // this poll" (backend/app/logan_feed.py's provider_degraded) -- an empty
+  // field must never present a real provider outage as a truthful "nothing
+  // to see," so this drives which of the two honest copies renders below.
+  | { kind: "empty"; providerDegraded: boolean }
   | { kind: "timeout" }
   | { kind: "error"; message: string };
 
@@ -217,7 +222,7 @@ export default function AttentionFieldScreen() {
         setState(
           result.data.items.length > 0
             ? { kind: "loaded", response: result.data }
-            : { kind: "empty" }
+            : { kind: "empty", providerDegraded: result.data.provider_degraded ?? false }
         );
         return;
       case "timeout":
@@ -283,7 +288,9 @@ export default function AttentionFieldScreen() {
       });
       if (cancelled || result.status !== "success") return;
       setState(
-        result.data.items.length > 0 ? { kind: "loaded", response: result.data } : { kind: "empty" }
+        result.data.items.length > 0
+          ? { kind: "loaded", response: result.data }
+          : { kind: "empty", providerDegraded: result.data.provider_degraded ?? false }
       );
     }, NOTIFICATION_POLL_INTERVAL_MS);
     return () => {
@@ -549,10 +556,26 @@ export default function AttentionFieldScreen() {
       {state.kind === "empty" && (
         <View style={styles.centerFill}>
           <View style={styles.error} accessibilityLiveRegion="polite">
-            <Text style={styles.errorTitle}>Nothing to show yet</Text>
-            <Text style={styles.errorText}>
-              STRATUS isn&apos;t tracking any opportunities right now.
-            </Text>
+            {state.providerDegraded ? (
+              // V2.3A.1 field reliability work: a real provider outage must
+              // never present as "there's genuinely nothing here" -- that
+              // would be an untruthful degraded state. See
+              // backend/app/logan_feed.py's provider_degraded field.
+              <>
+                <Text style={styles.errorTitle}>Live data temporarily unavailable</Text>
+                <Text style={styles.errorText}>
+                  STRATUS couldn&apos;t reach live market data this time. Your feed will
+                  return as soon as it&apos;s back.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.errorTitle}>Nothing to show yet</Text>
+                <Text style={styles.errorText}>
+                  STRATUS isn&apos;t tracking any opportunities right now.
+                </Text>
+              </>
+            )}
             <PressableScale
               style={styles.retryButton}
               onPress={startLoad}

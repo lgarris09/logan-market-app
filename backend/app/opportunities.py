@@ -23,13 +23,21 @@ class OpportunitiesResponse(BaseModel):
     schema_version: str = OPPORTUNITIES_SCHEMA_VERSION
     items: list[FeedItem]
     generated_at: datetime
+    # V2.3A.1 field reliability work (see logan_feed.py's
+    # DemoFeedResponse.provider_degraded for the full rationale): true iff at
+    # least one configured live ticker's data was genuinely unreachable this
+    # poll. Default False -- every pre-V2.3A.1 client/test is unaffected.
+    provider_degraded: bool = False
 
 
 def run_opportunities(user_id: str) -> OpportunitiesResponse:
     """Builds the `/v1/opportunities` response for `user_id`. `FeedItem` (see
     `logan_feed.py`) already excludes `internal_rank_score` and every other
-    internal-only field -- this function adds nothing but `schema_version`
-    and `generated_at` on top of the pipeline's own output.
+    internal-only field -- this function adds nothing but `schema_version`,
+    `generated_at`, and `provider_degraded` on top of the pipeline's own
+    output.
     """
-    items, now, _alert_event_ids = _run_feed_pipeline(user_id)
-    return OpportunitiesResponse(items=items, generated_at=now)
+    items, now, _alert_event_ids, provider_degraded = _run_feed_pipeline(user_id)
+    return OpportunitiesResponse(
+        items=items, generated_at=now, provider_degraded=provider_degraded
+    )
