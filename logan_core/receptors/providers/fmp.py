@@ -69,6 +69,35 @@ EARNINGS_STALE_GRACE_SECONDS = 24 * 60 * 60  # 24 hours beyond the 6h TTL
 # cheaper than the 30-minute TTL an entity's own quote correctly needs.
 BENCHMARK_QUOTE_CACHE_TTL_SECONDS = 4 * 60 * 60  # 4 hours
 
+# 2026-08-29 field investigation: a persistent provider failure (a real HTTP
+# 429 during hosted quota exhaustion, or FMP's stable /quote endpoint
+# rejecting the Technology sector benchmark symbol XLK with a permanent
+# HTTP 402 "Premium Query Parameter") was retried on every single poll --
+# get_or_fetch previously never cached a failure at all, only ever a
+# success. At the poller's 60-second cadence that is up to 1,440 wasted
+# calls/day for one entity/endpoint pair during a sustained outage, on top
+# of whatever the successful-response TTLs above already budget for.
+#
+# Two separate, explicit, conservative suppression windows, mirroring the
+# same "endpoint-appropriate, not one blanket value" principle the
+# success-side TTLs already use:
+#   - A transient failure (429 rate limit, network error, a malformed
+#     response) is retried at most once per 15 minutes -- long enough to
+#     stop hammering FMP during an active outage, short enough that a real
+#     recovery is still noticed the same hour, not the next day.
+#   - A permanent/entitlement failure (401/402/403/404 -- "this exact
+#     request is not going to start working on its own," not "the server
+#     is temporarily overloaded") is retried at most once per 24 hours --
+#     there is nothing to gain from checking more often, and something to
+#     lose (quota spent on a request known not to succeed).
+# Neither window ever caches the failure AS data: get_or_fetch still raises
+# FmpProviderError on every suppressed retry (see below) -- a suppressed
+# retry is indistinguishable to every caller from a fresh failed fetch, so
+# provider_degraded/provider_failed propagation is completely unchanged.
+TRANSIENT_FAILURE_SUPPRESSION_SECONDS = 15 * 60  # 15 minutes
+PERMANENT_FAILURE_SUPPRESSION_SECONDS = 24 * 60 * 60  # 24 hours
+_PERMANENT_FAILURE_STATUS_CODES = frozenset({401, 402, 403, 404})
+
 
 class _FmpCacheEntry:
     __slots__ = ("value", "cached_at")
@@ -76,6 +105,22 @@ class _FmpCacheEntry:
     def __init__(self, value: object, cached_at: float) -> None:
         self.value = value
         self.cached_at = cached_at
+
+
+class _FmpFailureEntry:
+    """Records only that a fetch failed and when/why -- never a value, never
+    treated as data by anything downstream. Exists purely to decide whether
+    the *next* call gets to retry the network or must wait out its
+    suppression window; see get_or_fetch."""
+
+    __slots__ = ("failed_at", "message", "status_code")
+
+    def __init__(
+        self, failed_at: float, message: str, status_code: Optional[int]
+    ) -> None:
+        self.failed_at = failed_at
+        self.message = message
+        self.status_code = status_code
 
 
 class FmpResponseCache:
@@ -91,6 +136,7 @@ class FmpResponseCache:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._entries: dict[tuple[str, str], _FmpCacheEntry] = {}
+        self._failures: dict[tuple[str, str], _FmpFailureEntry] = {}
         self._clock = clock
 
     def get_or_fetch(
@@ -107,19 +153,56 @@ class FmpResponseCache:
         if entry is not None and (now - entry.cached_at) < ttl_seconds:
             return entry.value
 
-        # A raised FmpProviderError still propagates uncached by default
-        # (stale_grace_seconds == 0, every pre-V2.3A.1 caller) -- never
-        # mistaken for a real "no data" response, never poisons the cache
-        # for other callers sharing it. When a caller opts into a grace
-        # window (see fetch_latest_earnings: a quarterly report doesn't
-        # become wrong minutes after its TTL lapses) and a fetch failure
-        # happens while a still-within-grace stale entry exists, that entry
-        # is served instead -- its own `cached_at` is left untouched, so the
-        # very next call still attempts a real refetch rather than treating
-        # this as a fresh success.
+        # 2026-08-29: a known-recent failure for this exact (endpoint,
+        # entity_id) suppresses the network attempt entirely until its own
+        # window elapses -- this is what stops a persistent 429/402 from
+        # being retried every single poll (see the module-level constants'
+        # docstring above `_FmpFailureEntry`). This is a decision about
+        # whether to call `fetch()` at all, never a substitute for its
+        # result: the two outcomes below are byte-identical to what this
+        # function already did on a fresh failure -- serve a still-in-grace
+        # stale value, or raise -- just without spending a real HTTP call to
+        # get there again.
+        failure = self._failures.get(key)
+        if failure is not None:
+            suppression_seconds = (
+                PERMANENT_FAILURE_SUPPRESSION_SECONDS
+                if failure.status_code in _PERMANENT_FAILURE_STATUS_CODES
+                else TRANSIENT_FAILURE_SUPPRESSION_SECONDS
+            )
+            if (now - failure.failed_at) < suppression_seconds:
+                if (
+                    stale_grace_seconds > 0
+                    and entry is not None
+                    and (now - entry.cached_at) < ttl_seconds + stale_grace_seconds
+                ):
+                    return entry.value
+                raise FmpProviderError(
+                    f"[fmp-cache] {endpoint}/{entity_id}: suppressing retry of a "
+                    f"known failure from {now - failure.failed_at:.0f}s ago "
+                    f"(retries resume after {suppression_seconds:.0f}s total; "
+                    f"last real attempt: {failure.message})",
+                    status_code=failure.status_code,
+                )
+
+        # A raised FmpProviderError still propagates uncached-as-data by
+        # default (stale_grace_seconds == 0, every pre-V2.3A.1 caller) --
+        # never mistaken for a real "no data" response, never poisons the
+        # cache for other callers sharing it. When a caller opts into a
+        # grace window (see fetch_latest_earnings: a quarterly report
+        # doesn't become wrong minutes after its TTL lapses) and a fetch
+        # failure happens while a still-within-grace stale entry exists,
+        # that entry is served instead -- its own `cached_at` is left
+        # untouched, so the very next call still attempts a real refetch
+        # rather than treating this as a fresh success.
         try:
             value = fetch()
         except FmpProviderError as exc:
+            self._failures[key] = _FmpFailureEntry(
+                failed_at=now,
+                message=str(exc),
+                status_code=getattr(exc, "status_code", None),
+            )
             if (
                 stale_grace_seconds > 0
                 and entry is not None
@@ -132,11 +215,15 @@ class FmpResponseCache:
                 )
                 return entry.value
             raise
+        # A genuine success always clears any prior failure record -- the
+        # negative state never outlives the condition that created it.
+        self._failures.pop(key, None)
         self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
         return value
 
     def clear(self) -> None:
         self._entries.clear()
+        self._failures.clear()
 
     def seed_stale_entry(
         self, endpoint: str, entity_id: str, value: object, age_seconds: float
@@ -253,7 +340,18 @@ class FmpProviderError(Exception):
     fetch_latest_earnings) apart from "the FMP call itself failed" (this
     exception). No automatic fallback to fixture data happens anywhere in
     this class; a caller that wants one must do so explicitly and visibly.
+
+    `status_code` is the real HTTP status that caused this (429, 402, ...)
+    when one exists -- None for a network error or a malformed-response
+    error, where there was no real response status to attach. FmpResponseCache
+    reads this to decide how long to suppress a repeat of this exact failure
+    (see TRANSIENT_FAILURE_SUPPRESSION_SECONDS/PERMANENT_FAILURE_SUPPRESSION_SECONDS
+    above); nothing else in this module depends on it.
     """
+
+    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class FmpEarningsProvider:
@@ -355,12 +453,14 @@ class FmpEarningsProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching earnings for {entity_id!r} "
-                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}",
+                status_code=429,
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{_redact(response.text[:200], self._api_key)}"
+                f"{_redact(response.text[:200], self._api_key)}",
+                status_code=response.status_code,
             )
 
         try:
@@ -519,12 +619,14 @@ class FmpMarketDataProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching quote for {entity_id!r} "
-                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}",
+                status_code=429,
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{_redact(response.text[:200], self._api_key)}"
+                f"{_redact(response.text[:200], self._api_key)}",
+                status_code=response.status_code,
             )
 
         try:
@@ -599,12 +701,14 @@ class FmpMarketDataProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching grades for {entity_id!r} "
-                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}",
+                status_code=429,
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{_redact(response.text[:200], self._api_key)}"
+                f"{_redact(response.text[:200], self._api_key)}",
+                status_code=response.status_code,
             )
 
         try:
@@ -693,12 +797,14 @@ class FmpMarketDataProvider:
         if response.status_code == 429:
             raise FmpProviderError(
                 f"FMP rate limit hit fetching profile for {entity_id!r} "
-                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}"
+                f"(HTTP 429): {_redact(response.text[:200], self._api_key)}",
+                status_code=429,
             )
         if response.status_code != 200:
             raise FmpProviderError(
                 f"FMP request failed for {entity_id!r}: HTTP {response.status_code} "
-                f"{_redact(response.text[:200], self._api_key)}"
+                f"{_redact(response.text[:200], self._api_key)}",
+                status_code=response.status_code,
             )
 
         try:

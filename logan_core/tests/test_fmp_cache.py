@@ -22,7 +22,9 @@ from logan_core.receptors.providers import (
     EARNINGS_CACHE_TTL_SECONDS,
     EARNINGS_STALE_GRACE_SECONDS,
     GRADE_CACHE_TTL_SECONDS,
+    PERMANENT_FAILURE_SUPPRESSION_SECONDS,
     QUOTE_CACHE_TTL_SECONDS,
+    TRANSIENT_FAILURE_SUPPRESSION_SECONDS,
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
@@ -293,10 +295,20 @@ def test_earnings_and_quote_caches_do_not_collide_for_the_same_ticker():
     assert quote_calls == 1
 
 
-# --- Provider errors are never cached ---------------------------------------
+# --- Provider errors are never cached AS DATA, but a repeat of a known ------
+# --- failure is suppressed rather than retried on every single call --------
+#
+# 2026-08-29 field fix: get_or_fetch previously had no memory of a failure at
+# all, so a persistent outage (a sustained 429, or FMP's stable /quote
+# endpoint permanently rejecting a symbol with 402) was retried on every
+# single poll -- up to 1,440 wasted calls/day for one (endpoint, entity_id)
+# pair at the 60-second poll cadence. These tests cover the negative-cache
+# suppression window itself; a fetch that ultimately fails still never
+# produces a fabricated value in any of them -- every suppressed retry
+# raises FmpProviderError, exactly like a fresh failed fetch would.
 
 
-def test_rate_limit_error_is_not_cached_next_call_retries():
+def test_repeated_failure_within_suppression_window_does_not_hit_fmp_again():
     call_count = 0
 
     def handler(request):
@@ -311,8 +323,40 @@ def test_rate_limit_error_is_not_cached_next_call_retries():
         provider.fetch_latest_earnings("NVDA")
     with pytest.raises(FmpProviderError):
         provider.fetch_latest_earnings("NVDA")
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
 
-    assert call_count == 2  # never remembered as "no data" -- retried both times
+    # The real HTTP handler ran exactly once -- the second and third calls
+    # were suppressed from the remembered failure, never fabricating a
+    # value, never silently succeeding either (all three raised).
+    assert call_count == 1
+
+
+def test_transient_failure_suppression_expires_and_then_retries():
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(429, text="rate limited")
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _earnings_provider(handler, cache)
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+    assert call_count == 1
+
+    clock.advance(TRANSIENT_FAILURE_SUPPRESSION_SECONDS - 1)
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+    assert call_count == 1  # still inside the 15-minute window -- suppressed
+
+    clock.advance(2)  # now past the window
+    with pytest.raises(FmpProviderError):
+        provider.fetch_latest_earnings("NVDA")
+    assert call_count == 2  # a genuine recovery check, not withheld forever
 
 
 def test_error_does_not_poison_a_later_successful_response():
@@ -321,15 +365,80 @@ def test_error_does_not_poison_a_later_successful_response():
     def handler(request):
         return responses.pop(0)
 
-    cache = FmpResponseCache(clock=_FakeClock())
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
     provider = _earnings_provider(handler, cache)
 
     with pytest.raises(FmpProviderError):
         provider.fetch_latest_earnings("NVDA")
 
+    clock.advance(TRANSIENT_FAILURE_SUPPRESSION_SECONDS + 1)
     report = provider.fetch_latest_earnings("NVDA")
     assert report is not None
     assert report.actual_eps == 1.05
+
+
+def test_permanent_entitlement_failure_uses_the_longer_suppression_window():
+    """FMP's stable /quote endpoint returns a genuine, permanent HTTP 402
+    for a symbol not covered by this plan (the real, confirmed XLK case --
+    see docs/DECISIONS.md) -- fundamentally different from a transient 429.
+    Retrying it every 15 minutes like a rate limit would still waste calls
+    on a request that is never going to start succeeding on its own; it
+    gets the much longer 24-hour window instead."""
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(402, text="Premium Query Parameter")
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _market_data_provider(handler, cache)
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_benchmark_quote("XLK")
+    assert call_count == 1
+
+    # Well past the transient (15-minute) window, nowhere near the
+    # permanent (24-hour) one -- must still be suppressed, not retried like
+    # an ordinary rate limit would be.
+    clock.advance(TRANSIENT_FAILURE_SUPPRESSION_SECONDS + 1)
+    with pytest.raises(FmpProviderError):
+        provider.fetch_benchmark_quote("XLK")
+    assert call_count == 1
+
+    clock.advance(PERMANENT_FAILURE_SUPPRESSION_SECONDS + 1)
+    with pytest.raises(FmpProviderError):
+        provider.fetch_benchmark_quote("XLK")
+    assert call_count == 2  # a full day later, one honest re-check
+
+
+def test_success_replaces_failure_state_and_is_served_on_the_next_call():
+    """The negative state never outlives the condition that created it --
+    once a real fetch succeeds, that success (never the stale failure) is
+    what the very next call sees."""
+    responses = [httpx.Response(429, text="rate limited"), _quote_response(201.0)]
+
+    def handler(request):
+        return responses.pop(0)
+
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    provider = _market_data_provider(handler, cache)
+
+    with pytest.raises(FmpProviderError):
+        provider.fetch_quote("NVDA")
+
+    clock.advance(TRANSIENT_FAILURE_SUPPRESSION_SECONDS + 1)
+    quote = provider.fetch_quote("NVDA")
+    assert quote is not None
+    assert quote.price == 201.0
+
+    # Still well inside what would have been the old suppression window --
+    # must serve the fresh success from cache, never re-raise the old error.
+    again = provider.fetch_quote("NVDA")
+    assert again is quote
 
 
 def test_legitimate_no_data_response_is_cached_not_treated_as_an_error():

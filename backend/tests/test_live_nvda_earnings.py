@@ -228,6 +228,40 @@ def test_enabled_but_no_api_key_falls_back_to_simulated_nvda(monkeypatch):
     assert result.provider_degraded is True
 
 
+def test_repeated_provider_failure_across_polls_hits_fmp_once_then_suppresses(
+    monkeypatch,
+):
+    """2026-08-29 field fix: FmpResponseCache now remembers a recent failure
+    and suppresses the network attempt on the next poll rather than
+    retrying every 60 seconds (see logan_core/receptors/providers/fmp.py).
+    provider_degraded must stay True on every poll during the suppression
+    window -- including the one that never touched the network -- and the
+    feed must keep serving the honest, clearly-labeled simulated fallback,
+    never anything claiming to be live data."""
+    monkeypatch.setenv("STRATUS_LIVE_NVDA_EARNINGS", "true")
+    call_count = 0
+
+    def handler(request):
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpEarningsProvider",
+        lambda *a, **kw: _mock_fmp_provider(handler),
+    )
+    reset_pipeline_state()
+
+    first = run_demo_feed()
+    second = run_demo_feed()
+
+    assert call_count == 1  # the second poll was suppressed, not retried
+    assert first.provider_degraded is True
+    assert second.provider_degraded is True
+    nvda = next(item for item in second.items if item.entity_id == "NVDA")
+    assert "guidance raised" in nvda.delivered_item.what_happened
+
+
 def test_enabled_but_fmp_returns_no_data_falls_back_to_simulated_nvda(monkeypatch):
     monkeypatch.setenv("STRATUS_LIVE_NVDA_EARNINGS", "true")
     monkeypatch.setattr(
