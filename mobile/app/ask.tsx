@@ -18,6 +18,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { font, theme, spacing, tracking, type } from "../constants/theme";
 import { PressableScale } from "../components/PressableScale";
 import { askStratus, createAskSessionId } from "../lib/ask";
+import { logTelemetryEvent } from "../lib/telemetry";
 
 // Sprint 3.6 device retest: Ask STRATUS's first-run mark now renders the
 // owner-approved horizon/sun artwork directly (see
@@ -39,6 +40,14 @@ type ChatMessage = {
   isError?: boolean;
   time: string;
 };
+
+// V2.3C Telemetry: exported for direct unit testing -- "follow-up" means a
+// real subsequent question in this same Ask session, not merely another
+// navigation event. Pure function over the screen's own transcript state,
+// checked *before* the current turn's own message is appended.
+export function isFirstUserMessage(messages: Pick<ChatMessage, "role">[]): boolean {
+  return !messages.some((m) => m.role === "user");
+}
 
 const STARTER_PROMPTS = [
   "What's the most important signal right now?",
@@ -113,6 +122,19 @@ export default function AskScreen() {
   const submit = async (overrideText?: string) => {
     const clean = (overrideText ?? input).trim();
     if (!clean || loading) return;
+
+    // V2.3C Telemetry: "follow-up" means a real subsequent question in this
+    // same Ask session, not merely another navigation event -- determined
+    // from this screen's own local transcript (the same session_id already
+    // sent to askStratus below), not invented or inferred. Checked against
+    // `messages` *before* this turn's own optimistic push, so the very
+    // first question in a session is always ask_started.
+    logTelemetryEvent({
+      eventName: isFirstUserMessage(messages) ? "ask_started" : "ask_follow_up",
+      opportunityId: contextEventId ?? undefined,
+      sourceSurface: "ask",
+      context: { askSessionId: sessionIdRef.current },
+    });
 
     setMessages((prev) => [...prev, { id: nextId(), role: "user", text: clean, time: timeNow() }]);
     setInput("");

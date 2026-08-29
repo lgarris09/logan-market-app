@@ -18,6 +18,7 @@ import {
 import { biasStateFor, FieldBias } from "../lib/fieldBias";
 import { InteractionDomain } from "../lib/interactions";
 import { useCardDwellTracking } from "../lib/useCardDwellTracking";
+import { useOpportunityOpenedTelemetry } from "../lib/useOpportunityOpenedTelemetry";
 import { useImpressionTracking } from "../lib/useImpressionTracking";
 import { FeedItem } from "../types/loganFeed";
 import { AttentionAtmosphere } from "./atmosphere/AttentionAtmosphere";
@@ -131,6 +132,13 @@ export function AttentionField({
         }
       : null
   );
+
+  // V2.3C Telemetry: whether this is genuinely a *return* is never decided
+  // here -- the backend promotes opportunity_opened to opportunity_
+  // returned_to server-side from this user's own durable view history (see
+  // backend/app/telemetry.py) -- this only ever reports the raw fact "this
+  // card was opened."
+  useOpportunityOpenedTelemetry(openItem ? { eventId: openItem.event_id } : null);
 
   // Sprint 3.6.7 Block 3: a real exposure/impression fires whenever a vessel
   // becomes the focused card, independent of disclosure -- see
