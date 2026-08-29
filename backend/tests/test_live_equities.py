@@ -543,7 +543,7 @@ def test_simulated_fallback_logs_fixture_provenance_not_fmp(monkeypatch, capsys)
     )
     run_demo_feed()
     captured = capsys.readouterr()
-    assert "source=fixture" in captured.out
+    assert "demo-mode fixture retained" in captured.out
     assert "using real FMP earnings report" not in captured.out
 
 

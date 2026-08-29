@@ -694,6 +694,19 @@ def _live_earnings_raw_signal(
     unreachable is never presented identically to a poll where nothing
     qualifies right now (see the V2.3A.1 ADR).
     """
+    # Logging only -- what actually happens to `ticker` on a `None` return
+    # below is decided entirely by the caller's own live_data_only_mode()
+    # branch (see this function's docstring and _run_feed_pipeline), never
+    # by this string. Stated here once so every early-return log line below
+    # honestly reflects the same live-only-mode behavior, instead of the old
+    # unconditional "source=fixture" wording, which claimed a fixture
+    # substitution even in live-only mode where none is ever permitted.
+    fallback_note = (
+        "demo-mode fixture retained"
+        if not live_data_only_mode()
+        else "no fixture (live-only mode): ticker honestly absent"
+    )
+
     try:
         # V2.3A.1 field reliability work: on_successful_fetch writes through
         # to the durable earnings-observation store exactly once per genuine
@@ -709,17 +722,17 @@ def _live_earnings_raw_signal(
             )
         )
     except FmpProviderError as exc:
-        print(f"[live-stocks] {ticker}: provider unavailable, source=fixture: {exc}")
+        print(f"[live-stocks] {ticker}: provider unavailable, {fallback_note}: {exc}")
         return None, True
 
     try:
         report = provider.fetch_latest_earnings(ticker)
     except FmpProviderError as exc:
-        print(f"[live-stocks] {ticker}: FMP fetch failed, source=fixture: {exc}")
+        print(f"[live-stocks] {ticker}: FMP fetch failed, {fallback_note}: {exc}")
         return None, True
 
     if report is None:
-        print(f"[live-stocks] {ticker}: FMP has no reported earnings, source=fixture")
+        print(f"[live-stocks] {ticker}: FMP has no reported earnings, {fallback_note}")
         return None, False
 
     fired, beat_pct, reason = evaluate_earnings_beat_condition(
@@ -728,7 +741,7 @@ def _live_earnings_raw_signal(
     if not fired:
         print(
             f"[live-stocks] {ticker}: real report fetched but STOCK_EARNINGS_BEAT "
-            f"did not fire ({reason}), source=fixture"
+            f"did not fire ({reason}), {fallback_note}"
         )
         return None, False
 

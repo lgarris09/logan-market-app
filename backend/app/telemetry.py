@@ -30,6 +30,7 @@ from .telemetry_models import (
     TelemetryEvent,
     TelemetryEventBatchRequest,
     TelemetryEventBatchResponse,
+    TelemetryEventName,
     TelemetryEventRequest,
 )
 from .telemetry_store import TelemetryStore
@@ -59,7 +60,7 @@ def _get_store() -> Optional[TelemetryStore]:
 
 def _resolve_opportunity_promotion(
     user_id: str, request: TelemetryEventRequest
-) -> tuple[str, Optional[int], Optional[TelemetryContext]]:
+) -> tuple[TelemetryEventName, Optional[int], Optional[TelemetryContext]]:
     """Returns the (possibly-promoted) event_name, the validated
     opportunity_revision to persist, and the (possibly-enriched) context.
 
@@ -84,7 +85,15 @@ def _resolve_opportunity_promotion(
     if request.event_name not in _OPPORTUNITY_SCOPED_EVENT_NAMES:
         return request.event_name, request.opportunity_revision, request.context
 
-    context = get_opportunity_context(user_id, request.opportunity_id)
+    opportunity_id = request.opportunity_id
+    if opportunity_id is None:
+        # Unreachable in practice: TelemetryEventRequest's own model_validator
+        # already guarantees opportunity_id is set for every event_name in
+        # _OPPORTUNITY_SCOPED_EVENT_NAMES. This narrows the type for mypy
+        # without changing behavior.
+        return request.event_name, request.opportunity_revision, request.context
+
+    context = get_opportunity_context(user_id, opportunity_id)
     if context is None:
         return request.event_name, request.opportunity_revision, request.context
 
