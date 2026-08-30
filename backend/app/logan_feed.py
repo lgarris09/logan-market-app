@@ -1251,6 +1251,15 @@ def record_watch_learning_signal(user_id: str, entity_id: str, domain: Domain) -
             interaction_type="watch",
             content=_build_content,
         )
+    # V2.3B Phase 2 Block 11 -- minimal, non-sensitive server-side
+    # observability that a real learning signal was accepted for this
+    # (user, entity): no learned-profile content, no raw MemoryStore dump,
+    # just the fact and its identifiers. Distinct from the client-driven
+    # TelemetryEvent system (telemetry_models.py) -- this is a server-side
+    # decision log, mirroring every other "[live-stocks]"-style print()
+    # already used throughout this file for operational observability, not
+    # a new analytics event stream.
+    print(f"[learning] watch learning signal accepted for {user_id}/{entity_id}")
 
 
 # Sprint 3.6.6I: the two points per entity below represent readings taken at

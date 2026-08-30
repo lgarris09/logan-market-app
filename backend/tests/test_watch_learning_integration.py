@@ -98,3 +98,27 @@ def test_current_watch_state_reaches_personal_relevance_through_the_real_pipelin
         ), "Watch must never change objective confidence/evidence"
 
     remove_watch(user_id, "AAPL")
+
+
+def test_watch_removal_drops_the_current_relevance_boost():
+    """V2.3B Phase 2 Block 12: 'removal removes current explicit Watch
+    boost.' is_watched is read live (current state), never folded through
+    the evidence pool -- removing a Watch must be reflected on the very
+    next poll, not just eventually via decay."""
+    reset_pipeline_state()
+    user_id = LOCAL_FOUNDER_USER_ID
+
+    create_watch(user_id, "AAPL")
+    watching = run_demo_feed(user_id)
+    aapl_watching = next((i for i in watching.items if i.entity_id == "AAPL"), None)
+    assert aapl_watching is not None
+    assert aapl_watching.delivered_item.personal_relevance_result is not None
+    assert aapl_watching.delivered_item.personal_relevance_result.basis == "watch"
+
+    remove_watch(user_id, "AAPL")
+    unwatched = run_demo_feed(user_id)
+    aapl_unwatched = next((i for i in unwatched.items if i.entity_id == "AAPL"), None)
+    assert aapl_unwatched is not None
+    assert aapl_unwatched.delivered_item.personal_relevance_result is not None
+    assert aapl_unwatched.delivered_item.personal_relevance_result.basis != "watch"
+    assert aapl_unwatched.is_watched is False
