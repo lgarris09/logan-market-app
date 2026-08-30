@@ -24,10 +24,13 @@ class PrioritizedItem(BaseModel):
     is_new_for_user: bool
     prioritized_at: datetime
     decision_trace: list = Field(default_factory=list)
-    # Operational Beta Hardening Block 2 (Controlled Exploration) -- set only
-    # when logan_core/exploration/engine.py has an honest, non-fabricated
-    # answer for "what actually drove this item's visibility": one of the
-    # three deterministic anti-echo-chamber promotion reasons, or
+    # Operational Beta Hardening Block 2 (Controlled Exploration), extended
+    # by Universe Manager V1a Blocks 11-14 -- set only when this codebase
+    # has an honest, non-fabricated answer for "what actually drove this
+    # item's visibility": one of the two per-item deterministic anti-echo-
+    # chamber promotion reasons (exploration/engine.py), the batch-level
+    # "at most one among the top five" placement reason
+    # (exploration/placement.py's EXPLORATION_OBJECTIVE_STRENGTH), or
     # "personal_relevance" for the ordinary path when that dimension
     # genuinely dominated. None means either exploration wasn't wired in by
     # this caller, or the true driver is genuinely blended -- never a
@@ -37,7 +40,7 @@ class PrioritizedItem(BaseModel):
             "personal_relevance",
             "strong_world_signal",
             "unseen_material_change",
-            "discovery_allowance",
+            "EXPLORATION_OBJECTIVE_STRENGTH",
         ]
     ] = None
 
@@ -89,18 +92,6 @@ class NotificationReviewRecord(BaseModel):
     reviewed_at: datetime
 
 
-# Operational Beta Hardening Block 2 -- one entry per item Controlled
-# Exploration has promoted via the bounded "discovery_allowance" reason
-# (never for strong_world_signal/unseen_material_change, which are each
-# already self-limiting by their own objective criteria and need no
-# separate quota). Rolling-window-counted, exactly like FatigueRecord,
-# rather than a calendar-day counter -- consistent with the rest of this
-# engine's existing windowing style, and avoids a UTC-midnight edge case.
-class ExplorationGrantRecord(BaseModel):
-    event_id: UUID
-    granted_at: datetime
-
-
 class AttentionState(BaseModel):
     schema_version: str = "1.0"
     user_id: str
@@ -110,5 +101,4 @@ class AttentionState(BaseModel):
     cooldowns: list[CooldownRecord] = Field(default_factory=list)
     fatigue: list[FatigueRecord] = Field(default_factory=list)
     notifications_reviewed: list[NotificationReviewRecord] = Field(default_factory=list)
-    exploration_grants: list[ExplorationGrantRecord] = Field(default_factory=list)
     last_updated: datetime

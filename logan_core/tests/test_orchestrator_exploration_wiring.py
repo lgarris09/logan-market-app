@@ -1,9 +1,9 @@
 """Operational Beta Hardening Block 2 -- proves Orchestrator.run() actually
 wires Controlled Exploration in (calls it after Prioritization, with the
-real AttentionRecommendation/AttentionState, and uses its returned
-PrioritizedItem downstream), rather than re-proving
-apply_controlled_exploration()'s own decision logic -- that's already
-exhaustively covered, in isolation, by test_controlled_exploration.py.
+real AttentionRecommendation, and uses its returned PrioritizedItem
+downstream), rather than re-proving apply_controlled_exploration()'s own
+decision logic -- that's already exhaustively covered, in isolation, by
+test_controlled_exploration.py.
 """
 
 from datetime import datetime, timezone
@@ -38,13 +38,12 @@ def _blank_user_model(user_id: str) -> UserModel:
     return UserModelBuilder().seed(user_id=user_id)
 
 
-def test_pipeline_run_passes_the_real_recommendation_and_state_through(monkeypatch):
+def test_pipeline_run_passes_the_real_recommendation_through(monkeypatch):
     seen: dict = {}
 
-    def _spy(item, recommendation, state, now=None):
+    def _spy(item, recommendation, now=None):
         seen["item"] = item
         seen["recommendation"] = recommendation
-        seen["state"] = state
         return item.model_copy(
             update={"visibility": "feed", "attention_reason": "unseen_material_change"}
         )
@@ -62,7 +61,6 @@ def test_pipeline_run_passes_the_real_recommendation_and_state_through(monkeypat
     )
 
     assert seen["recommendation"] is result.recommendation
-    assert seen["state"].user_id == "exploration-wiring-user"
     # The stub's return value is what the pipeline actually uses downstream,
     # not silently discarded.
     assert result.prioritized_item.visibility == "feed"
@@ -86,5 +84,4 @@ def test_pipeline_run_without_stubbing_never_crashes_and_always_returns_a_reason
         "personal_relevance",
         "strong_world_signal",
         "unseen_material_change",
-        "discovery_allowance",
     )

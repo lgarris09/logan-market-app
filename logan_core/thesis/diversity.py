@@ -38,12 +38,21 @@ class ThesisCandidate(BaseModel):
     already-computed feed order (objective qualification + personal
     relevance both already applied upstream; this module reads it, never
     computes it). `is_watched` lets an active Watch bypass at most one
-    non-entity cap (Block 10's own explicit limit)."""
+    non-entity cap (Block 10's own explicit limit).
+
+    `objective_strength` (Blocks 11-14, optional, default 0.0): a caller-
+    supplied objective quality/materiality proxy (e.g.
+    global_importance * confidence) -- diversity capping itself never
+    reads this field; it exists solely for
+    exploration/placement.py's "not materially weaker than the weakest
+    selected non-Watch item" comparison (Block 13).
+    """
 
     event_id: UUID
     rank: int = Field(ge=1)
     metadata: ThesisMetadata
     is_watched: bool = False
+    objective_strength: float = Field(ge=0.0, le=1.0, default=0.0)
 
 
 class SuppressionRecord(BaseModel):

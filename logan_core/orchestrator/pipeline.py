@@ -621,16 +621,12 @@ class Orchestrator:
         # already-policy-permitted item Prioritization placed in the
         # "background" tier, per logan_core/exploration/engine.py's own
         # bounded, deterministic reasons -- see that module's docstring.
-        attention_state = self.deps.prioritization_engine.attention_state(user_id)
-        if attention_state is not None:
-            prioritized_item = self._execute(
-                trace,
-                "exploration",
-                lambda: apply_controlled_exploration(
-                    prioritized_item, recommendation, attention_state
-                ),
-                event_id=event.event_id,
-            )
+        prioritized_item = self._execute(
+            trace,
+            "exploration",
+            lambda: apply_controlled_exploration(prioritized_item, recommendation),
+            event_id=event.event_id,
+        )
         delivered_item = self._execute(
             trace,
             "presentation",

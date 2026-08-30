@@ -55,10 +55,12 @@ _DISCOVERY_EXPLANATIONS = {
         "Promoted by Controlled Exploration (unseen_material_change): a "
         "genuinely new development this user has never been shown before."
     ),
-    "discovery_allowance": (
-        "Promoted by Controlled Exploration's bounded discovery_allowance -- "
-        "an occasional, rate-limited slot shown outside this user's usual "
-        "profile to guard against an echo chamber."
+    "EXPLORATION_OBJECTIVE_STRENGTH": (
+        "Placed by Universe Manager V1a's batch-level Controlled Exploration "
+        "slot (at most one among the top five, per feed refresh) -- shown "
+        "outside this user's usual profile because the underlying evidence "
+        "was objectively strong, fresh, and materially new, not because of "
+        "anything this user has done."
     ),
 }
 

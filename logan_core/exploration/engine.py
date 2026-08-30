@@ -1,4 +1,8 @@
-"""Operational Beta Hardening Block 2 -- Controlled Exploration.
+"""Operational Beta Hardening Block 2 -- Controlled Exploration, per-item
+promotion stage. Reconciled against Universe Manager V1a Blocks 11-14 (see
+logan_core/exploration/eligibility.py and placement.py for the newer,
+batch-level "at most one exploration slot among the top five" mechanism
+those blocks add on top of this one).
 
 Personal Relevance V2 (opportunity/personal_relevance.py) deliberately
 rewards a user's existing declared/inferred interests -- left completely
@@ -13,7 +17,7 @@ codebase's layer-ownership rule). It only ever promotes an
 already-recommended (`AttentionRecommendation.recommend=True`),
 already-policy-permitted item that `PrioritizationEngine.prioritize()`
 placed in the "background" visibility tier (buried, effectively unseen)
-up to "feed" visibility -- and only when one of three specific,
+up to "feed" visibility -- and only when one of two specific,
 deterministic, explainable reasons applies. It never touches "hidden"
 (Policy-suppressed) or fatigued/cooldown-suppressed items, never promotes
 to "primary" (bounded, non-dominant -- exploration surfaces something,
@@ -21,7 +25,7 @@ it does not force it to the top), and never invents evidence: every
 promotion reason is derived from `Dimensions` fields Opportunity Engine
 already computed.
 
-Three deterministic promotion reasons:
+Two deterministic promotion reasons:
   strong_world_signal     -- objectively significant regardless of personal
                               fit (global_importance high, risk low, not
                               speculation-adjacent) -- the wider world's own
@@ -29,68 +33,52 @@ Three deterministic promotion reasons:
   unseen_material_change  -- a genuinely new development (novelty at the
                               "new" stance ceiling) this specific user has
                               never been shown before (is_new_for_user).
-  discovery_allowance     -- a small, bounded, rolling-24h-window-limited
-                              slot (EXPLORATION_DAILY_LIMIT) for something
-                              outside the user's usual profile that still
-                              cleared Opportunity's own recommend threshold
-                              and Prioritization's risk bar -- chosen
-                              deterministically (whichever eligible
-                              background item this call is given; callers
-                              iterate items in a stable, already-existing
-                              order, never a random draw), not randomly.
 
-`personal_relevance` is the fourth, ordinary-path label -- applied only
+`personal_relevance` is the third, ordinary-path label -- applied only
 when this module concludes no exploration promotion was warranted (the
 item is already visible, or didn't qualify) and personal_relevance was
 genuinely the single dominant scored dimension. Left unset (None) whenever
 the true driver is genuinely blended/ambiguous -- this module never
 fabricates a single reason it can't actually support.
+
+2026-08-30 Universe Manager V1a reconciliation (Block 11): this file used
+to carry a third promotion reason, `discovery_allowance` -- a small,
+per-item, rolling-24h-window-limited quota (`EXPLORATION_DAILY_LIMIT`,
+`AttentionState.exploration_grants`) applied independently to every
+background item a user's feed contained. Removed: Block 13's finalized
+exploration-placement policy is "at most one exploration-eligible
+opportunity among the top five candidates," a single batch-level decision
+(see placement.py), not an independent per-item quota that could promote
+several unrelated background items in the same feed. Keeping both would
+have been exactly the "second exploration system" the reconciliation
+instruction explicitly forbade. `ExplorationGrantRecord`/
+`AttentionState.exploration_grants` were removed from
+logan_core/contracts/prioritization.py alongside this.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
-from logan_core.contracts import (
-    AttentionRecommendation,
-    AttentionState,
-    ExplorationGrantRecord,
-    PrioritizedItem,
-)
+from logan_core.contracts import AttentionRecommendation, PrioritizedItem
 
-# Rolling window, not a calendar day -- consistent with FatigueRecord's own
-# windowing style elsewhere in Prioritization, and avoids a UTC-midnight
-# edge case a real calendar-day boundary would introduce.
-EXPLORATION_WINDOW = timedelta(hours=24)
-EXPLORATION_DAILY_LIMIT = 2
-
-# strong_world_signal / discovery_allowance both require the item's own
-# risk dimension to be low -- exploration must never be the reason a
-# risky or speculative item reaches a user who wouldn't otherwise see it.
+# strong_world_signal requires the item's own risk dimension to be low --
+# exploration must never be the reason a risky or speculative item reaches
+# a user who wouldn't otherwise see it.
 _MAX_RISK_FOR_PROMOTION = 0.5
 STRONG_WORLD_SIGNAL_IMPORTANCE = 0.7
 UNSEEN_MATERIAL_CHANGE_NOVELTY = 0.8
 PERSONAL_RELEVANCE_DOMINANT_FLOOR = 0.5
 
 
-def _active_grant_count(state: AttentionState, now: datetime) -> int:
-    return sum(
-        1
-        for g in state.exploration_grants
-        if (now - g.granted_at) <= EXPLORATION_WINDOW
-    )
-
-
 def apply_controlled_exploration(
     item: PrioritizedItem,
     recommendation: AttentionRecommendation,
-    state: AttentionState,
     now: Optional[datetime] = None,
 ) -> PrioritizedItem:
     """Returns `item` unchanged, or a copy promoted to visibility="feed"
-    with `attention_reason` set. Idempotent per call -- a caller that
-    already promoted this exact PrioritizedItem instance and calls again
-    with the same `state` will not double-grant (the item's own
-    visibility is no longer "background" on the second call).
+    with `attention_reason` set. Idempotent -- calling this again on an
+    already-promoted item (visibility no longer "background") is a no-op
+    past the first check.
     """
     now = now or datetime.now(timezone.utc)
     dims = recommendation.dimensions
@@ -114,14 +102,6 @@ def apply_controlled_exploration(
     if dims.novelty >= UNSEEN_MATERIAL_CHANGE_NOVELTY and item.is_new_for_user:
         return item.model_copy(
             update={"visibility": "feed", "attention_reason": "unseen_material_change"}
-        )
-
-    if _active_grant_count(state, now) < EXPLORATION_DAILY_LIMIT:
-        state.exploration_grants.append(
-            ExplorationGrantRecord(event_id=item.event_id, granted_at=now)
-        )
-        return item.model_copy(
-            update={"visibility": "feed", "attention_reason": "discovery_allowance"}
         )
 
     return item

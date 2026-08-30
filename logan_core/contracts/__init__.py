@@ -16,6 +16,7 @@ from .common import (
 )
 from .community import CommunitySignal
 from .confidence import ConclusionConfidence
+from .exploration import ExplorationOpportunityCostTrace, ExplorationPlacementResult
 from .feedback import FeedbackSignal, InferredIntent, InteractionType, OutcomeRecord
 from .learning import (
     LearnedTrait,
@@ -45,7 +46,6 @@ from .prioritization import (
     AttentionState,
     CooldownRecord,
     DismissRecord,
-    ExplorationGrantRecord,
     FatigueRecord,
     NotificationReviewRecord,
     PrioritizedItem,
@@ -134,7 +134,6 @@ __all__ = [
     "CooldownRecord",
     "FatigueRecord",
     "NotificationReviewRecord",
-    "ExplorationGrantRecord",
     "DeliveredItem",
     "FeedbackSignal",
     "InteractionType",
@@ -165,4 +164,6 @@ __all__ = [
     "ThesisMetadata",
     "MARKET_DRIVER_TAGS",
     "UNWIRED_MARKET_DRIVER_TAGS",
+    "ExplorationOpportunityCostTrace",
+    "ExplorationPlacementResult",
 ]

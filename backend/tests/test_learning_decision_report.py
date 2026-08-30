@@ -79,7 +79,7 @@ def test_discovery_line_for_each_known_reason_mentions_the_reason():
     assert "personal relevance" in discovery_line_for("personal_relevance").lower()
     assert "strong_world_signal" in discovery_line_for("strong_world_signal")
     assert "unseen_material_change" in discovery_line_for("unseen_material_change")
-    assert "discovery_allowance" in discovery_line_for("discovery_allowance")
+    assert "objectively strong" in discovery_line_for("EXPLORATION_OBJECTIVE_STRENGTH")
 
 
 def test_discovery_line_for_unrecognized_reason_is_honest_not_fabricated():
