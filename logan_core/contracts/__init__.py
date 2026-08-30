@@ -53,6 +53,12 @@ from .prioritization import (
 )
 from .reasoning import ReasoningResult
 from .signals import NormalizedSignal, RawSignal
+from .thesis import (
+    MARKET_DRIVER_TAGS,
+    UNWIRED_MARKET_DRIVER_TAGS,
+    MarketDriverTag,
+    ThesisMetadata,
+)
 from .trigger import TriggerClass, TriggerDirection, TriggerEvent, TriggerStatus
 from .trust import EvidenceTrust, SourceObservation
 from .universe import (
@@ -155,4 +161,8 @@ __all__ = [
     "EligibilityResult",
     "MembershipRecord",
     "CohortRebalanceResult",
+    "MarketDriverTag",
+    "ThesisMetadata",
+    "MARKET_DRIVER_TAGS",
+    "UNWIRED_MARKET_DRIVER_TAGS",
 ]
