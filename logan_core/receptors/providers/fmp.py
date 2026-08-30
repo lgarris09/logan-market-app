@@ -6,7 +6,39 @@ from typing import Callable, Optional
 
 import httpx
 
+from logan_core.diagnostics import record_fault
+
 from .base import CompanyProfile, EarningsReport, GradeChange, Quote
+
+
+# Substrings already consistently used, verbatim, by every "response shape
+# wasn't what we expected" FmpProviderError this file raises (JSON parse
+# failure, wrong top-level type, missing/unparseable required fields) --
+# reused here to classify DATA-303 without touching every individual raise
+# site, rather than inventing a second, parallel classification scheme.
+_MALFORMED_RESPONSE_MARKERS = (
+    "was not valid JSON",
+    "was not a list as expected",
+    "missing one of",
+    "contained a non-dict entry",
+    "contained no usable entries",
+    "was missing",
+    "had an unparseable",
+)
+
+
+def _data_fault_code(status_code: Optional[int], message: str) -> str:
+    """Operational Beta Hardening Block 1: which DATA-3xx code a real FMP
+    failure corresponds to, keyed off the same status_code
+    FmpProviderError/_PERMANENT_FAILURE_STATUS_CODES already carry -- never
+    a second classification of what "permanent vs transient" means."""
+    if status_code == 429:
+        return "DATA-301"
+    if status_code in _PERMANENT_FAILURE_STATUS_CODES:
+        return "DATA-302"
+    if any(marker in message for marker in _MALFORMED_RESPONSE_MARKERS):
+        return "DATA-303"
+    return "DATA-300"
 
 
 @dataclass(frozen=True)
@@ -243,7 +275,23 @@ class FmpResponseCache:
                     and entry is not None
                     and (now - entry.cached_at) < ttl_seconds + stale_grace_seconds
                 ):
+                    record_fault(
+                        "DATA-304",
+                        "fmp_provider",
+                        context={"endpoint": endpoint, "entity_id": entity_id},
+                        provider_status=failure.status_code,
+                    )
                     return entry.value
+                record_fault(
+                    _data_fault_code(failure.status_code, failure.message),
+                    "fmp_provider",
+                    context={
+                        "endpoint": endpoint,
+                        "entity_id": entity_id,
+                        "suppressed_retry": True,
+                    },
+                    provider_status=failure.status_code,
+                )
                 raise FmpProviderError(
                     f"[fmp-cache] {endpoint}/{entity_id}: suppressing retry of a "
                     f"known failure from {now - failure.failed_at:.0f}s ago "
@@ -266,10 +314,9 @@ class FmpResponseCache:
             value = fetch()
         except FmpProviderError as exc:
             self._bump(self._failures_count, key)
+            status_code = getattr(exc, "status_code", None)
             self._failures[key] = _FmpFailureEntry(
-                failed_at=now,
-                message=str(exc),
-                status_code=getattr(exc, "status_code", None),
+                failed_at=now, message=str(exc), status_code=status_code
             )
             if (
                 stale_grace_seconds > 0
@@ -281,7 +328,19 @@ class FmpResponseCache:
                     f"({exc}), serving stale cache (age={now - entry.cached_at:.0f}s) "
                     "rather than dropping a still-valid recent result"
                 )
+                record_fault(
+                    "DATA-304",
+                    "fmp_provider",
+                    context={"endpoint": endpoint, "entity_id": entity_id},
+                    provider_status=status_code,
+                )
                 return entry.value
+            record_fault(
+                _data_fault_code(status_code, str(exc)),
+                "fmp_provider",
+                context={"endpoint": endpoint, "entity_id": entity_id},
+                provider_status=status_code,
+            )
             raise
         # A genuine success always clears any prior failure record -- the
         # negative state never outlives the condition that created it.

@@ -20,11 +20,19 @@ they can see, not only a live-tracked stock, so this module's own state
 is never reset by logan_feed.reset_pipeline_state().
 """
 
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from .config import memory_persistence_enabled, watch_store_db_path
 from .watch_store import Watch, WatchStore
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.diagnostics import record_fault  # noqa: E402
 
 _watches: dict[tuple[str, str], Watch] = {}
 _store: Optional[WatchStore] = None
@@ -62,7 +70,15 @@ def create_watch(user_id: str, entity_id: str) -> tuple[Watch, bool]:
     )
     _watches[key] = watch
     if store is not None:
-        store.save(watch)
+        try:
+            store.save(watch)
+        except Exception as exc:
+            record_fault(
+                "WATCH-500",
+                "watch.create_watch",
+                context={"reason": str(exc)},
+            )
+            raise
     return watch, True
 
 
@@ -74,7 +90,15 @@ def remove_watch(user_id: str, entity_id: str) -> bool:
     existed = _watches.pop(key, None) is not None
     store = _get_store()
     if store is not None:
-        store.delete(user_id, entity_id)
+        try:
+            store.delete(user_id, entity_id)
+        except Exception as exc:
+            record_fault(
+                "WATCH-500",
+                "watch.remove_watch",
+                context={"reason": str(exc)},
+            )
+            raise
     return existed
 
 

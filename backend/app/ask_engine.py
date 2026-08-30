@@ -20,13 +20,21 @@ malformed response) falls straight back to `answer_question()` below,
 unchanged -- no LLM failure can break the existing opportunity experience.
 """
 
+import sys
 import threading
+from pathlib import Path
 from typing import Optional, Sequence
 
 from pydantic import BaseModel
 
 from .ask_context import OpportunityContext
 from .ask_llm_provider import AskLlmProvider, AskLlmProviderError, ConversationTurn
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.diagnostics import record_fault  # noqa: E402
 
 _EARNINGS_CODES = {
     "STOCK_EARNINGS_BEAT",
@@ -474,6 +482,11 @@ def generate_grounded_answer(
             llm_answer = provider.generate(context, message, history)
         except AskLlmProviderError as exc:
             print(f"[ask-llm] provider failed, falling back to deterministic: {exc}")
+            record_fault(
+                "ASK-400",
+                "ask_engine.generate_grounded_answer",
+                context={"reason": str(exc)},
+            )
         else:
             return GroundedAnswer(
                 text=llm_answer.text, used_llm=True, llm_model=llm_answer.model
@@ -514,6 +527,11 @@ def get_ask_llm_provider() -> Optional[AskLlmProvider]:
             print(
                 f"[ask-llm] provider unavailable, Ask STRATUS will use the "
                 f"deterministic path: {exc}"
+            )
+            record_fault(
+                "ASK-400",
+                "ask_engine.get_ask_llm_provider",
+                context={"reason": str(exc)},
             )
             _ask_llm_provider = None
         return _ask_llm_provider

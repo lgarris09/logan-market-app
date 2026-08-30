@@ -101,6 +101,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.contracts import LearningReport  # noqa: E402
+from logan_core.diagnostics import (  # noqa: E402
+    format_fault_catalog,
+    format_recent_faults,
+)
 from logan_core.receptors.providers import fmp_budget_snapshot  # noqa: E402
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
@@ -246,6 +250,31 @@ def learning_decision_report_route(
     """
     check_rate_limit("learning_report", user_id, *_LEARNING_REPORT_RATE_LIMIT)
     return {"report": build_learning_decision_report(user_id, entity_id.upper())}
+
+
+@app.get("/v1/dev/fault-codes")
+def fault_codes_catalog_route() -> dict[str, str]:
+    """Operational Beta Hardening Block 1 -- the stable Diagnostic Fault
+    Codes catalog ("Dave, I got DATA-302" -> an immediate, precise answer
+    without reading logs or source). Not identity- or process-state-scoped
+    -- this is the static catalog, same unauthenticated, process-wide
+    operational-data posture as /v1/dev/fmp-budget and
+    /v1/dev/opportunity-quality.
+    """
+    return {"report": format_fault_catalog()}
+
+
+@app.get("/v1/dev/faults/recent")
+def recent_faults_route(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, str]:
+    """Operational Beta Hardening Block 1 -- this process's most recent
+    fault occurrences (bounded, process-lifetime only, cleared by a
+    restart/redeploy like every other piece of live operational state in
+    this backend). Same unauthenticated, process-wide operational-data
+    posture as /v1/dev/fmp-budget -- every occurrence's context is already
+    secret-stripped by record_fault()'s own sanitization before it ever
+    reaches this route.
+    """
+    return {"report": format_recent_faults(limit)}
 
 
 @app.get("/v1/dev/fmp-budget")

@@ -39,12 +39,12 @@ user authenticated with Apple, Google, email, or hasn't authenticated at
 all.
 """
 
+import sys
 import threading
 import uuid
+from pathlib import Path
 
 from fastapi import Header, HTTPException
-
-from logan_core.contracts import LOCAL_FOUNDER_USER_ID
 
 from .account_store import Account, AccountStore
 from .clerk_auth import ClerkClaims, verify_clerk_session_token
@@ -54,6 +54,13 @@ from .config import (
     live_data_only_mode,
     memory_persistence_enabled,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts import LOCAL_FOUNDER_USER_ID  # noqa: E402
+from logan_core.diagnostics import record_fault  # noqa: E402
 
 # Sprint 3.6.9: the safe, non-founder identity a beta/production request
 # resolves to when it has no usable client-supplied identity (no header, or
@@ -275,6 +282,11 @@ def link_account(
         # *different* identity; it isn't linked to anyone) and permanently
         # bind this caller's external identity to the founder/demo account.
         if anonymous_user_id in (LOCAL_FOUNDER_USER_ID, BETA_ANONYMOUS_USER_ID):
+            record_fault(
+                "AUTH-101",
+                "account_link",
+                context={"reason": "reserved_identity", "provider": provider},
+            )
             raise AccountLinkConflictError(
                 "This identity cannot be linked to an account."
             )
@@ -282,6 +294,11 @@ def link_account(
         if _is_linked_to_a_different_identity(
             anonymous_user_id, provider, external_subject
         ):
+            record_fault(
+                "AUTH-101",
+                "account_link",
+                context={"reason": "cross_identity_conflict", "provider": provider},
+            )
             raise AccountLinkConflictError(
                 "This identity is already associated with a different account."
             )
@@ -303,15 +320,22 @@ def _verify_bearer_header(authorization: str) -> ClerkClaims:
     """
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
+        record_fault("AUTH-100", "user_context", context={"reason": "malformed_header"})
         raise HTTPException(status_code=401, detail="Malformed Authorization header.")
     if not clerk_configured():
         # Authentication isn't configured for this deployment at all -- a
         # client presenting a bearer token here is misconfigured, not
         # "anonymous"; failing loudly is more useful than pretending it
         # succeeded anonymously.
+        record_fault(
+            "AUTH-100", "user_context", context={"reason": "clerk_not_configured"}
+        )
         raise HTTPException(status_code=401, detail="Authentication is not configured.")
     claims = verify_clerk_session_token(token)
     if claims is None:
+        record_fault(
+            "AUTH-100", "user_context", context={"reason": "invalid_or_expired"}
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired session.")
     return claims
 
