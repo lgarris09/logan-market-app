@@ -19,7 +19,7 @@ to be wrapped by that scheduler once wired, not to self-pace.
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol, TypeVar
 
 from .config import memory_persistence_enabled, universe_membership_db_path
 from .universe_store import UniverseMembershipStore
@@ -40,6 +40,7 @@ from logan_core.receptors.providers import (  # noqa: E402
     FmpMarketDataProvider,
     FmpProviderError,
     GradeChange,
+    ProviderScheduler,
     Quote,
 )
 from logan_core.universe import (  # noqa: E402
@@ -48,6 +49,8 @@ from logan_core.universe import (  # noqa: E402
     rebalance_membership,
     select_monitored_cohort,
 )
+
+T = TypeVar("T")
 
 
 class _MarketDataSource(Protocol):
@@ -87,11 +90,35 @@ def reset_universe_manager_state() -> None:
     _store = None
 
 
+def _paced_call(
+    scheduler: Optional[ProviderScheduler],
+    endpoint: str,
+    priority: str,
+    max_wait_seconds: float,
+    fetch: Callable[[], T],
+) -> T:
+    """Routes `fetch` through the Provider Scheduler's admission control
+    when one is supplied, otherwise calls it directly (byte-identical to
+    pre-Block-7 behavior) -- gating only ever wraps a real call, so a
+    caller that never passes a scheduler sees no change at all."""
+    if scheduler is None:
+        return fetch()
+    return scheduler.gate(
+        endpoint, fetch, priority=priority, max_wait_seconds=max_wait_seconds
+    )
+
+
+DEFAULT_SCHEDULER_MAX_WAIT_SECONDS = 90.0
+
+
 def evaluate_candidate_eligibility(
     candidate: CandidateSecurity,
     *,
     market_data_provider: _MarketDataSource,
     earnings_provider: EarningsProvider,
+    scheduler: Optional[ProviderScheduler] = None,
+    priority: str = "normal",
+    scheduler_max_wait_seconds: float = DEFAULT_SCHEDULER_MAX_WAIT_SECONDS,
     now: Optional[datetime] = None,
 ) -> EligibilityResult:
     """Real-I/O adapter around the pure `evaluate_eligibility()` -- fetches
@@ -109,28 +136,65 @@ def evaluate_candidate_eligibility(
     halted/delisted flag; a real halt/delisting shows up here as a missing
     or failed quote fetch (REJECT_DATA_HEALTH), an honestly coarser signal
     than a dedicated trading-status field would give.
+
+    `scheduler` (Operational Beta Hardening / Universe Manager V1a Block 7,
+    optional, default None): when supplied, every one of this candidate's
+    four provider calls is paced through it (`ProviderScheduler.gate()`),
+    so a reevaluation run against the whole candidate source can never
+    burst past STRATUS's own operating ceiling -- see
+    `run_universe_reevaluation()`, the real caller that supplies one.
+    `scheduler_max_wait_seconds` defaults generously above the scheduler's
+    own 60s rolling window, since a bulk reevaluation run legitimately
+    takes a couple of minutes to pace through ~400 calls at the ceiling --
+    a short per-call wait budget would raise
+    `ProviderSchedulerSaturatedError` partway through a perfectly healthy
+    run.
     """
     now = now or datetime.now(timezone.utc)
     try:
-        quote = market_data_provider.fetch_quote(candidate.symbol)
+        quote = _paced_call(
+            scheduler,
+            "quote",
+            priority,
+            scheduler_max_wait_seconds,
+            lambda: market_data_provider.fetch_quote(candidate.symbol),
+        )
         provider_health_ok = True
     except FmpProviderError:
         quote = None
         provider_health_ok = False
 
     try:
-        profile = market_data_provider.fetch_company_profile(candidate.symbol)
+        profile = _paced_call(
+            scheduler,
+            "profile",
+            priority,
+            scheduler_max_wait_seconds,
+            lambda: market_data_provider.fetch_company_profile(candidate.symbol),
+        )
     except FmpProviderError:
         profile = None
 
     try:
-        earnings = earnings_provider.fetch_latest_earnings(candidate.symbol)
+        earnings = _paced_call(
+            scheduler,
+            "earnings",
+            priority,
+            scheduler_max_wait_seconds,
+            lambda: earnings_provider.fetch_latest_earnings(candidate.symbol),
+        )
         has_earnings_coverage = earnings is not None
     except FmpProviderError:
         has_earnings_coverage = False
 
     try:
-        grade = market_data_provider.fetch_latest_grade_change(candidate.symbol)
+        grade = _paced_call(
+            scheduler,
+            "analyst_grade",
+            priority,
+            scheduler_max_wait_seconds,
+            lambda: market_data_provider.fetch_latest_grade_change(candidate.symbol),
+        )
         has_analyst_grade_coverage = grade is not None
     except FmpProviderError:
         has_analyst_grade_coverage = False
@@ -167,6 +231,7 @@ def run_universe_reevaluation(
     *,
     market_data_provider: Optional[_MarketDataSource] = None,
     earnings_provider: Optional[EarningsProvider] = None,
+    scheduler: Optional[ProviderScheduler] = None,
     now: Optional[datetime] = None,
 ) -> CohortRebalanceResult:
     """The full Block 2->6 pipeline against real (or injected fixture)
@@ -176,6 +241,17 @@ def run_universe_reevaluation(
     Providers default to real FmpMarketDataProvider/FmpEarningsProvider
     instances (constructed fresh per call, same pattern as
     opportunity_quality_report.py) -- tests inject fixtures instead.
+
+    `scheduler` (Block 7, optional, default None): a real production
+    invocation of this function against the full ~100-candidate V1a
+    snapshot is ~400 provider calls (quote + profile + earnings + grade
+    per candidate) -- a caller making that real call should always supply a
+    `ProviderScheduler` (paced against STRATUS's own operating ceiling,
+    well under FMP's actual limit) so this can never burst the shared
+    provider budget. Left as an explicit opt-in, not auto-constructed here,
+    so a test exercising this function's selection/rebalance logic with a
+    handful of fixture candidates isn't forced to pace through a real
+    (or fake-clocked) scheduler it doesn't need.
     """
     now = now or datetime.now(timezone.utc)
     market_data_provider = market_data_provider or FmpMarketDataProvider()
@@ -188,6 +264,8 @@ def run_universe_reevaluation(
             candidate,
             market_data_provider=market_data_provider,
             earnings_provider=earnings_provider,
+            scheduler=scheduler,
+            scheduler_max_wait_seconds=DEFAULT_SCHEDULER_MAX_WAIT_SECONDS,
             now=now,
         )
         evaluated.append((candidate, result))

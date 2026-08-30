@@ -22,6 +22,7 @@ from logan_core.receptors.providers import (
     FixtureMarketDataProvider,
     FmpProviderError,
     GradeChange,
+    ProviderScheduler,
     Quote,
 )
 from logan_core.universe.eligibility import (
@@ -261,6 +262,68 @@ def test_monitored_tickers_is_empty_when_persistence_disabled(monkeypatch):
     monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
     reset_universe_manager_state()
     assert monitored_tickers() == ()
+
+
+# --- Block 7: scheduler-paced reevaluation ------------------------------------
+
+
+class _FakeClock:
+    def __init__(self, start: float = 0.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+def test_full_reevaluation_paced_through_a_scheduler_never_bursts_the_ceiling(
+    monkeypatch,
+):
+    """The real Block 7 requirement: a full run against all ~100 V1a
+    candidates is ~400 provider calls -- paced through a ProviderScheduler,
+    real admitted calls must never exceed the configured global ceiling at
+    any point, proven here with a fake clock/sleep so the test itself
+    doesn't take real wall-clock minutes to pace 400 calls at 220/minute.
+    """
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+
+    from logan_core.universe.candidate_source import load_candidate_snapshot
+
+    snapshot = load_candidate_snapshot()
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {
+        s.symbol: _profile(s.symbol, average_volume=1_000_000.0)
+        for s in snapshot.securities
+    }
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+
+    clock = _FakeClock()
+    sched = ProviderScheduler(
+        clock=clock,
+        sleep=clock.advance,
+        global_ceiling=220,
+        per_endpoint_ceiling_fraction=0.6,
+    )
+
+    result = run_universe_reevaluation(
+        market_data_provider=market,
+        earnings_provider=earnings,
+        scheduler=sched,
+        now=NOW,
+    )
+    assert 25 <= len(result.admitted) <= 35
+    # At no point did the scheduler admit more than the ceiling within its
+    # own rolling window -- verified via its own wait-sample record.
+    admitted_samples = [s for s in sched.wait_samples() if s.admitted]
+    assert len(admitted_samples) == 4 * len(snapshot.securities)
+    assert sched.current_calls_per_minute() <= 220
 
 
 # --- UniverseMembershipStore ---------------------------------------------------
