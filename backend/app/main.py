@@ -18,7 +18,11 @@ from .config import (
     startup_config_summary,
 )
 from .data import DEMO_OPPORTUNITIES
-from .learning import get_learning_report, suppress_entity_learning
+from .learning import (
+    get_consumer_learning_summary,
+    get_learning_report,
+    suppress_entity_learning,
+)
 from .learning_decision_report import build_learning_decision_report
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
@@ -46,6 +50,7 @@ from .models import (
     AskRequest,
     AskResponse,
     BriefingResponse,
+    ConsumerLearningSummary,
     DeleteAccountResponse,
     LinkAccountRequest,
     LinkAccountResponse,
@@ -449,6 +454,23 @@ def get_learning_report_route(
     """
     check_rate_limit("learning_report", user_id, *_LEARNING_REPORT_RATE_LIMIT)
     return get_learning_report(user_id)
+
+
+@app.get("/v1/learning/summary", response_model=ConsumerLearningSummary)
+def get_consumer_learning_summary_route(
+    user_id: str = Depends(resolve_user_id),
+) -> ConsumerLearningSummary:
+    """Operational Beta Hardening Block 4 -- the smallest credible "What
+    STRATUS is learning" consumer surface: plain-language traits with an
+    explicit/inferred distinction and nothing else (no strength float,
+    evidence_count, or timestamp) -- see ConsumerLearningSummary's own
+    docstring for exactly what's deliberately left out relative to the
+    dev-oriented /v1/learning/report above. Same identity-scoping and rate
+    limit as that route -- this is a smaller view of the same underlying
+    report, not a separate computation with its own cost profile.
+    """
+    check_rate_limit("learning_report", user_id, *_LEARNING_REPORT_RATE_LIMIT)
+    return get_consumer_learning_summary(user_id)
 
 
 @app.post("/v1/learning/suppress", response_model=SuppressLearningResponse)

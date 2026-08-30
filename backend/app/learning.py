@@ -20,6 +20,19 @@ from logan_core.learning import build_learning_report
 from logan_core.user_model import UserModelBuilder
 
 from .logan_feed import _get_orchestrator, _seed_user_model
+from .models import ConsumerLearningSummary, ConsumerLearningTrait
+
+# Operational Beta Hardening Block 4 -- one honest, standing sentence about
+# what "learning" means here, never per-user data. Kept separate from
+# LearningReport.architecture_notes (a developer-facing list of several
+# specific limitations) -- a consumer needs one plain boundary statement,
+# not the full technical caveat list.
+_CONSUMER_LEARNING_EXPLANATION = (
+    "This reflects only what you've explicitly told STRATUS (holdings, "
+    "interests, Watches) or how you've used the app (what you open, read, "
+    "or act on) -- never data from outside sources. You can turn off any "
+    "of these at any time."
+)
 
 
 def get_learning_report(user_id: str) -> LearningReport:
@@ -55,3 +68,26 @@ def suppress_entity_learning(
     """
     orchestrator = _get_orchestrator()
     orchestrator.run_suppress_entity_learning(user_id, entity_id, domain)
+
+
+def get_consumer_learning_summary(user_id: str) -> ConsumerLearningSummary:
+    """Operational Beta Hardening Block 4 -- the smallest credible "What
+    STRATUS is learning" consumer surface. Derived from the exact same
+    LearningReport get_learning_report() already computes (never a second,
+    parallel computation) -- just a smaller, consumer-safe projection of it:
+    plain description + explicit/inferred basis only, never the underlying
+    strength float, evidence_count, or timestamps.
+    """
+    report = get_learning_report(user_id)
+    traits = [
+        ConsumerLearningTrait(
+            entity_id=t.entity_id, description=t.description, basis=t.source
+        )
+        for t in report.learned
+    ]
+    return ConsumerLearningSummary(
+        user_id=user_id,
+        generated_at=report.generated_at,
+        traits=traits,
+        explanation=_CONSUMER_LEARNING_EXPLANATION,
+    )

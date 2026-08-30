@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import UUID
@@ -168,3 +169,31 @@ class SuppressLearningRequest(BaseModel):
 class SuppressLearningResponse(BaseModel):
     entity_id: str
     suppressed: bool = True
+
+
+class ConsumerLearningTrait(BaseModel):
+    """Operational Beta Hardening Block 4 -- one plain-language line for the
+    "What STRATUS is learning" consumer surface. Deliberately smaller than
+    logan_core.contracts.LearnedTrait: no strength float, no evidence_count,
+    no first_learned_at/last_updated_at, no why/what_would_change_this --
+    those stay in the dev-oriented /v1/learning/report. A consumer only
+    ever needs the plain description, the explicit/inferred distinction,
+    and whether it can be turned off."""
+
+    entity_id: str
+    description: str
+    basis: Literal["explicit", "inferred"]
+    can_suppress: bool = True
+
+
+class ConsumerLearningSummary(BaseModel):
+    """The smallest credible "What STRATUS is learning" account surface --
+    never a raw decimal, MemoryRecord, event ID, or ranking weight (see
+    ConsumerLearningTrait's own docstring for what's deliberately left out
+    versus the full LearningReport)."""
+
+    schema_version: str = "1.0"
+    user_id: str
+    generated_at: datetime
+    traits: list[ConsumerLearningTrait] = Field(default_factory=list)
+    explanation: str
