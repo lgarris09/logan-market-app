@@ -70,6 +70,12 @@ FAULT_CATALOG: dict[str, FaultDefinition] = {
         "qualification outcome -- see NOT_A_FAULT_NOTES)",
         wired=False,
     ),
+    "FEED-201": FaultDefinition(
+        "FEED-201",
+        "FEED",
+        "Universe membership reevaluation failure " "(Universe Manager V1a Blocks 2-6)",
+        wired=True,
+    ),
     "DATA-300": FaultDefinition(
         "DATA-300",
         "DATA",
@@ -91,6 +97,27 @@ FAULT_CATALOG: dict[str, FaultDefinition] = {
         "Stale-data fallback engaged (serving a cached value past its "
         "normal TTL after a refetch failure)",
         wired=True,
+    ),
+    "DATA-305": FaultDefinition(
+        "DATA-305",
+        "DATA",
+        "Universe candidate source unavailable or snapshot invalid "
+        "(Universe Manager V1a)",
+        wired=True,
+    ),
+    "DATA-306": FaultDefinition(
+        "DATA-306",
+        "DATA",
+        "Provider scheduler saturated -- no capacity within wait budget "
+        "(Universe Manager V1a Block 7)",
+        wired=True,
+    ),
+    "DATA-307": FaultDefinition(
+        "DATA-307",
+        "DATA",
+        "Freshness breach -- data unavailable even within its grace "
+        "window (Universe Manager V1a Block 8)",
+        wired=False,
     ),
     "ASK-400": FaultDefinition(
         "ASK-400",

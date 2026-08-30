@@ -6,6 +6,8 @@ this file proves the fixture-injected FMP adapter and the SQLite ledger.
 
 from datetime import datetime, timezone
 
+import pytest
+
 from backend.app.config import universe_manager_enabled
 from backend.app.universe_manager import (
     evaluate_candidate_eligibility,
@@ -224,6 +226,31 @@ def test_reevaluation_selects_a_cohort_from_healthy_fixture_candidates(monkeypat
     )
     assert 25 <= len(result.admitted) <= 35
     assert result.removed == []
+
+
+def test_reevaluation_failure_records_feed_201_and_still_raises(monkeypatch):
+    from logan_core.diagnostics import recent_faults, reset_fault_state
+
+    reset_fault_state()
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+
+    def _raising_cohort_selection(*args, **kwargs):
+        raise RuntimeError("simulated cohort-selection failure")
+
+    import backend.app.universe_manager as universe_manager_module
+
+    monkeypatch.setattr(
+        universe_manager_module, "select_monitored_cohort", _raising_cohort_selection
+    )
+
+    market = FixtureMarketDataProvider()
+    earnings = FixtureEarningsProvider(reports={})
+    with pytest.raises(RuntimeError):
+        run_universe_reevaluation(
+            market_data_provider=market, earnings_provider=earnings, now=NOW
+        )
+    faults = recent_faults()
+    assert any(f.code == "FEED-201" for f in faults)
 
 
 def test_reevaluation_with_persistence_enabled_round_trips_through_the_store(

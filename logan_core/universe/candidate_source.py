@@ -25,6 +25,7 @@ byte-identical data for a version that has already been published.
 from datetime import date, datetime, timezone
 
 from logan_core.contracts import CandidateSecurity, CandidateSourceSnapshot
+from logan_core.diagnostics import record_fault
 
 CANDIDATE_SOURCE_ID = "sp100_snapshot"
 
@@ -188,6 +189,13 @@ def load_candidate_snapshot(
     Raises KeyError for an unregistered version -- never silently falls
     back to a different one (an unknown version is a real configuration
     error, not something to paper over)."""
+    if version not in _SNAPSHOT_REGISTRY:
+        record_fault(
+            "DATA-305",
+            "universe.candidate_source",
+            context={"requested_version": version},
+        )
+        raise KeyError(version)
     effective_date, entries = _SNAPSHOT_REGISTRY[version]
     return _build_snapshot(version, effective_date, entries)
 

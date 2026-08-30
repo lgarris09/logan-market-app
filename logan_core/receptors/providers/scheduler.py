@@ -39,6 +39,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional, TypeVar
 
+from logan_core.diagnostics import record_fault
+
 T = TypeVar("T")
 
 GLOBAL_CALLS_PER_MINUTE_CEILING = 220
@@ -202,6 +204,11 @@ class ProviderScheduler:
         if not self.acquire(
             endpoint, priority=priority, max_wait_seconds=max_wait_seconds
         ):
+            record_fault(
+                "DATA-306",
+                "provider_scheduler",
+                context={"endpoint": endpoint, "priority": priority},
+            )
             raise ProviderSchedulerSaturatedError(
                 f"[scheduler] {endpoint}: no capacity available within "
                 f"{max_wait_seconds:.0f}s (global ceiling={self._global_ceiling}/min, "

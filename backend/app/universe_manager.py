@@ -33,6 +33,7 @@ from logan_core.contracts import (  # noqa: E402
     CohortRebalanceResult,
     EligibilityResult,
 )
+from logan_core.diagnostics import record_fault  # noqa: E402
 from logan_core.receptors.providers import (  # noqa: E402
     CompanyProfile,
     EarningsProvider,
@@ -264,41 +265,49 @@ def run_universe_reevaluation(
     market_data_provider = market_data_provider or FmpMarketDataProvider()
     earnings_provider = earnings_provider or FmpEarningsProvider()
 
-    snapshot = load_candidate_snapshot()
-    evaluated: list[tuple[CandidateSecurity, EligibilityResult]] = []
-    for candidate in snapshot.securities:
-        result = evaluate_candidate_eligibility(
-            candidate,
-            market_data_provider=market_data_provider,
-            earnings_provider=earnings_provider,
-            scheduler=scheduler,
-            scheduler_max_wait_seconds=DEFAULT_SCHEDULER_MAX_WAIT_SECONDS,
+    try:
+        snapshot = load_candidate_snapshot()
+        evaluated: list[tuple[CandidateSecurity, EligibilityResult]] = []
+        for candidate in snapshot.securities:
+            result = evaluate_candidate_eligibility(
+                candidate,
+                market_data_provider=market_data_provider,
+                earnings_provider=earnings_provider,
+                scheduler=scheduler,
+                scheduler_max_wait_seconds=DEFAULT_SCHEDULER_MAX_WAIT_SECONDS,
+                now=now,
+            )
+            evaluated.append((candidate, result))
+
+        cohort = select_monitored_cohort(evaluated)
+        reason_codes_by_id = {
+            candidate.canonical_id: result.reason_codes
+            for candidate, result in evaluated
+            if result.eligible
+        }
+
+        store = _get_store()
+        current_members = store.load_open() if store is not None else []
+        rebalance = rebalance_membership(
+            current_members,
+            cohort,
+            source_version=snapshot.source_version,
             now=now,
+            admission_reason_codes_by_id=reason_codes_by_id,
         )
-        evaluated.append((candidate, result))
 
-    cohort = select_monitored_cohort(evaluated)
-    reason_codes_by_id = {
-        candidate.canonical_id: result.reason_codes
-        for candidate, result in evaluated
-        if result.eligible
-    }
-
-    store = _get_store()
-    current_members = store.load_open() if store is not None else []
-    rebalance = rebalance_membership(
-        current_members,
-        cohort,
-        source_version=snapshot.source_version,
-        now=now,
-        admission_reason_codes_by_id=reason_codes_by_id,
-    )
-
-    if store is not None:
-        for record in rebalance.admitted:
-            store.save_admission(record)
-        for record in rebalance.removed:
-            store.save_removal(record)
+        if store is not None:
+            for record in rebalance.admitted:
+                store.save_admission(record)
+            for record in rebalance.removed:
+                store.save_removal(record)
+    except Exception as exc:
+        record_fault(
+            "FEED-201",
+            "universe_manager.run_universe_reevaluation",
+            context={"reason": str(exc)},
+        )
+        raise
 
     return rebalance
 
