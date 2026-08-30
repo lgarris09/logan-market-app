@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -59,10 +59,24 @@ class OpportunityContext(BaseModel):
     # never implies convergence that didn't actually fire.
     convergence_sources: list[str]
     personal_relevance: float
-    # "explicit" | "inferred" | "none" -- which kind of connection (if any)
-    # drove personal_relevance, mirroring ReasoningEngine's own
-    # connected_entities_explicit/_inferred split (ADR-048).
+    # "explicit" | "watch" | "inferred" | "none" -- which kind of connection
+    # (if any) drove personal_relevance. V2.3B Phase 2: now sourced directly
+    # from PersonalRelevanceResult.basis (logan_core/opportunity/
+    # personal_relevance.py), the single authoritative computation, rather
+    # than re-derived here from raw reasoning fields.
     connection_basis: str
+    # V2.3B Phase 2 (Learning-Driven STRATUS) Block 6 -- the bounded,
+    # explainable learned-profile context Ask STRATUS needs to answer "why
+    # does this matter to me" honestly, without a raw MemoryStore dump.
+    # Mirrors PersonalRelevanceResult's own public fields exactly (never the
+    # internal_rank_score-adjacent raw value beyond the existing
+    # personal_relevance float above, which predates this and stays for
+    # backward compat).
+    is_watched: bool = False
+    personal_relevance_evidence_count: int = 0
+    personal_relevance_strongest_signals: list[str] = Field(default_factory=list)
+    personal_relevance_not_contributing: list[str] = Field(default_factory=list)
+    personal_relevance_explanation: str = ""
     is_new_for_user: bool
 
     # Stock Opportunity Logic V2 (see docs/DECISIONS.md's Sprint 3.6.9 ADR).
@@ -144,11 +158,29 @@ def build_opportunity_context(
                 convergence_sources = [str(s) for s in sources]
             break
 
-    connection_basis = "none"
-    if result.reasoning.connected_entities_explicit:
-        connection_basis = "explicit"
-    elif result.reasoning.connected_entities_inferred:
-        connection_basis = "inferred"
+    relevance = result.recommendation.personal_relevance_result
+    if relevance is not None:
+        connection_basis = relevance.basis
+        is_watched = relevance.is_watched
+        relevance_evidence_count = relevance.evidence_count
+        relevance_strongest_signals = list(relevance.strongest_signals)
+        relevance_not_contributing = list(relevance.not_contributing)
+        relevance_explanation = relevance.explanation
+    else:
+        # Backward-compat fallback only -- every real OpportunityEngine.
+        # evaluate() call populates personal_relevance_result; this branch
+        # exists solely for a hand-built AttentionRecommendation that
+        # doesn't (e.g. an older direct-construction test).
+        connection_basis = "none"
+        if result.reasoning.connected_entities_explicit:
+            connection_basis = "explicit"
+        elif result.reasoning.connected_entities_inferred:
+            connection_basis = "inferred"
+        is_watched = False
+        relevance_evidence_count = 0
+        relevance_strongest_signals = []
+        relevance_not_contributing = []
+        relevance_explanation = ""
 
     return OpportunityContext(
         event_id=result.event.event_id,
@@ -169,6 +201,11 @@ def build_opportunity_context(
         convergence_sources=convergence_sources,
         personal_relevance=result.recommendation.dimensions.personal_relevance,
         connection_basis=connection_basis,
+        is_watched=is_watched,
+        personal_relevance_evidence_count=relevance_evidence_count,
+        personal_relevance_strongest_signals=relevance_strongest_signals,
+        personal_relevance_not_contributing=relevance_not_contributing,
+        personal_relevance_explanation=relevance_explanation,
         is_new_for_user=is_new_for_user,
         lifecycle_state=delta.new_state if delta else None,
         meaningful_change_type=delta.change_type if delta else None,

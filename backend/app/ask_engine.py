@@ -218,18 +218,45 @@ def _evidence_quality_answer(context: OpportunityContext) -> str:
 
 
 def _personal_answer(context: OpportunityContext) -> str:
+    """V2.3B Phase 2 (Learning-Driven STRATUS) Block 6: answers "why does
+    this matter to me," "why are you showing me this," "why is this near
+    the center," and "what have you learned about what I care about" --
+    grounded entirely in PersonalRelevanceResult's own real fields (basis/
+    strongest_signals/evidence_count/explanation), never invented. When
+    STRATUS genuinely has no personal connection (basis == "none"), this
+    says so honestly and points to the objective signal instead of
+    fabricating a personal reason -- the exact "I don't have enough history
+    yet..." framing the product explicitly wants here.
+    """
+    base = context.personal_relevance_explanation or context.why_it_matters_to_me
+
+    if context.connection_basis == "watch":
+        return (
+            f"{base} Because you're actively watching this, STRATUS treats it as one "
+            "of your strongest current interests."
+        )
     if context.connection_basis == "explicit":
         return (
-            f"{context.why_it_matters_to_me} This connection is based on something you "
-            "explicitly hold or follow, not an inferred pattern."
+            f"{base} This is based on something you've explicitly declared, not an "
+            "inferred pattern."
         )
     if context.connection_basis == "inferred":
-        return (
-            f"{context.why_it_matters_to_me} This is based on STRATUS's read of your "
-            "past engagement, not an explicit holding or interest -- it can grow or "
-            "fade as your behavior does."
+        detail = (
+            f" ({context.personal_relevance_evidence_count} recent qualifying "
+            "engagements)"
+            if context.personal_relevance_evidence_count >= 3
+            else ""
         )
-    return context.why_it_matters_to_me
+        return (
+            f"{base}{detail} This is based on STRATUS's read of your past "
+            "engagement, not an explicit holding or interest -- it can grow or fade "
+            "as your behavior does."
+        )
+    return (
+        "I don't have enough history yet to say this is especially relevant to you. "
+        f"I'm showing it because the underlying signal is "
+        f"{context.confidence_label.lower()}."
+    )
 
 
 def _dominant_signal_answer(context: OpportunityContext) -> str:
@@ -354,6 +381,12 @@ def answer_question(context: OpportunityContext, message: str) -> str:
             "personally",
             "affect me",
             "care about",
+            "why are you showing",
+            "why is this near",
+            "why is this in the center",
+            "why is this centered",
+            "learned about what i",
+            "why do you think i",
         ],
     ):
         return _personal_answer(context)

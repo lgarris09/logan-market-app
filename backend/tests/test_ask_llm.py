@@ -119,6 +119,45 @@ def test_system_prompt_includes_real_context_fields():
     assert "STOCK_ANALYST_UPGRADE" in prompt
 
 
+def test_system_prompt_grounds_watch_state_and_relevance_signals():
+    context = _context(
+        connection_basis="watch",
+        is_watched=True,
+        personal_relevance_strongest_signals=["You're actively watching this."],
+        personal_relevance_not_contributing=[],
+    )
+    prompt = build_system_prompt(context)
+    assert "Currently watched by this user: True" in prompt
+    assert "You're actively watching this." in prompt
+
+
+def test_system_prompt_never_dumps_raw_memory_only_this_opportunitys_signals():
+    """Block 6: a bounded, explainable context -- never a raw MemoryStore
+    dump. The prompt must not contain anything resembling internal record
+    plumbing (record_id, record_type, MemoryRecord) -- only the already-
+    summarized strongest_signals/not_contributing strings."""
+    context = _context(
+        connection_basis="inferred",
+        personal_relevance_strongest_signals=[
+            "You've returned to this 4 times recently."
+        ],
+        personal_relevance_not_contributing=[
+            "No explicit declared interest or active Watch."
+        ],
+    )
+    prompt = build_system_prompt(context)
+    assert "You've returned to this 4 times recently." in prompt
+    assert "No explicit declared interest or active Watch." in prompt
+    assert "MemoryRecord" not in prompt
+    assert "record_id" not in prompt
+
+
+def test_system_prompt_instructs_honest_answer_when_basis_is_none():
+    context = _context(connection_basis="none")
+    prompt = build_system_prompt(context)
+    assert "don't have enough history yet" in prompt
+
+
 def test_system_prompt_never_claims_convergence_that_did_not_fire():
     context = _context(trigger_codes=["STOCK_EARNINGS_BEAT"], convergence_sources=[])
     prompt = build_system_prompt(context)

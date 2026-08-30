@@ -267,3 +267,93 @@ def test_since_last_looked_answer_falls_back_to_what_happened_when_nothing_track
     context = _context(sync_summary=None, lifecycle_reason=None)
     answer = answer_question(context, "How is this different from before?")
     assert answer == context.what_happened
+
+
+# --- V2.3B Phase 2 Block 6: Ask is aware of the learned profile -----------
+
+
+def test_watch_basis_answer_mentions_watching():
+    context = _context(
+        connection_basis="watch",
+        is_watched=True,
+        personal_relevance_explanation="You're actively watching this.",
+    )
+    answer = answer_question(context, "Why does this matter to me?")
+    assert "watching" in answer.lower()
+    assert "strongest current interests" in answer.lower()
+
+
+def test_inferred_basis_cites_real_evidence_count():
+    context = _context(
+        connection_basis="inferred",
+        personal_relevance_evidence_count=4,
+        personal_relevance_explanation="You've returned to this 4 times recently.",
+    )
+    answer = answer_question(context, "Why do you think I care about this?")
+    assert "4 recent qualifying engagements" in answer
+
+
+def test_inferred_basis_with_thin_evidence_omits_the_parenthetical():
+    context = _context(
+        connection_basis="inferred",
+        personal_relevance_evidence_count=2,
+        personal_relevance_explanation="You've shown early repeated interest in this.",
+    )
+    answer = answer_question(context, "Why do you think I care about this?")
+    assert "recent qualifying engagements" not in answer
+
+
+def test_no_connection_gives_an_honest_answer_not_a_fabricated_one():
+    context = _context(
+        connection_basis="none",
+        confidence_label="High",
+        personal_relevance_explanation="",
+        personal_relevance_strongest_signals=[],
+    )
+    answer = answer_question(context, "Why are you showing me this?")
+    assert "don't have enough history" in answer.lower()
+    assert "high" in answer.lower()
+
+
+def test_no_connection_answer_never_invents_a_personal_reason():
+    context = _context(connection_basis="none", personal_relevance_explanation="")
+    answer = answer_question(context, "What have you learned about what I care about?")
+    assert "watching" not in answer.lower()
+    assert "explicitly declared" not in answer.lower()
+    assert "past engagement" not in answer.lower()
+
+
+def test_why_showing_this_question_routes_to_the_personal_answer():
+    context = _context(connection_basis="watch", is_watched=True)
+    answer = answer_question(context, "Why are you showing me this?")
+    assert answer == answer_question(context, "Why does this matter to me?")
+
+
+def test_why_near_center_question_routes_to_the_personal_answer():
+    context = _context(connection_basis="watch", is_watched=True)
+    answer = answer_question(context, "Why is this near the center?")
+    assert answer == answer_question(context, "Why does this matter to me?")
+
+
+def test_correction_changes_the_ask_explanation_without_deleting_the_opportunity():
+    """V2.3B Phase 2 Block 7 proof, at the Ask layer: once a correction has
+    removed an entity's inferred contribution, the very next context built
+    for that entity presents basis="none" -- Ask's explanation changes
+    honestly, the opportunity itself is untouched (this file only proves
+    the presentation-layer half; the full pipeline proof lives in
+    test_watch_learning_integration.py-style backend tests)."""
+    before = _context(
+        connection_basis="inferred",
+        personal_relevance_evidence_count=3,
+        personal_relevance_explanation="You've returned to this 3 times recently.",
+    )
+    after_correction = _context(
+        connection_basis="none",
+        personal_relevance_evidence_count=0,
+        personal_relevance_explanation="",
+        confidence_label="Moderate",
+    )
+    before_answer = answer_question(before, "Why does this matter to me?")
+    after_answer = answer_question(after_correction, "Why does this matter to me?")
+    assert "returned to this" in before_answer.lower()
+    assert "don't have enough history" in after_answer.lower()

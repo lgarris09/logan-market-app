@@ -164,6 +164,19 @@ def build_system_prompt(context: OpportunityContext) -> str:
         "concise prose -- but a substantive question deserves a substantive, structured",
         "answer, not just a restatement of the headline.",
         "",
+        "If asked why this matters to the user personally, why it's being shown, why",
+        "it's positioned prominently, or what STRATUS has learned about their",
+        "interests, answer using ONLY 'What's actually driving personal relevance'",
+        "and 'basis' below -- never invent a personal connection. If basis is 'none'",
+        "and nothing is driving personal relevance, say plainly that you don't have",
+        "enough history yet to call this especially relevant to them, then point to",
+        "the objective signal strength instead (e.g. 'I don't have enough history yet",
+        "to say this is especially relevant to you -- I'm showing it because the",
+        "underlying signal is strong'). That honest answer is correct and desirable,",
+        "not a failure. If basis is 'watch', mention they are actively watching this",
+        "entity. Never cite anything listed under 'What is NOT contributing' as a",
+        "reason this matters to them.",
+        "",
         f"Entity: {context.display_name} ({context.entity_id}, {context.domain})",
         f"Headline: {context.headline}",
         f"What happened: {context.what_happened}",
@@ -179,6 +192,18 @@ def build_system_prompt(context: OpportunityContext) -> str:
         f"Convergence: {convergence_line}",
         f"Personal relevance: {context.personal_relevance:.2f} "
         f"(basis: {context.connection_basis})",
+        # V2.3B Phase 2 (Learning-Driven STRATUS) Block 6: the bounded,
+        # explainable learned-profile context needed to answer "why does
+        # this matter to me"/"why are you showing this"/"what have you
+        # learned about what I care about" honestly -- never a raw
+        # MemoryStore dump, just this one opportunity's own real relevance
+        # provenance. "none" basis means STRATUS genuinely has no personal
+        # connection here; say so plainly rather than inventing one.
+        f"Currently watched by this user: {context.is_watched}",
+        "What's actually driving personal relevance: "
+        + ("; ".join(context.personal_relevance_strongest_signals) or "nothing yet"),
+        "What is NOT contributing to personal relevance: "
+        + ("; ".join(context.personal_relevance_not_contributing) or "n/a"),
     ]
     # Stock Opportunity Logic V2 (see docs/DECISIONS.md's Sprint 3.6.9 ADR):
     # when lifecycle tracking is active for this opportunity, ground the
