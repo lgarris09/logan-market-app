@@ -20,6 +20,24 @@ export type Recommendation = {
   whatWouldChangeThis?: string;
 };
 
+// V2.3B Phase 2 (Learning-Driven STRATUS) Block 5 -- the structured "why
+// this matters to you" basis behind why_it_matters_to_me above. Mirrors
+// logan_core.contracts.personal_relevance.PersonalRelevanceResult exactly.
+// Deliberately no raw numeric internals beyond `value` (kept for parity
+// with the Python contract, not meant for consumer display -- `state` is
+// the consumer-safe qualitative bucket).
+export type PersonalRelevanceResult = {
+  value: number;
+  state: "high" | "moderate" | "low" | "unknown";
+  basis: "explicit" | "watch" | "inferred" | "none";
+  is_watched: boolean;
+  evidence_count: number;
+  explicit: boolean;
+  strongest_signals: string[];
+  not_contributing: string[];
+  explanation: string;
+};
+
 export type DeliveredItem = {
   event_id: string;
   surface: "wheel" | "feed_card" | "alert" | "digest" | "background";
@@ -30,6 +48,7 @@ export type DeliveredItem = {
   why_now: string;
   confidence_label: "High" | "Moderate" | "Low" | "Speculative";
   confidence_score: number;
+  personal_relevance_result?: PersonalRelevanceResult | null;
   connected_items: string[];
   required_disclaimers: string[];
   delivered_at: string;

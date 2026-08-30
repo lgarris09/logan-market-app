@@ -617,7 +617,11 @@ class Orchestrator:
             trace,
             "presentation",
             lambda: self.deps.presentation_engine.deliver(
-                prioritized_item, reasoning, confidence, policy_result
+                prioritized_item,
+                reasoning,
+                confidence,
+                policy_result,
+                personal_relevance_result=recommendation.personal_relevance_result,
             ),
             event_id=event.event_id,
         )

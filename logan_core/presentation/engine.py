@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from logan_core.contracts import (
     ConclusionConfidence,
     DecisionTraceEntry,
     DeliveredItem,
+    PersonalRelevanceResult,
     PolicyResult,
     PrioritizedItem,
     ReasoningResult,
@@ -33,6 +34,7 @@ class PresentationEngine:
         reasoning: ReasoningResult,
         confidence: ConclusionConfidence,
         policy_result: PolicyResult,
+        personal_relevance_result: Optional[PersonalRelevanceResult] = None,
     ) -> DeliveredItem:
         now = datetime.now(timezone.utc)
 
@@ -60,6 +62,7 @@ class PresentationEngine:
             why_now=_URGENCY_BY_INTERRUPTION.get(prioritized_item.interruption, ""),
             confidence_label=confidence_label_for(confidence.confidence_score),
             confidence_score=confidence.confidence_score,
+            personal_relevance_result=personal_relevance_result,
             required_disclaimers=policy_result.required_disclaimers,
             delivered_at=now,
             decision_trace=[

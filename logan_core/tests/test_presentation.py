@@ -108,3 +108,39 @@ def test_decision_trace_populated():
     )
     assert len(delivered.decision_trace) == 1
     assert "surface=" in delivered.decision_trace[0].rule
+
+
+# --- V2.3B Phase 2 Block 5: personal_relevance_result passthrough ----------
+
+
+def test_personal_relevance_result_defaults_to_none():
+    event_id = uuid4()
+    item = _prioritized(event_id)
+    delivered = PresentationEngine().deliver(
+        item, _reasoning(event_id), _confidence(event_id), _policy_result(event_id)
+    )
+    assert delivered.personal_relevance_result is None
+
+
+def test_personal_relevance_result_is_carried_through_verbatim():
+    from logan_core.contracts import PersonalRelevanceResult
+
+    event_id = uuid4()
+    item = _prioritized(event_id)
+    relevance = PersonalRelevanceResult(
+        value=0.6,
+        state="high",
+        basis="watch",
+        is_watched=True,
+        strongest_signals=["You're actively watching this."],
+        explicit=True,
+        explanation="You're actively watching this.",
+    )
+    delivered = PresentationEngine().deliver(
+        item,
+        _reasoning(event_id),
+        _confidence(event_id),
+        _policy_result(event_id),
+        personal_relevance_result=relevance,
+    )
+    assert delivered.personal_relevance_result == relevance
