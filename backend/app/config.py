@@ -367,6 +367,33 @@ def watch_store_db_path() -> Path:
     return memory_store_db_path().parent / "watches.db"
 
 
+def universe_membership_db_path() -> Path:
+    """Universe Manager V1a Block 5: the durable SQLite file backing the
+    Universe Membership Ledger (see universe_store.py) when
+    memory_persistence_enabled() is true -- same pattern as every other
+    Sprint 3.6.9+ store. Defaults to a sibling `universe_membership.db`;
+    overridable via STRATUS_UNIVERSE_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_UNIVERSE_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "universe_membership.db"
+
+
+def universe_manager_enabled() -> bool:
+    """Universe Manager V1a: whether `live_stock_tickers()` should be
+    sourced from the Universe Manager's current MONITORED cohort instead of
+    the raw STRATUS_LIVE_STOCK_TICKERS env var. Defaults to disabled --
+    Universe Manager V1a is built, tested, and ready, but activating it
+    changes which tickers a real deployment polls, which is exactly the
+    kind of infra/production-behavior decision this repo's ADR-008
+    collaboration model reserves for an explicit human choice, not
+    something this pass turns on unilaterally. Every existing caller/test
+    is completely unaffected while this stays False (the default).
+    """
+    return _env_flag("STRATUS_UNIVERSE_MANAGER_ENABLED")
+
+
 def cors_allowed_origins() -> list[str]:
     """Sprint 3.6.9 Block 1: environment-configurable CORS policy, replacing
     the previous hardcoded `allow_origins=["*"]`. Reads

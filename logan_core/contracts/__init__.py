@@ -55,6 +55,16 @@ from .reasoning import ReasoningResult
 from .signals import NormalizedSignal, RawSignal
 from .trigger import TriggerClass, TriggerDirection, TriggerEvent, TriggerStatus
 from .trust import EvidenceTrust, SourceObservation
+from .universe import (
+    CandidateSecurity,
+    CandidateSourceSnapshot,
+    CohortRebalanceResult,
+    EligibilityResult,
+    MarketCapBand,
+    MembershipRecord,
+    SignalFamilyCoverage,
+    UniverseLifecycleState,
+)
 from .user_model import (
     BehaviorPattern,
     DomainPref,
@@ -137,4 +147,12 @@ __all__ = [
     "TrajectoryState",
     "MarketEvidenceInput",
     "EvidenceSnapshot",
+    "UniverseLifecycleState",
+    "MarketCapBand",
+    "CandidateSecurity",
+    "CandidateSourceSnapshot",
+    "SignalFamilyCoverage",
+    "EligibilityResult",
+    "MembershipRecord",
+    "CohortRebalanceResult",
 ]
