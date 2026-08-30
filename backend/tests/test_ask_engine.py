@@ -313,7 +313,22 @@ def test_inferred_basis_cites_real_evidence_count():
         personal_relevance_explanation="You've returned to this 4 times recently.",
     )
     answer = answer_question(context, "Why do you think I care about this?")
-    assert "4 recent qualifying engagements" in answer
+    assert "returned to this 4 times" in answer.lower()
+
+
+def test_inferred_basis_never_restates_the_evidence_count_twice():
+    """2026-08-30 polish: `base` already states the count in words
+    ("You've returned to this 4 times recently.") -- the answer must not
+    also append a redundant "(4 recent qualifying engagements)" restating
+    the same number a second time."""
+    context = _context(
+        connection_basis="inferred",
+        personal_relevance_evidence_count=4,
+        personal_relevance_explanation="You've returned to this 4 times recently.",
+    )
+    answer = answer_question(context, "Why do you think I care about this?")
+    assert "recent qualifying engagements" not in answer
+    assert answer.count("4") == 1
 
 
 def test_inferred_basis_with_thin_evidence_omits_the_parenthetical():

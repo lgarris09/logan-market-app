@@ -255,14 +255,19 @@ def _personal_answer(context: OpportunityContext) -> str:
         # inferred distinction instead of repeating "explicitly declared."
         return f"{base} It's explicit, not something STRATUS is guessing at from your behavior."
     if context.connection_basis == "inferred":
-        detail = (
-            f" ({context.personal_relevance_evidence_count} recent qualifying "
-            "engagements)"
-            if context.personal_relevance_evidence_count >= 3
-            else ""
-        )
+        # 2026-08-30 polish: the removed `detail` suffix used to add
+        # "(N recent qualifying engagements)" whenever evidence_count >= 3 --
+        # but `base` (PersonalRelevanceResult's own strongest_signals[0])
+        # already states that exact same count in its own words in exactly
+        # that same case ("You've returned to this 4 times recently."),
+        # since compute_personal_relevance() only switches to counted
+        # wording once evidence_count >= 3 too. `detail` therefore never
+        # added information in any case it actually fired -- it only ever
+        # restated the number `base` had just said, the same self-repetition
+        # class as the watch/explicit branches above ("You've returned to
+        # this 4 times recently. (4 recent qualifying engagements)").
         return (
-            f"{base}{detail} This is based on STRATUS's read of your past "
+            f"{base} This is based on STRATUS's read of your past "
             "engagement, not an explicit holding or interest -- it can grow or fade "
             "as your behavior does."
         )
