@@ -1,5 +1,7 @@
 import os
+import threading
 import time
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -9,7 +11,6 @@ import httpx
 from logan_core.diagnostics import record_fault
 
 from .base import CompanyProfile, EarningsReport, GradeChange, Quote
-
 
 # Substrings already consistently used, verbatim, by every "response shape
 # wasn't what we expected" FmpProviderError this file raises (JSON parse
@@ -182,6 +183,24 @@ PERMANENT_FAILURE_SUPPRESSION_SECONDS = 24 * 60 * 60  # 24 hours
 _PERMANENT_FAILURE_STATUS_CODES = frozenset({401, 402, 403, 404})
 
 
+def _stable_jitter_fraction(key: tuple[str, str]) -> float:
+    """Operational Beta Hardening Block 6 -- a deterministic, reproducible
+    value in [0.0, 1.0) derived purely from `key`, used to spread different
+    (endpoint, entity_id) entries' effective TTLs apart (TTL staggering) so
+    a batch of entries all cached at the same instant (a cold start across
+    many tickers) don't all expire at the exact same instant later, which
+    would otherwise turn a smoothed cold start into a synchronized refetch
+    burst one TTL period afterward. Deterministic (not `random.random()`)
+    so this is exactly reproducible in tests and never introduces flakiness
+    -- the same key always gets the same jitter fraction."""
+    # zlib.crc32, not Python's built-in hash() -- str hashing is randomized
+    # per-process (PYTHONHASHSEED) by design, which would make this value
+    # differ across process restarts/test runs for the exact same key. crc32
+    # is a plain deterministic function of the encoded bytes, stable forever.
+    digest = zlib.crc32(f"{key[0]}|{key[1]}".encode())
+    return (digest % 1000) / 1000.0
+
+
 class _FmpCacheEntry:
     __slots__ = ("value", "cached_at")
 
@@ -232,6 +251,26 @@ class FmpResponseCache:
         self._suppressed_negative_cache: dict[tuple[str, str], int] = {}
         self._failures_count: dict[tuple[str, str], int] = {}
         self._created_at = self._clock()
+        # Operational Beta Hardening Block 6 -- Cold-Start Provider Burst
+        # Smoothing: a per-(endpoint, entity_id) lock, created lazily and
+        # never removed (bounded by the number of distinct keys this process
+        # ever queries, same lifetime posture as every other dict here).
+        # Guards only the "cache is cold, must fetch" path below -- the warm-
+        # cache read at the top of get_or_fetch stays lock-free, so this adds
+        # no per-call overhead once a key is warm. `_key_locks_guard` protects
+        # only the lazy creation of a new per-key lock, never the fetch
+        # itself, so two callers for two *different* keys never block on
+        # each other.
+        self._key_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._key_locks_guard = threading.Lock()
+
+    def _lock_for(self, key: tuple[str, str]) -> threading.Lock:
+        with self._key_locks_guard:
+            lock = self._key_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[key] = lock
+            return lock
 
     def _bump(self, counters: dict[tuple[str, str], int], key: tuple[str, str]) -> None:
         counters[key] = counters.get(key, 0) + 1
@@ -243,111 +282,141 @@ class FmpResponseCache:
         ttl_seconds: float,
         fetch: Callable[[], object],
         stale_grace_seconds: float = 0.0,
+        jitter_seconds: float = 0.0,
     ) -> object:
+        """`jitter_seconds` (Operational Beta Hardening Block 6, default 0.0
+        -- byte-identical behavior for every pre-existing caller unless it
+        explicitly opts in): spreads this specific key's effective TTL by a
+        deterministic fraction of `jitter_seconds` (see
+        `_stable_jitter_fraction`), so a batch of entries all cached at the
+        same instant (a many-ticker cold start) expire staggered across a
+        window instead of in one synchronized instant, which would otherwise
+        turn a smoothed cold start into a synchronized refetch burst one TTL
+        period later.
+        """
         key = (endpoint, entity_id)
+        effective_ttl = ttl_seconds + jitter_seconds * _stable_jitter_fraction(key)
         now = self._clock()
         entry = self._entries.get(key)
-        if entry is not None and (now - entry.cached_at) < ttl_seconds:
+        if entry is not None and (now - entry.cached_at) < effective_ttl:
             self._bump(self._cache_hits, key)
             return entry.value
 
-        # 2026-08-29: a known-recent failure for this exact (endpoint,
-        # entity_id) suppresses the network attempt entirely until its own
-        # window elapses -- this is what stops a persistent 429/402 from
-        # being retried every single poll (see the module-level constants'
-        # docstring above `_FmpFailureEntry`). This is a decision about
-        # whether to call `fetch()` at all, never a substitute for its
-        # result: the two outcomes below are byte-identical to what this
-        # function already did on a fresh failure -- serve a still-in-grace
-        # stale value, or raise -- just without spending a real HTTP call to
-        # get there again.
-        failure = self._failures.get(key)
-        if failure is not None:
-            suppression_seconds = (
-                PERMANENT_FAILURE_SUPPRESSION_SECONDS
-                if failure.status_code in _PERMANENT_FAILURE_STATUS_CODES
-                else TRANSIENT_FAILURE_SUPPRESSION_SECONDS
-            )
-            if (now - failure.failed_at) < suppression_seconds:
-                self._bump(self._suppressed_negative_cache, key)
+        # Operational Beta Hardening Block 6 -- Cold-Start Provider Burst
+        # Smoothing ("warming queue"): everything below only ever runs while
+        # holding this exact key's lock, so concurrent callers racing to
+        # warm the *same* cold (endpoint, entity_id) coalesce into a single
+        # real fetch -- the rest block here, then re-check the cache (the
+        # `entry = self._entries.get(key)` / freshness check immediately
+        # below) and find it already warmed by whichever caller got there
+        # first, returning that shared value instead of each independently
+        # calling FMP. Two callers for two *different* keys never contend --
+        # each key has its own lock.
+        with self._lock_for(key):
+            now = self._clock()
+            entry = self._entries.get(key)
+            if entry is not None and (now - entry.cached_at) < effective_ttl:
+                self._bump(self._cache_hits, key)
+                return entry.value
+
+            # 2026-08-29: a known-recent failure for this exact (endpoint,
+            # entity_id) suppresses the network attempt entirely until its own
+            # window elapses -- this is what stops a persistent 429/402 from
+            # being retried every single poll (see the module-level constants'
+            # docstring above `_FmpFailureEntry`). This is a decision about
+            # whether to call `fetch()` at all, never a substitute for its
+            # result: the two outcomes below are byte-identical to what this
+            # function already did on a fresh failure -- serve a still-in-grace
+            # stale value, or raise -- just without spending a real HTTP call to
+            # get there again.
+            failure = self._failures.get(key)
+            if failure is not None:
+                suppression_seconds = (
+                    PERMANENT_FAILURE_SUPPRESSION_SECONDS
+                    if failure.status_code in _PERMANENT_FAILURE_STATUS_CODES
+                    else TRANSIENT_FAILURE_SUPPRESSION_SECONDS
+                )
+                if (now - failure.failed_at) < suppression_seconds:
+                    self._bump(self._suppressed_negative_cache, key)
+                    if (
+                        stale_grace_seconds > 0
+                        and entry is not None
+                        and (now - entry.cached_at)
+                        < effective_ttl + stale_grace_seconds
+                    ):
+                        record_fault(
+                            "DATA-304",
+                            "fmp_provider",
+                            context={"endpoint": endpoint, "entity_id": entity_id},
+                            provider_status=failure.status_code,
+                        )
+                        return entry.value
+                    record_fault(
+                        _data_fault_code(failure.status_code, failure.message),
+                        "fmp_provider",
+                        context={
+                            "endpoint": endpoint,
+                            "entity_id": entity_id,
+                            "suppressed_retry": True,
+                        },
+                        provider_status=failure.status_code,
+                    )
+                    raise FmpProviderError(
+                        f"[fmp-cache] {endpoint}/{entity_id}: suppressing retry of a "
+                        f"known failure from {now - failure.failed_at:.0f}s ago "
+                        f"(retries resume after {suppression_seconds:.0f}s total; "
+                        f"last real attempt: {failure.message})",
+                        status_code=failure.status_code,
+                    )
+
+            # A raised FmpProviderError still propagates uncached-as-data by
+            # default (stale_grace_seconds == 0, every pre-V2.3A.1 caller) --
+            # never mistaken for a real "no data" response, never poisons the
+            # cache for other callers sharing it. When a caller opts into a
+            # grace window (see fetch_latest_earnings: a quarterly report
+            # doesn't become wrong minutes after its TTL lapses) and a fetch
+            # failure happens while a still-within-grace stale entry exists,
+            # that entry is served instead -- its own `cached_at` is left
+            # untouched, so the very next call still attempts a real refetch
+            # rather than treating this as a fresh success.
+            try:
+                value = fetch()
+            except FmpProviderError as exc:
+                self._bump(self._failures_count, key)
+                status_code = getattr(exc, "status_code", None)
+                self._failures[key] = _FmpFailureEntry(
+                    failed_at=now, message=str(exc), status_code=status_code
+                )
                 if (
                     stale_grace_seconds > 0
                     and entry is not None
-                    and (now - entry.cached_at) < ttl_seconds + stale_grace_seconds
+                    and (now - entry.cached_at) < effective_ttl + stale_grace_seconds
                 ):
+                    print(
+                        f"[fmp-cache] {endpoint}/{entity_id}: refetch failed "
+                        f"({exc}), serving stale cache (age={now - entry.cached_at:.0f}s) "
+                        "rather than dropping a still-valid recent result"
+                    )
                     record_fault(
                         "DATA-304",
                         "fmp_provider",
                         context={"endpoint": endpoint, "entity_id": entity_id},
-                        provider_status=failure.status_code,
+                        provider_status=status_code,
                     )
                     return entry.value
                 record_fault(
-                    _data_fault_code(failure.status_code, failure.message),
-                    "fmp_provider",
-                    context={
-                        "endpoint": endpoint,
-                        "entity_id": entity_id,
-                        "suppressed_retry": True,
-                    },
-                    provider_status=failure.status_code,
-                )
-                raise FmpProviderError(
-                    f"[fmp-cache] {endpoint}/{entity_id}: suppressing retry of a "
-                    f"known failure from {now - failure.failed_at:.0f}s ago "
-                    f"(retries resume after {suppression_seconds:.0f}s total; "
-                    f"last real attempt: {failure.message})",
-                    status_code=failure.status_code,
-                )
-
-        # A raised FmpProviderError still propagates uncached-as-data by
-        # default (stale_grace_seconds == 0, every pre-V2.3A.1 caller) --
-        # never mistaken for a real "no data" response, never poisons the
-        # cache for other callers sharing it. When a caller opts into a
-        # grace window (see fetch_latest_earnings: a quarterly report
-        # doesn't become wrong minutes after its TTL lapses) and a fetch
-        # failure happens while a still-within-grace stale entry exists,
-        # that entry is served instead -- its own `cached_at` is left
-        # untouched, so the very next call still attempts a real refetch
-        # rather than treating this as a fresh success.
-        try:
-            value = fetch()
-        except FmpProviderError as exc:
-            self._bump(self._failures_count, key)
-            status_code = getattr(exc, "status_code", None)
-            self._failures[key] = _FmpFailureEntry(
-                failed_at=now, message=str(exc), status_code=status_code
-            )
-            if (
-                stale_grace_seconds > 0
-                and entry is not None
-                and (now - entry.cached_at) < ttl_seconds + stale_grace_seconds
-            ):
-                print(
-                    f"[fmp-cache] {endpoint}/{entity_id}: refetch failed "
-                    f"({exc}), serving stale cache (age={now - entry.cached_at:.0f}s) "
-                    "rather than dropping a still-valid recent result"
-                )
-                record_fault(
-                    "DATA-304",
+                    _data_fault_code(status_code, str(exc)),
                     "fmp_provider",
                     context={"endpoint": endpoint, "entity_id": entity_id},
                     provider_status=status_code,
                 )
-                return entry.value
-            record_fault(
-                _data_fault_code(status_code, str(exc)),
-                "fmp_provider",
-                context={"endpoint": endpoint, "entity_id": entity_id},
-                provider_status=status_code,
-            )
-            raise
-        # A genuine success always clears any prior failure record -- the
-        # negative state never outlives the condition that created it.
-        self._bump(self._real_calls, key)
-        self._failures.pop(key, None)
-        self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
-        return value
+                raise
+            # A genuine success always clears any prior failure record -- the
+            # negative state never outlives the condition that created it.
+            self._bump(self._real_calls, key)
+            self._failures.pop(key, None)
+            self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
+            return value
 
     def clear(self) -> None:
         self._entries.clear()
