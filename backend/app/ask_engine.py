@@ -231,15 +231,21 @@ def _personal_answer(context: OpportunityContext) -> str:
     base = context.personal_relevance_explanation or context.why_it_matters_to_me
 
     if context.connection_basis == "watch":
+        # 2026-08-30 polish: `base` is already the exact "You're actively
+        # watching this." sentence (compute_personal_relevance's own watch
+        # explanation) -- the follow-on must add new information, never
+        # restate that same fact (the previous wording did exactly that:
+        # "You're actively watching this. Because you're actively watching
+        # this, STRATUS treats it as...").
         return (
-            f"{base} Because you're actively watching this, STRATUS treats it as one "
-            "of your strongest current interests."
+            f"{base} STRATUS treats an active Watch as one of the strongest signals "
+            "of your current interest."
         )
     if context.connection_basis == "explicit":
-        return (
-            f"{base} This is based on something you've explicitly declared, not an "
-            "inferred pattern."
-        )
+        # Same fix: `base` already says "This matches an interest you've
+        # explicitly declared." -- the follow-on adds the explicit-vs-
+        # inferred distinction instead of repeating "explicitly declared."
+        return f"{base} It's explicit, not something STRATUS is guessing at from your behavior."
     if context.connection_basis == "inferred":
         detail = (
             f" ({context.personal_relevance_evidence_count} recent qualifying "

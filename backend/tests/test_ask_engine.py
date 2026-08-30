@@ -280,7 +280,30 @@ def test_watch_basis_answer_mentions_watching():
     )
     answer = answer_question(context, "Why does this matter to me?")
     assert "watching" in answer.lower()
-    assert "strongest current interests" in answer.lower()
+    assert "strongest signals" in answer.lower()
+
+
+def test_watch_basis_answer_never_repeats_itself():
+    """2026-08-30 polish: the follow-on sentence must add new information,
+    never restate the exact same fact the explanation already gave (the
+    bug this closes: 'You're actively watching this. Because you're
+    actively watching this, ...')."""
+    context = _context(
+        connection_basis="watch",
+        is_watched=True,
+        personal_relevance_explanation="You're actively watching this.",
+    )
+    answer = answer_question(context, "Why does this matter to me?")
+    assert answer.lower().count("actively watching") == 1
+
+
+def test_explicit_basis_answer_never_repeats_itself():
+    context = _context(
+        connection_basis="explicit",
+        personal_relevance_explanation="This matches an interest you've explicitly declared.",
+    )
+    answer = answer_question(context, "Why does this matter to me?")
+    assert answer.lower().count("explicitly declared") == 1
 
 
 def test_inferred_basis_cites_real_evidence_count():
