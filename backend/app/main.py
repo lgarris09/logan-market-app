@@ -19,6 +19,7 @@ from .config import (
 )
 from .data import DEMO_OPPORTUNITIES
 from .learning import get_learning_report, suppress_entity_learning
+from .learning_decision_report import build_learning_decision_report
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
 from .logan_feed import (
     DemoFeedResponse,
@@ -228,6 +229,23 @@ def opportunity_quality_route(
         else list(live_stock_tickers())
     )
     return {"report": format_opportunity_quality_report(requested)}
+
+
+@app.get("/v1/dev/learning-decision")
+def learning_decision_report_route(
+    entity_id: str = Query(...), user_id: str = Depends(resolve_user_id)
+) -> dict[str, str]:
+    """V2.3B Phase 2 (Learning-Driven STRATUS) Block 10 -- the Learning
+    Decision Report: World/Learned user context/Personal relevance/
+    Attention decision/Why not higher-lower for one (user, entity) pair.
+    Identity-scoped like every other user-facing route -- unlike
+    /v1/dev/fmp-budget and /v1/dev/opportunity-quality (process-wide
+    operational data), this reveals one specific user's own learned
+    profile, so it resolves and is scoped to the caller's own identity, not
+    left unauthenticated.
+    """
+    check_rate_limit("learning_report", user_id, *_LEARNING_REPORT_RATE_LIMIT)
+    return {"report": build_learning_decision_report(user_id, entity_id.upper())}
 
 
 @app.get("/v1/dev/fmp-budget")
