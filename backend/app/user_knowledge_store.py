@@ -10,9 +10,14 @@ write-through on mutation.
 """
 
 import sqlite3
+import sys
 from pathlib import Path
 
-from logan_core.opportunity_lifecycle import UserOpportunityKnowledge
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.opportunity_lifecycle import UserOpportunityKnowledge  # noqa: E402
 
 
 class UserKnowledgeStore:

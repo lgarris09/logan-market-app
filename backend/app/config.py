@@ -82,6 +82,19 @@ _LEGACY_NVDA_ONLY_TICKERS: tuple[str, ...] = ("NVDA",)
 
 
 # Operational Beta Hardening Block 5 -- Ten-Ticker Beta Universe Readiness.
+#
+# SUPERSEDED (2026-08-30) by Universe Manager V1a -- see
+# logan_core/universe/candidate_source.py's versioned S&P 100 snapshot +
+# logan_core/universe/eligibility.py + cohort_selection.py, which now
+# define the real, deterministic, sector-capped 25-35-name monitored-cohort
+# selection this constant was only ever a hand-picked, temporary stand-in
+# for. Kept here, unmodified, as historical documentation of the Block 5
+# reasoning that led to it -- not deleted -- but it must not be turned into
+# production config: Universe Manager V1a's cohort_selection.py output
+# (once a human reviews and approves a real reevaluation run) is the
+# current authority on what an initial monitored universe should be, not
+# this hand-picked list.
+#
 # A PROPOSAL, not a configured value: this constant is never read by
 # live_stock_tickers() below or by any runtime code path -- it exists only
 # so the exact recommended value is written down once, in the one place a

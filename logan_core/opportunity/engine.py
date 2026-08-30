@@ -13,6 +13,13 @@ from logan_core.contracts import (
 
 from .personal_relevance import compute_personal_relevance
 
+# Universe Manager V1a Block 20 -- an independently identifiable version
+# for the internal_rank_score formula/weights below (Dimensions ->
+# internal_rank_score) -- this codebase's own "Attention ranking policy."
+# A version bump documents a real change to the ranking formula itself,
+# never silently implied by an unrelated change elsewhere.
+ATTENTION_RANKING_POLICY_VERSION_V1 = "attention-ranking-v1"
+
 RECOMMEND_THRESHOLD = 0.35
 
 _LIFECYCLE_URGENCY = {"emerging": 0.8, "peak": 0.5, "fading": 0.2, "dormant": 0.1}

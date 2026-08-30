@@ -29,10 +29,15 @@ genuine "no earnings on file" `None` result -- see its own docstring).
 """
 
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from logan_core.receptors.providers import EarningsReport
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.receptors.providers import EarningsReport  # noqa: E402
 
 
 class EarningsCacheStore:

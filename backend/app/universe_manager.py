@@ -79,6 +79,13 @@ def _get_store() -> Optional[UniverseMembershipStore]:
     return _store
 
 
+def get_membership_store() -> Optional[UniverseMembershipStore]:
+    """Public accessor for `universe_report.py` and any other future
+    reader of the durable membership ledger -- returns None when
+    persistence is disabled, same posture as `_get_store()` itself."""
+    return _get_store()
+
+
 def reset_universe_manager_state() -> None:
     """Test-only (and general-purpose "start over") hook, mirroring
     reset_watch_state(). Releases the durable store's SQLite connection

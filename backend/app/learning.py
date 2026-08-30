@@ -12,15 +12,21 @@ This module adds visibility and correction only -- it never touches
 ranking, scoring, or Attention Field placement.
 """
 
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
-
-from logan_core.contracts import Domain, LearningReport
-from logan_core.learning import build_learning_report
-from logan_core.user_model import UserModelBuilder
 
 from .logan_feed import _get_orchestrator, _seed_user_model
 from .models import ConsumerLearningSummary, ConsumerLearningTrait
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts import Domain, LearningReport  # noqa: E402
+from logan_core.learning import build_learning_report  # noqa: E402
+from logan_core.user_model import UserModelBuilder  # noqa: E402
 
 # Operational Beta Hardening Block 4 -- one honest, standing sentence about
 # what "learning" means here, never per-user data. Kept separate from

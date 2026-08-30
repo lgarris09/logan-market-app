@@ -17,9 +17,14 @@ flag, load-on-first-use, write-through on mutation.
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
-from logan_core.contracts import OpportunityRevision
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts import OpportunityRevision  # noqa: E402
 
 
 class OpportunityRevisionStore:

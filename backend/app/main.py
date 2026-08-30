@@ -81,6 +81,7 @@ from .telemetry_models import (
     TelemetryEventRequest,
     TelemetryEventResponse,
 )
+from .universe_report import build_universe_report
 from .user_context import (
     AccountLinkConflictError,
     link_account,
@@ -216,6 +217,20 @@ memory_engine = MemoryEngine(legacy_memory_db_path())
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "online", "service": "logan-intelligence-api", "version": "1.0.0"}
+
+
+@app.get("/v1/dev/universe-report")
+def universe_report_route() -> dict[str, str]:
+    """Universe Manager V1a Blocks 17/19 -- the developer-readable
+    operational report combining Universe (candidate source, monitored
+    cohort, sector representation, admissions/removals), Provider (real
+    FMP budget), Exploration (honest zero-state until the batch mechanism
+    is wired into the live feed path), and Diagnostics (the existing fault
+    catalog). Read-only, and deliberately cheap -- never triggers a new
+    reevaluation. Same unauthenticated, process-wide-operational-data
+    posture as /v1/dev/fmp-budget and /v1/dev/opportunity-quality.
+    """
+    return {"report": build_universe_report()}
 
 
 @app.get("/v1/dev/opportunity-quality")

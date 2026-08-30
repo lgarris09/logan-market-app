@@ -14,14 +14,20 @@ itself would run for each ticker, read-only (no RawSignal is constructed,
 nothing is written to Memory/UserModel/the orchestrator).
 """
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-from logan_core.receptors.providers import (
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.receptors.providers import (  # noqa: E402
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
 )
-from logan_core.trigger_detection import (
+from logan_core.trigger_detection import (  # noqa: E402
     evaluate_analyst_grade_condition,
     evaluate_earnings_beat_condition,
     evaluate_price_move_condition,

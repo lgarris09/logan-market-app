@@ -1,0 +1,146 @@
+"""Universe Manager V1a Blocks 17/19 -- the developer-readable universe
+report (backend/app/universe_report.py) and GET /v1/dev/universe-report.
+"""
+
+from datetime import datetime, timezone
+
+from fastapi.testclient import TestClient
+
+from backend.app.main import app
+from backend.app.universe_manager import (
+    reset_universe_manager_state,
+    run_universe_reevaluation,
+)
+from backend.app.universe_report import build_universe_report
+from logan_core.receptors.providers import (
+    CompanyProfile,
+    EarningsReport,
+    FixtureEarningsProvider,
+    FixtureMarketDataProvider,
+    GradeChange,
+    Quote,
+)
+from logan_core.universe.candidate_source import load_candidate_snapshot
+
+client = TestClient(app)
+NOW = datetime.now(timezone.utc)
+
+
+def _quote(symbol: str) -> Quote:
+    return Quote(
+        entity_id=symbol,
+        price=100.0,
+        previous_close=99.0,
+        change_pct=1.0,
+        quote_timestamp=NOW,
+        source_id="fixture",
+        source_name="fixture",
+    )
+
+
+def _profile(symbol: str) -> CompanyProfile:
+    return CompanyProfile(
+        entity_id=symbol,
+        sector="Technology",
+        industry="Software",
+        average_volume=1_000_000.0,
+        beta=1.1,
+        source_id="fixture",
+        source_name="fixture",
+    )
+
+
+def _earnings(symbol: str) -> EarningsReport:
+    return EarningsReport(
+        entity_id=symbol,
+        actual_eps=1.0,
+        consensus_eps=0.9,
+        fiscal_quarter="Q2 2026",
+        guidance_revised=False,
+        guidance_delta_pct=0.0,
+        report_timestamp=NOW,
+        source_id="fixture",
+        source_name="fixture",
+    )
+
+
+def _grade(symbol: str) -> GradeChange:
+    return GradeChange(
+        entity_id=symbol,
+        grading_firm="Fixture Analytics",
+        previous_rating="Hold",
+        new_rating="Buy",
+        action="upgrade",
+        action_date=NOW,
+        source_id="fixture",
+        source_name="fixture",
+    )
+
+
+def test_report_includes_universe_provider_exploration_and_diagnostics_sections():
+    report = build_universe_report()
+    assert "Universe" in report
+    assert "Provider" in report
+    assert "Exploration" in report
+    assert "Diagnostics" in report
+
+
+def test_report_never_fabricates_exploration_placement_history():
+    report = build_universe_report()
+    assert "not yet available" in report
+
+
+def test_report_reflects_candidate_source_metadata():
+    snapshot = load_candidate_snapshot()
+    report = build_universe_report()
+    assert snapshot.source_version in report
+    assert str(len(snapshot.securities)) in report
+
+
+def test_report_reflects_real_monitored_cohort_when_persistence_enabled(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    reset_universe_manager_state()
+
+    snapshot = load_candidate_snapshot()
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {s.symbol: _profile(s.symbol) for s in snapshot.securities}
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+
+    run_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    report = build_universe_report()
+    assert "monitored count: " in report
+    assert "sector representation:" in report
+    assert "historical admissions:" in report
+
+
+def test_route_returns_a_report_string():
+    response = client.get("/v1/dev/universe-report")
+    assert response.status_code == 200
+    body = response.json()
+    assert "report" in body
+    assert "Universe" in body["report"]
+
+
+def test_route_never_leaks_a_key():
+    import os
+
+    old = os.environ.get("FMP_API_KEY")
+    os.environ["FMP_API_KEY"] = "totally-real-secret-key-value"
+    try:
+        response = client.get("/v1/dev/universe-report")
+        assert "totally-real-secret-key-value" not in response.text
+    finally:
+        if old is not None:
+            os.environ["FMP_API_KEY"] = old
+        else:
+            os.environ.pop("FMP_API_KEY", None)

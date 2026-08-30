@@ -13,6 +13,13 @@ from logan_core.contracts import (
 )
 from logan_core.memory import MemoryStore
 
+# Universe Manager V1a Block 20 -- an independently identifiable version
+# for how this engine interprets feedback/exposure/correction evidence into
+# UserModel state. A version bump here documents a real change to that
+# interpretation (e.g. a new evidence-weighting rule); it is not, on its
+# own, a signal to re-derive every user's existing learned state.
+LEARNING_INTERPRETATION_POLICY_VERSION_V1 = "learning-interpretation-v1"
+
 REVIEW_CONFIDENCE_THRESHOLD = 0.40
 
 # Sprint 3.6.7 Block 3: short-window idempotency for feedback interactions --

@@ -31,18 +31,24 @@ failing silently until someone re-registers.
 """
 
 import re
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, cast
 from uuid import UUID
 
 import httpx
 
-from logan_core.contracts import MeaningfulChangeType
-
 from .config import memory_persistence_enabled, notification_store_db_path
 from .logan_feed import FeedItem, get_alert_eligible_items, mark_user_notified
 from .models import RegisterPushTokenRequest, RegisterPushTokenResponse
 from .notification_store import NotificationStore
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts import MeaningfulChangeType  # noqa: E402
 
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 # Matches the mobile app's own foreground poll cadence (index.tsx's
