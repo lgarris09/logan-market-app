@@ -1,11 +1,62 @@
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import httpx
 
 from .base import CompanyProfile, EarningsReport, GradeChange, Quote
+
+
+@dataclass(frozen=True)
+class FmpEndpointCounts:
+    """Operational Beta Live Supply V2, Block 4 -- call counters for one
+    endpoint (or one (endpoint, entity_id) pair). Counts only."""
+
+    real_calls: int
+    cache_hits: int
+    suppressed_negative_cache: int
+    failures: int
+
+    @property
+    def total_attempts(self) -> int:
+        return self.real_calls + self.cache_hits + self.suppressed_negative_cache
+
+
+@dataclass(frozen=True)
+class FmpBudgetSnapshot:
+    by_endpoint: dict
+    by_ticker: dict
+    age_seconds: float
+
+    def format_report(self) -> str:
+        """The human-readable "FMP Provider Budget" report -- see
+        FmpResponseCache.budget_snapshot's own docstring for exactly what
+        each number does and does not mean. Never includes an API key,
+        secret, or raw request/response body -- endpoint names and tickers
+        only."""
+        lines = ["FMP Provider Budget"]
+        total_real = 0
+        for endpoint in sorted(self.by_endpoint):
+            counts = self.by_endpoint[endpoint]
+            total_real += counts.real_calls
+            lines.append(
+                f"  {endpoint}: {counts.real_calls} real calls / "
+                f"{counts.cache_hits} cache hits / "
+                f"{counts.suppressed_negative_cache} suppressed (negative-cache) / "
+                f"{counts.failures} failures"
+            )
+        if not self.by_endpoint:
+            lines.append("  (no FMP calls recorded yet this process)")
+        hours = max(self.age_seconds / 3600.0, 1e-9)
+        estimated_24h = total_real / hours * 24.0
+        lines.append(
+            f"  window: {self.age_seconds / 3600.0:.2f}h since last reset -- "
+            f"estimated 24h real-call rate at this cadence: {estimated_24h:.0f}"
+        )
+        return "\n".join(lines)
+
 
 # Sprint 3.6.9 Remote STRATUS closeout -- provider-level TTL cache.
 #
@@ -138,6 +189,20 @@ class FmpResponseCache:
         self._entries: dict[tuple[str, str], _FmpCacheEntry] = {}
         self._failures: dict[tuple[str, str], _FmpFailureEntry] = {}
         self._clock = clock
+        # Operational Beta Live Supply V2, Block 4 -- lightweight call-
+        # counting instrumentation, keyed the same way every entry/failure
+        # already is ((endpoint, entity_id)) so per-ticker and per-endpoint
+        # views are both cheap aggregations over the same counters. Counts
+        # only -- never a request/response body, never a key or secret --
+        # so this is safe to surface in any developer-facing report.
+        self._real_calls: dict[tuple[str, str], int] = {}
+        self._cache_hits: dict[tuple[str, str], int] = {}
+        self._suppressed_negative_cache: dict[tuple[str, str], int] = {}
+        self._failures_count: dict[tuple[str, str], int] = {}
+        self._created_at = self._clock()
+
+    def _bump(self, counters: dict[tuple[str, str], int], key: tuple[str, str]) -> None:
+        counters[key] = counters.get(key, 0) + 1
 
     def get_or_fetch(
         self,
@@ -151,6 +216,7 @@ class FmpResponseCache:
         now = self._clock()
         entry = self._entries.get(key)
         if entry is not None and (now - entry.cached_at) < ttl_seconds:
+            self._bump(self._cache_hits, key)
             return entry.value
 
         # 2026-08-29: a known-recent failure for this exact (endpoint,
@@ -171,6 +237,7 @@ class FmpResponseCache:
                 else TRANSIENT_FAILURE_SUPPRESSION_SECONDS
             )
             if (now - failure.failed_at) < suppression_seconds:
+                self._bump(self._suppressed_negative_cache, key)
                 if (
                     stale_grace_seconds > 0
                     and entry is not None
@@ -198,6 +265,7 @@ class FmpResponseCache:
         try:
             value = fetch()
         except FmpProviderError as exc:
+            self._bump(self._failures_count, key)
             self._failures[key] = _FmpFailureEntry(
                 failed_at=now,
                 message=str(exc),
@@ -217,6 +285,7 @@ class FmpResponseCache:
             raise
         # A genuine success always clears any prior failure record -- the
         # negative state never outlives the condition that created it.
+        self._bump(self._real_calls, key)
         self._failures.pop(key, None)
         self._entries[key] = _FmpCacheEntry(value=value, cached_at=now)
         return value
@@ -224,6 +293,54 @@ class FmpResponseCache:
     def clear(self) -> None:
         self._entries.clear()
         self._failures.clear()
+        self._real_calls.clear()
+        self._cache_hits.clear()
+        self._suppressed_negative_cache.clear()
+        self._failures_count.clear()
+        self._created_at = self._clock()
+
+    def budget_snapshot(self) -> "FmpBudgetSnapshot":
+        """Operational Beta Live Supply V2, Block 4 -- a point-in-time,
+        developer-facing view of exactly what this process has actually
+        spent in FMP provider calls: real calls / cache hits / suppressed
+        negative-cache retries / failures, aggregated by endpoint and by
+        (endpoint, entity_id), plus wall-clock age since this cache was last
+        cleared (a real restart, or a test reset) for a rough calls/hour
+        estimate. Counts only -- never a request/response body, an API key,
+        or a secret."""
+        endpoints = (
+            set(self._real_calls)
+            | set(self._cache_hits)
+            | set(self._suppressed_negative_cache)
+            | set(self._failures_count)
+        )
+        by_ticker = {
+            key: FmpEndpointCounts(
+                real_calls=self._real_calls.get(key, 0),
+                cache_hits=self._cache_hits.get(key, 0),
+                suppressed_negative_cache=self._suppressed_negative_cache.get(key, 0),
+                failures=self._failures_count.get(key, 0),
+            )
+            for key in sorted(endpoints)
+        }
+        by_endpoint: dict[str, FmpEndpointCounts] = {}
+        for (endpoint, _entity_id), counts in by_ticker.items():
+            existing = by_endpoint.get(endpoint, FmpEndpointCounts(0, 0, 0, 0))
+            by_endpoint[endpoint] = FmpEndpointCounts(
+                real_calls=existing.real_calls + counts.real_calls,
+                cache_hits=existing.cache_hits + counts.cache_hits,
+                suppressed_negative_cache=(
+                    existing.suppressed_negative_cache
+                    + counts.suppressed_negative_cache
+                ),
+                failures=existing.failures + counts.failures,
+            )
+        age_seconds = max(self._clock() - self._created_at, 0.0)
+        return FmpBudgetSnapshot(
+            by_endpoint=by_endpoint,
+            by_ticker=by_ticker,
+            age_seconds=age_seconds,
+        )
 
     def seed_stale_entry(
         self, endpoint: str, entity_id: str, value: object, age_seconds: float
@@ -265,6 +382,16 @@ def reset_fmp_cache() -> None:
     convention for process-lifetime state.
     """
     _shared_fmp_cache.clear()
+
+
+def fmp_budget_snapshot() -> FmpBudgetSnapshot:
+    """Operational Beta Live Supply V2, Block 4 -- the shared, process-wide
+    FMP call budget every real caller (background poller and direct
+    /v1/opportunities requests alike) actually shares, since every
+    FmpEarningsProvider/FmpMarketDataProvider instance reads/writes through
+    this one `_shared_fmp_cache` singleton regardless of who constructed it.
+    """
+    return _shared_fmp_cache.budget_snapshot()
 
 
 def seed_earnings_from_durable_observation(

@@ -93,6 +93,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.contracts import LearningReport  # noqa: E402
+from logan_core.receptors.providers import fmp_budget_snapshot  # noqa: E402
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
 # fixed-window limits for this API's two most expensive/cost-sensitive
@@ -198,6 +199,20 @@ memory_engine = MemoryEngine(legacy_memory_db_path())
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "online", "service": "logan-intelligence-api", "version": "1.0.0"}
+
+
+@app.get("/v1/dev/fmp-budget")
+def fmp_budget_route() -> dict[str, str]:
+    """Operational Beta Live Supply V2, Block 4 -- developer-facing view of
+    this process's real FMP call spend since its last reset (a real restart,
+    or a redeploy): real calls / cache hits / suppressed negative-cache
+    retries / failures, by endpoint, plus an estimated 24h rate. Counts
+    only -- never an API key, secret, or request/response body. Not
+    identity-scoped (this is process-wide operational data, not per-user
+    data) and deliberately unauthenticated, same posture as /health -- there
+    is nothing here a caller could use against another user's account.
+    """
+    return {"report": fmp_budget_snapshot().format_report()}
 
 
 @app.get("/v1/briefing", response_model=BriefingResponse)
