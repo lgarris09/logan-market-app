@@ -1491,31 +1491,47 @@ def _run_feed_pipeline(
     # opportunities" and "provider failure does NOT substitute a fixture"
     # true in that mode: there is no simulated fallback sitting in `fixtures`
     # to fall back to in the first place.
-    fixtures = {} if live_data_only_mode() else simulated_fixtures(now)
-
-    # Sprint 3.6.6C, generalized Sprint 3.6.8 Block 5: replaces (never adds
-    # alongside) each configured live ticker's fixture with a real
-    # FMP-driven earnings signal when FMP actually returns usable, qualifying
-    # data -- `fixtures` is keyed by entity_id, so this dict assignment is
-    # what guarantees exactly one entry per ticker either way, never a
-    # duplicate. Every other simulated entity (in demo mode) is untouched.
-    # `live_substituted` tracks exactly which tickers got a genuine live
-    # signal this poll -- the single source of truth the rest of this
-    # function uses to guarantee an opportunity is either fully live-sourced
-    # or fully simulated, never a blend of the two (see the guards below).
+    # Sprint 3.6.6C, generalized Sprint 3.6.8 Block 5, decoupled Sprint
+    # 3.6.10 Block 1 (Operational Beta Live Supply V2, see docs/DECISIONS.md):
+    # earnings/price-move/analyst-grade are three *independent* signal
+    # families for a live ticker -- each has its own qualification condition
+    # (evaluate_earnings_beat_condition/evaluate_price_move_condition/
+    # evaluate_analyst_grade_condition) and its own provider fetch, already
+    # isolated by try/except in _live_earnings_raw_signal/
+    # _live_price_move_raw_signal/_live_analyst_grade_raw_signal. Pre-Block-1,
+    # this loop only ever attempted price/grade for a ticker whose earnings
+    # had *already* qualified this poll (a non-qualifying or missing earnings
+    # report silently starved the rest of the pipeline for that ticker, even
+    # on a real >=5% price move or a real analyst upgrade) -- that coupling
+    # is removed here. `live_signals_by_ticker` collects every signal that
+    # genuinely fired this poll, independently, for each configured ticker;
+    # a ticker with zero firings contributes nothing (live-only mode: it is
+    # honestly absent this poll; demo mode: its simulated fixture, if any,
+    # is left untouched below) -- never a fabricated/lowered-threshold
+    # substitute, and never a blend of a real signal with a simulated one
+    # (see the TSLA corroboration guard and the fixtures merge below, both
+    # keyed off `live_substituted`, which now means "this ticker had >=1
+    # genuine live signal fire this poll," not "earnings specifically fired").
     live_tickers = live_stock_tickers()
     live_substituted: set[str] = set()
+    live_signals_by_ticker: dict[str, list[RawSignal]] = {}
     # V2.3A.1: true iff at least one configured live ticker's earnings data
     # was genuinely unreachable this poll (not "no data"/"doesn't qualify"
     # -- see _live_earnings_raw_signal's own docstring). Surfaced on the
     # response so a poll degraded by a real provider outage is never
     # presented identically to a poll where nothing currently qualifies.
+    # Scoped to earnings specifically, unchanged from pre-Block-1 -- price/
+    # grade fetch failures degrade only that one signal (see each function's
+    # own docstring), never the whole ticker, so they are not folded into
+    # this aggregate flag.
     provider_degraded = False
     # V2.4A (Notification Hygiene): per-ticker (not just the aggregate
     # above) so a notification decision for one entity is never suppressed
     # by a *different* entity's provider failure this same poll.
     ticker_provider_failed: dict[str, bool] = {}
     for ticker in live_tickers:
+        signals_this_ticker: list[RawSignal] = []
+
         live_earnings_signal, earnings_provider_failed = _live_earnings_raw_signal(
             ticker, now
         )
@@ -1523,13 +1539,34 @@ def _run_feed_pipeline(
         if earnings_provider_failed:
             provider_degraded = True
         if live_earnings_signal is not None:
-            fixtures[ticker] = live_earnings_signal
+            signals_this_ticker.append(live_earnings_signal)
+
+        live_price_signal = _live_price_move_raw_signal(ticker, now)
+        if live_price_signal is not None:
+            signals_this_ticker.append(live_price_signal)
+
+        live_grade_signal = _live_analyst_grade_raw_signal(ticker, now)
+        if live_grade_signal is not None:
+            signals_this_ticker.append(live_grade_signal)
+
+        if signals_this_ticker:
+            live_signals_by_ticker[ticker] = signals_this_ticker
             live_substituted.add(ticker)
-        # else: on failure/non-qualifying result, demo mode leaves whatever
-        # simulated_fixtures() already put in `fixtures[ticker]` untouched
-        # (the pre-Block-5 fallback behavior, unchanged); live-data-only
-        # mode has nothing there to begin with, so the ticker is honestly
-        # absent from this poll's results -- never a fabricated substitute.
+        # else: no signal family fired for this ticker this poll -- demo
+        # mode leaves whatever simulated_fixtures() already put in
+        # `fixtures[ticker]` untouched (the pre-Block-5 fallback behavior,
+        # unchanged); live-data-only mode has nothing there to begin with,
+        # so the ticker is honestly absent from this poll's results.
+
+    fixtures = {} if live_data_only_mode() else simulated_fixtures(now)
+    # Exactly one fixtures[ticker] entry either way, never a duplicate --
+    # the *primary* (first-fired) live signal stands in as this ticker's
+    # anchor raw_signal for domain/iteration purposes; the per-entity loop
+    # below reads the *full* live_signals_by_ticker[ticker] list (every
+    # signal family that fired, not just this one) whenever the ticker is
+    # live-substituted, so no live signal is ever dropped here.
+    for ticker, signals in live_signals_by_ticker.items():
+        fixtures[ticker] = signals[0]
 
     # One lock for the whole request's pipeline run, not just per-call: two
     # concurrent requests interleaving their individual entity.run() calls
@@ -1539,61 +1576,49 @@ def _run_feed_pipeline(
     with _state_lock:
         results = []
         for entity_id, raw_signal in fixtures.items():
-            raw_signals = [raw_signal]
-            # Sprint 3.6.8 Block 5 fix: this simulated corroborating signal
-            # must never be glued onto a *real* live TSLA earnings signal --
-            # only ever added when TSLA's own primary signal this poll is
-            # also simulated (entity_id not in live_substituted). Before
-            # this guard existed, a live TSLA opportunity would have
-            # silently gained a fabricated "Reuters confirms..." corroborating
-            # signal alongside genuine live data -- exactly the kind of
-            # simulated-into-live leak this block's governing rule forbids.
-            if entity_id == "TSLA" and entity_id not in live_substituted:
-                raw_signals.append(tesla_ai_partnership_corroboration(now))
+            # Sprint 3.6.10 Block 1 (decoupled independent qualification):
+            # a live-substituted ticker's `raw_signals` is the *full* set of
+            # every signal family that independently fired this poll
+            # (computed once, above, in live_signals_by_ticker -- never
+            # re-fetched here, both to avoid a duplicate provider call and
+            # to guarantee this loop can never see a different qualification
+            # result than the one that made this ticker live-substituted in
+            # the first place). A non-live-substituted entity (a simulated
+            # demo fixture, or a live ticker with zero firings this poll --
+            # the latter never reaches this loop at all in live-only mode,
+            # since fixtures has no entry for it) gets just its one fixture
+            # signal, exactly as before.
+            if entity_id in live_signals_by_ticker:
+                raw_signals = list(live_signals_by_ticker[entity_id])
+            else:
+                raw_signals = [raw_signal]
+                # Sprint 3.6.8 Block 5 fix: this simulated corroborating
+                # signal must never be glued onto a *real* live TSLA signal
+                # -- only ever added when TSLA got zero genuine live signals
+                # this poll (entity_id not in live_substituted). Before this
+                # guard existed, a live TSLA opportunity would have silently
+                # gained a fabricated "Reuters confirms..." corroborating
+                # signal alongside genuine live data -- exactly the kind of
+                # simulated-into-live leak this block's governing rule
+                # forbids.
+                if entity_id == "TSLA" and entity_id not in live_substituted:
+                    raw_signals.append(tesla_ai_partnership_corroboration(now))
 
-            # Sprint 3.6.7 Block 2, generalized Sprint 3.6.8 Block 5: layers
-            # live price-move/analyst-grade signals in alongside a ticker's
-            # earnings signal now that Orchestrator.run() combines multiple
-            # distinct-signal_type EnrichedEvents for one entity into one
-            # coherent opportunity instead of the last one silently dropping
-            # the others (ADR-051 finding 5). Each fetch is independently
-            # gated on its own trigger actually firing -- see
-            # _live_price_move_raw_signal/_live_analyst_grade_raw_signal's
-            # own docstrings -- so a quiet trading day/no rating change
-            # contributes nothing extra. StockConvergenceTracker only ever
-            # emits STOCK_CONVERGENCE_MULTI_SOURCE once genuinely ≥3 distinct
-            # signal_types have fired within its window, per entity (it is
-            # never forced here, and one entity's observations can never
-            # contribute to a different entity's convergence -- see
-            # StockConvergenceTracker's own per-entity_id keying).
-            #
-            # Deliberately gated on `live_substituted`, not just
-            # `live_tickers`: attempting these only after earnings has
-            # already gone live for this ticker this poll guarantees the
-            # same "fully live or fully simulated, never blended" property
-            # as the TSLA guard above -- a ticker whose earnings fetch fell
-            # back to simulated never gets a live price-move/grade signal
-            # spliced onto that simulated primary signal either. A
-            # price-move/grade-only live opportunity (earnings not firing)
-            # is a real, deliberately deferred capability -- see the Block 5
-            # ADR's own consequences.
             # Stock Opportunity Logic V2.2 (Evidence + Trajectory
-            # Enrichment): market evidence is fetched under the identical
-            # `live_substituted` gate as the price-move/grade signals above
+            # Enrichment): market evidence is fetched whenever this ticker
+            # is live-substituted -- i.e. *any* of its independent signal
+            # families fired this poll, not only earnings (Sprint 3.6.10
+            # Block 1 broadens this gate the same way as raw_signals above)
             # -- a simulated demo entity never gets a live evidence fetch
             # spliced onto it, matching this file's own "fully live or
             # fully simulated, never blended" rule. A fetch failure (any
             # FMP hiccup) degrades to no evidence this poll, never a
             # fabricated one -- see _fetch_market_evidence's own docstring.
-            market_evidence = None
-            if entity_id in live_substituted:
-                live_price_signal = _live_price_move_raw_signal(entity_id, now)
-                if live_price_signal is not None:
-                    raw_signals.append(live_price_signal)
-                live_grade_signal = _live_analyst_grade_raw_signal(entity_id, now)
-                if live_grade_signal is not None:
-                    raw_signals.append(live_grade_signal)
-                market_evidence = _fetch_market_evidence(entity_id, now)
+            market_evidence = (
+                _fetch_market_evidence(entity_id, now)
+                if entity_id in live_substituted
+                else None
+            )
 
             result = orchestrator.run(
                 raw_signals=raw_signals,
