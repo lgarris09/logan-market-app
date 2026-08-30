@@ -3,7 +3,13 @@ parsing and validation. No network, no pipeline -- pure deterministic
 config-parsing tests.
 """
 
-from backend.app.config import live_data_only_mode, live_stock_tickers
+import re
+
+from backend.app.config import (
+    PROPOSED_BETA_UNIVERSE_TICKERS,
+    live_data_only_mode,
+    live_stock_tickers,
+)
 
 
 def test_unset_both_flags_returns_empty(monkeypatch):
@@ -61,6 +67,47 @@ def test_legacy_flag_true_and_new_flag_unset_yields_nvda_only(monkeypatch):
     monkeypatch.delenv("STRATUS_LIVE_STOCK_TICKERS", raising=False)
     monkeypatch.setenv("STRATUS_LIVE_NVDA_EARNINGS", "true")
     assert live_stock_tickers() == ("NVDA",)
+
+
+# --- Operational Beta Hardening Block 5 -- Ten-Ticker Beta Universe --------
+#
+# PROPOSED_BETA_UNIVERSE_TICKERS is a documented proposal, never read by
+# live_stock_tickers() or any runtime code path -- these tests prove the
+# proposal itself is well-formed and, separately, that it stays inert
+# (setting it as a Python constant never changes live_stock_tickers()'s
+# actual behavior, which is driven only by the real environment variable).
+
+_TICKER_PATTERN = re.compile(r"^[A-Z]{1,10}$")
+
+
+def test_proposed_universe_has_exactly_ten_tickers():
+    assert len(PROPOSED_BETA_UNIVERSE_TICKERS) == 10
+
+
+def test_proposed_universe_has_no_duplicates():
+    assert len(set(PROPOSED_BETA_UNIVERSE_TICKERS)) == 10
+
+
+def test_proposed_universe_entries_are_all_valid_ticker_shapes():
+    for ticker in PROPOSED_BETA_UNIVERSE_TICKERS:
+        assert _TICKER_PATTERN.match(ticker), ticker
+
+
+def test_proposed_universe_is_never_wired_into_live_stock_tickers(monkeypatch):
+    monkeypatch.delenv("STRATUS_LIVE_STOCK_TICKERS", raising=False)
+    monkeypatch.delenv("STRATUS_LIVE_NVDA_EARNINGS", raising=False)
+    assert live_stock_tickers() == ()
+    assert live_stock_tickers() != PROPOSED_BETA_UNIVERSE_TICKERS
+
+
+def test_proposed_universe_can_be_pasted_directly_as_the_env_value(monkeypatch):
+    """Proves the constant is genuinely config-shaped -- a human adopting
+    this proposal only needs to comma-join it into the real env var, no
+    reformatting."""
+    monkeypatch.setenv(
+        "STRATUS_LIVE_STOCK_TICKERS", ",".join(PROPOSED_BETA_UNIVERSE_TICKERS)
+    )
+    assert live_stock_tickers() == PROPOSED_BETA_UNIVERSE_TICKERS
 
 
 def test_legacy_flag_false_and_new_flag_unset_yields_empty(monkeypatch):

@@ -81,6 +81,53 @@ _TICKER_PATTERN = re.compile(r"^[A-Z]{1,10}$")
 _LEGACY_NVDA_ONLY_TICKERS: tuple[str, ...] = ("NVDA",)
 
 
+# Operational Beta Hardening Block 5 -- Ten-Ticker Beta Universe Readiness.
+# A PROPOSAL, not a configured value: this constant is never read by
+# live_stock_tickers() below or by any runtime code path -- it exists only
+# so the exact recommended value is written down once, in the one place a
+# reviewer would look for it, rather than living only in a chat transcript.
+# Activating it (or a different final list the human chooses) is a config
+# change on the hosted deployment -- literally
+# `STRATUS_LIVE_STOCK_TICKERS=<this tuple, comma-joined>` -- never a code
+# change and never this session's to make unilaterally (see this repo's
+# CLAUDE.md: infra/Fly config changes require explicit human action).
+#
+# Selection criteria, in order:
+#   1. Liquid, large-cap, low data-quality risk on FMP (every symbol here
+#      already has real earnings/price/analyst-grade coverage the existing
+#      fixture-based tests already exercise for NVDA -- these behave the
+#      same way, just a different ticker string).
+#   2. Sector diversity -- deliberately not ten more tech names, so the
+#      exact anti-echo-chamber problem Block 2 (Controlled Exploration)
+#      guards against isn't reintroduced at the universe-selection level.
+#   3. Enough real signal density (earnings cadence, analyst coverage,
+#      day-to-day price movement) that a beta tester sees a genuinely live,
+#      non-sparse feed, not sporadic single-signal cards.
+#
+# Budget math (see the Live Supply V2 reconciliation this proposal reuses,
+# not re-derives): FMP Starter plan = 300 calls/minute. Each ticker's cold
+# start costs at most 3 calls (earnings + price + analyst grade, each
+# independently qualifying per Live Supply V2's own decoupling) before its
+# own TTL cache (6h/30min/2h respectively) takes over. Ten tickers' full
+# simultaneous cold start = 30 calls in the worst-case first minute -- 10%
+# of the 300/minute ceiling, leaving wide headroom for concurrent users
+# and provider retries. Steady-state load after cold start is a small
+# fraction of that, bounded by each endpoint's own TTL, not the ticker
+# count.
+PROPOSED_BETA_UNIVERSE_TICKERS: tuple[str, ...] = (
+    "AAPL",  # Technology -- consumer hardware
+    "MSFT",  # Technology -- software/cloud
+    "NVDA",  # Technology -- semiconductors/AI (existing default ticker)
+    "AMZN",  # Consumer Discretionary -- e-commerce
+    "GOOGL",  # Communication Services -- internet/advertising
+    "META",  # Communication Services -- social media
+    "JPM",  # Financials -- banking
+    "JNJ",  # Healthcare -- pharmaceuticals
+    "XOM",  # Energy -- oil & gas
+    "WMT",  # Consumer Staples -- retail
+)
+
+
 def live_stock_tickers() -> tuple[str, ...]:
     """Sprint 3.6.8 Block 5: the deterministic, code-free mechanism for
     configuring which equity tickers the live runtime evaluates -- reads
