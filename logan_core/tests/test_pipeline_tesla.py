@@ -23,6 +23,7 @@ EXPECTED_LAYERS = [
     "opportunity",
     "policy",
     "prioritization",
+    "exploration",
     "presentation",
 ]
 

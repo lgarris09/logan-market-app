@@ -38,6 +38,7 @@ from logan_core.contracts import (
 )
 from logan_core.convergence import StockConvergenceTracker
 from logan_core.evidence_trust import EvidenceTrustEngine
+from logan_core.exploration import apply_controlled_exploration
 from logan_core.feedback import FeedbackEngine
 from logan_core.learning import LearningEngine
 from logan_core.memory import MemoryStore
@@ -613,6 +614,23 @@ class Orchestrator:
             ),
             event_id=event.event_id,
         )
+        # Operational Beta Hardening Block 2 -- Controlled Exploration.
+        # Deliberately after Prioritization, not inside it: this never
+        # re-ranks/re-scores anything (Opportunity Engine remains the only
+        # scorer), it only ever promotes an already-recommended,
+        # already-policy-permitted item Prioritization placed in the
+        # "background" tier, per logan_core/exploration/engine.py's own
+        # bounded, deterministic reasons -- see that module's docstring.
+        attention_state = self.deps.prioritization_engine.attention_state(user_id)
+        if attention_state is not None:
+            prioritized_item = self._execute(
+                trace,
+                "exploration",
+                lambda: apply_controlled_exploration(
+                    prioritized_item, recommendation, attention_state
+                ),
+                event_id=event.event_id,
+            )
         delivered_item = self._execute(
             trace,
             "presentation",

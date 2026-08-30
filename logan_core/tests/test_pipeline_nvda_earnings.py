@@ -41,6 +41,7 @@ EXPECTED_LAYERS_WITH_TRIGGER = [
     "opportunity",
     "policy",
     "prioritization",
+    "exploration",
     "presentation",
 ]
 
