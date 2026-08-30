@@ -11,7 +11,12 @@ from .account_lifecycle import purge_user_data
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
 from .ask_llm_provider import ConversationTurn
 from .clerk_auth import ClerkClaims
-from .config import cors_allowed_origins, legacy_memory_db_path, startup_config_summary
+from .config import (
+    cors_allowed_origins,
+    legacy_memory_db_path,
+    live_stock_tickers,
+    startup_config_summary,
+)
 from .data import DEMO_OPPORTUNITIES
 from .learning import get_learning_report, suppress_entity_learning
 from .logan_demo import TeslaDemoResponse, run_tesla_demo
@@ -60,6 +65,7 @@ from .notifications import (
     register_token,
 )
 from .opportunities import OpportunitiesResponse, run_opportunities
+from .opportunity_quality_report import format_opportunity_quality_report
 from .rate_limit import check_rate_limit
 from .telemetry import record_batch, record_event
 from .telemetry_models import (
@@ -199,6 +205,28 @@ memory_engine = MemoryEngine(legacy_memory_db_path())
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "online", "service": "logan-intelligence-api", "version": "1.0.0"}
+
+
+@app.get("/v1/dev/opportunity-quality")
+def opportunity_quality_route(
+    tickers: str | None = Query(default=None),
+) -> dict[str, str]:
+    """Operational Beta Live Supply V2, Block 9 -- a developer-readable
+    per-ticker, per-signal qualification report (Earnings/Price/Analyst:
+    QUALIFIED/NOT QUALIFIED and why), reusing the exact same qualification
+    functions the real live pipeline calls. Defaults to the configured live
+    ticker universe (STRATUS_LIVE_STOCK_TICKERS) when `tickers` is omitted.
+    Same unauthenticated, process-wide-operational-data posture as
+    /v1/dev/fmp-budget -- makes a real, bounded set of live FMP calls
+    (3 endpoints x however many tickers), so this is a developer tool, not
+    something a client polls routinely.
+    """
+    requested = (
+        [t.strip().upper() for t in tickers.split(",") if t.strip()]
+        if tickers
+        else list(live_stock_tickers())
+    )
+    return {"report": format_opportunity_quality_report(requested)}
 
 
 @app.get("/v1/dev/fmp-budget")
