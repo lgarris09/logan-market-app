@@ -37,6 +37,7 @@ from .lifecycle import (
 from .memory import CORRECTION_TYPE_SUPPRESS_ENTITY, MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
 from .opportunity import AttentionRecommendation, Dimensions
+from .personal_relevance import PersonalRelevanceResult
 from .policy import PolicyResult
 from .presentation import DeliveredItem
 from .prioritization import (
@@ -104,6 +105,7 @@ __all__ = [
     "ConclusionConfidence",
     "Dimensions",
     "AttentionRecommendation",
+    "PersonalRelevanceResult",
     "PolicyResult",
     "PrioritizedItem",
     "AttentionState",

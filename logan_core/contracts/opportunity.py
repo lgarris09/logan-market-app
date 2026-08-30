@@ -1,7 +1,10 @@
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from .personal_relevance import PersonalRelevanceResult
 
 
 class Dimensions(BaseModel):
@@ -31,6 +34,12 @@ class AttentionRecommendation(BaseModel):
     # in an already-sorted response), never this raw value. See
     # docs/DECISIONS.md ADR-029 and 07_DATA_CONTRACTS.md.
     internal_rank_score: float = Field(ge=0.0, le=1.0)
+    # V2.3B Phase 2 -- the structured, explainable basis for
+    # dimensions.personal_relevance above (see
+    # logan_core/opportunity/personal_relevance.py). Optional/None only for
+    # any pre-Phase-2 direct construction that doesn't supply one; every real
+    # OpportunityEngine.evaluate() call populates it.
+    personal_relevance_result: Optional[PersonalRelevanceResult] = None
     reasons: list[str] = Field(default_factory=list)
     competing_items: list[UUID] = Field(default_factory=list)
     recommended_at: datetime

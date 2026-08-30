@@ -28,6 +28,7 @@ from .logan_feed import (
     get_opportunity_context,
     mark_notifications_reviewed,
     record_interaction,
+    record_watch_learning_signal,
     run_demo_feed,
     set_ask_session_event,
     should_record_ask_followup,
@@ -363,6 +364,15 @@ def create_watch_route(
     """
     check_rate_limit("watch", user_id, *_WATCH_RATE_LIMIT)
     watch, created = create_watch(user_id, request.entity_id)
+    if created:
+        # V2.3B Phase 2 Block 1 (Learning-Driven STRATUS): only on a genuine
+        # creation, never an idempotent repeat -- same discipline as this
+        # route's own watch_created telemetry gating. "stocks" is a pragmatic
+        # default (every real Watch today is a stock entity_id); a future
+        # non-stock Watch would need WatchRequest to actually carry a domain,
+        # which the V2.3E scope boundary deliberately keeps this contract
+        # without for now.
+        record_watch_learning_signal(user_id, watch.entity_id, "stocks")
     return WatchResponse(entity_id=watch.entity_id, watched=True, created=created)
 
 

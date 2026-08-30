@@ -363,6 +363,7 @@ class Orchestrator:
         domain: Domain,
         current_question: Optional[str] = None,
         market_evidence: Optional[MarketEvidenceInput] = None,
+        is_watched: bool = False,
     ) -> PipelineResult:
         """Runs the primary vertical-slice pipeline: Raw Signal through Presentation.
 
@@ -531,7 +532,7 @@ class Orchestrator:
             trace,
             "reasoning",
             lambda: self.deps.reasoning_engine.reason(
-                event, trust, user_model, active_context
+                event, trust, user_model, active_context, is_watched=is_watched
             ),
             event_id=event.event_id,
         )

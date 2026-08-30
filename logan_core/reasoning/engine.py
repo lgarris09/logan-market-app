@@ -23,6 +23,7 @@ class ReasoningEngine:
         trust: EvidenceTrust,
         user_model: UserModel,
         active_context: ActiveContext,
+        is_watched: bool = False,
     ) -> ReasoningResult:
         holding_ids = {h.entity_id for h in user_model.holdings}
         explicit_interest_topics = {
@@ -65,6 +66,33 @@ class ReasoningEngine:
             ),
             default=0.0,
         )
+
+        # V2.3B Phase 2 (Learning-Driven STRATUS): the matched inferred
+        # connection's own BehaviorPattern provenance (evidence_count,
+        # last_reinforced) -- lets Personal Relevance V2's explanation cite
+        # "returned to this N times" instead of only ever seeing the single
+        # scalar Interest.weight above. Matched by the same
+        # "engaged_with_{entity_id}" label convention _fold_behavioral_
+        # evidence (user_model/model.py) already establishes. 0/None when
+        # there is no inferred connection, or no matching behavior exists
+        # (e.g. an inferred Interest with no surviving paired pattern).
+        inferred_evidence_count = 0
+        inferred_last_reinforced = None
+        for entity_id in connected_inferred:
+            behavior = next(
+                (
+                    b
+                    for b in user_model.established_behaviors
+                    if b.label == f"engaged_with_{entity_id}"
+                ),
+                None,
+            )
+            if (
+                behavior is not None
+                and behavior.evidence_count > inferred_evidence_count
+            ):
+                inferred_evidence_count = behavior.evidence_count
+                inferred_last_reinforced = behavior.last_reinforced
 
         significance = event.summary
         if event.change_delta:
@@ -140,6 +168,9 @@ class ReasoningEngine:
             connected_entities_explicit=connected_explicit,
             connected_entities_inferred=connected_inferred,
             inferred_relevance_strength=inferred_relevance_strength,
+            inferred_evidence_count=inferred_evidence_count,
+            inferred_last_reinforced=inferred_last_reinforced,
+            is_watched=is_watched,
             stance=stance,
             actionability=actionability,
             explanation=explanation,

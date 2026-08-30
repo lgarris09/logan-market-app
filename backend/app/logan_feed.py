@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
@@ -1208,6 +1208,51 @@ def record_interaction(
         )
 
 
+def record_watch_learning_signal(user_id: str, entity_id: str, domain: Domain) -> None:
+    """V2.3B Phase 2 (Learning-Driven STRATUS) Block 1 -- Watch creation's
+    own learning-provenance record. Deliberately NOT record_interaction()
+    above: that function also advances last_seen_revision/
+    last_opened_revision (the "did this user actually see the card" pointer)
+    -- watching an entity is not the same claim as having opened/viewed it,
+    so this calls straight through to the same Feedback -> Learning ->
+    MemoryStore path (Orchestrator.run_feedback_loop(), the identical
+    FeedbackEngine/LearningEngine/MemoryStore this file's every other
+    interaction already uses -- no parallel Watch-learning store) without
+    that side effect. A fresh synthetic event_id per call is correct here
+    (unlike a real card's event_id, Watch has no natural "current event" to
+    reuse) -- process_feedback's own short-window dedup keys on
+    (event_id, interaction_type), so this never collides with or gets
+    deduped against a real view/click/ask_followup event for the same
+    entity.
+
+    Callers (backend/app/main.py's watch route) must only call this on a
+    genuine creation (`created=True` from watch.create_watch()) -- never on
+    an idempotent repeat -- exactly mirroring the existing
+    watch_created telemetry-gating discipline.
+    """
+    orchestrator = _get_orchestrator()
+
+    def _build_content(feedback: FeedbackSignal) -> dict:
+        return {
+            "interaction_type": feedback.interaction_type,
+            "entity_id": entity_id,
+            "domain": domain,
+            "inferred_intent": feedback.inferred_intent,
+            "intent_confidence": feedback.intent_confidence,
+            "duration_ms": None,
+        }
+
+    with _state_lock:
+        orchestrator.run_feedback_loop(
+            event_id=uuid4(),
+            user_id=user_id,
+            domain=domain,
+            entities=[entity_id],
+            interaction_type="watch",
+            content=_build_content,
+        )
+
+
 # Sprint 3.6.6I: the two points per entity below represent readings taken at
 # the start and end of one observation window, not two readings both taken
 # "now" -- see _engagement_samples' own comment for why that distinction
@@ -1627,6 +1672,12 @@ def _run_feed_pipeline(
                 engagement_samples=_engagement_samples(entity_id, now),
                 domain=raw_signal.domain,
                 market_evidence=market_evidence,
+                # V2.3B Phase 2 (Learning-Driven STRATUS): this user's
+                # *current* Watch state for this entity, read directly --
+                # see ReasoningEngine.reason()'s own docstring for why this
+                # is checked live rather than folded through MemoryStore's
+                # evidence pool.
+                is_watched=is_watched(user_id, entity_id),
             )
             results.append((entity_id, result))
 
