@@ -1,11 +1,11 @@
 import asyncio
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-
-from logan_core.contracts import LearningReport
 
 from .account_lifecycle import purge_user_data
 from .ask_engine import generate_grounded_answer, get_ask_llm_provider
@@ -75,6 +75,24 @@ from .user_context import (
     resolve_user_id,
 )
 from .watch import create_watch, remove_watch
+
+# 2026-08-29 outage fix: every other backend/app module that imports
+# logan_core does its own sys.path shim (see logan_demo.py/logan_feed.py's
+# own copies, ADR-022) rather than relying on import order elsewhere to
+# have already done it -- this module never needed logan_core directly
+# until the Personal Learning report route, and relying on `.logan_demo`'s
+# import (above) to run first and perform the shim as a side effect worked
+# under pytest (conftest.py shims first) but crashed standalone under
+# uvicorn (`ModuleNotFoundError: No module named 'logan_core'` at real
+# container startup) -- the exact outage this comment documents. Placed
+# after every other local import (none of which need this shim themselves
+# -- each already does its own internal shimming where it actually touches
+# logan_core) so only this one import needs a `noqa`, not the whole block.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts import LearningReport  # noqa: E402
 
 # Sprint 3.6.9 -- hosted attack-surface review: per-(route, user_id)
 # fixed-window limits for this API's two most expensive/cost-sensitive
