@@ -1,18 +1,28 @@
 """V2.3B Phase 2 (Learning-Driven STRATUS) Block 10 -- Learning Decision
-Report: for a given (user_id, entity_id), a developer-readable answer to
-"why is this card here" / "why isn't it higher or lower" / "what did
-STRATUS learn about this user for this entity" -- combining:
+Report, extended by Operational Beta Hardening Block 3 (Learning Decision
+Explainability V2): for a given (user_id, entity_id), a developer-readable
+answer to "why is this card here" / "why isn't it higher or lower" / "what
+did STRATUS learn about this user for this entity" -- combining, in order,
+the full WORLD / USER / PERSONAL RELEVANCE / ATTENTION / DISCOVERY / WHY
+chain:
 
 - World: the same real per-signal qualification opportunity_quality_report.py
   already reports (never re-derived, same evaluate_*_condition functions).
-- Learned user context: learning/report.py's own Observed/Learned/Not-learned,
-  filtered to this one entity.
+- Learned user context (USER): learning/report.py's own
+  Observed/Learned/Not-learned, filtered to this one entity.
 - Personal relevance: PersonalRelevanceResult (via OpportunityContext,
   ask_context.py) -- the single authoritative Block 2 computation.
 - Attention decision: delivered_item.surface mapped through the same
   three-state judgment mobile/lib/attentionJudgment.ts uses (kept in sync
   by hand -- no shared-schema codegen in this project, same discipline as
   every other Python/TypeScript Literal pair here).
+- Discovery: PrioritizedItem.attention_reason (via OpportunityContext,
+  Operational Beta Hardening Block 2's logan_core/exploration/engine.py) --
+  whether this item reached its visibility through the ordinary
+  personal-relevance-driven path or one of Controlled Exploration's three
+  deterministic anti-echo-chamber promotion reasons. Never fabricated: a
+  None attention_reason is reported as exactly that, not guessed at.
+- Why not higher/lower: limiting_factors / personal_relevance_not_contributing.
 
 Read-only throughout -- this module never writes anything.
 """
@@ -29,6 +39,41 @@ def attention_judgment_for(surface: str) -> str:
     if surface in ("digest", "feed_card"):
         return "Worth a look"
     return "Developing"
+
+
+_DISCOVERY_EXPLANATIONS = {
+    "personal_relevance": (
+        "Ordinary path -- personal relevance to this user was the dominant "
+        "factor in this item's visibility, no exploration promotion applied."
+    ),
+    "strong_world_signal": (
+        "Promoted by Controlled Exploration (strong_world_signal): this is "
+        "objectively significant on its own, regardless of this user's "
+        "personal connection to it."
+    ),
+    "unseen_material_change": (
+        "Promoted by Controlled Exploration (unseen_material_change): a "
+        "genuinely new development this user has never been shown before."
+    ),
+    "discovery_allowance": (
+        "Promoted by Controlled Exploration's bounded discovery_allowance -- "
+        "an occasional, rate-limited slot shown outside this user's usual "
+        "profile to guard against an echo chamber."
+    ),
+}
+
+
+def discovery_line_for(attention_reason: str | None) -> str:
+    """Mirrors _DISCOVERY_EXPLANATIONS' own closed set -- an unrecognized or
+    absent reason is reported honestly, never guessed at."""
+    if attention_reason is None:
+        return (
+            "No exploration involved -- this item's visibility came from "
+            "ordinary ranking alone."
+        )
+    return _DISCOVERY_EXPLANATIONS.get(
+        attention_reason, f"Unrecognized attention_reason: {attention_reason}"
+    )
 
 
 def build_learning_decision_report(user_id: str, entity_id: str) -> str:
@@ -94,6 +139,14 @@ def build_learning_decision_report(user_id: str, entity_id: str) -> str:
             lines.append(
                 f"  because {objective_note}, despite limited user history so far"
             )
+
+    lines.append("")
+    lines.append("Discovery")
+    if item is None:
+        lines.append("  Not currently surfaced for this user")
+    else:
+        attention_reason = context.attention_reason if context is not None else None
+        lines.append(f"  {discovery_line_for(attention_reason)}")
 
     lines.append("")
     lines.append("Why not higher/lower")

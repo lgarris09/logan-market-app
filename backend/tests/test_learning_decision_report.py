@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend.app.learning_decision_report import (
     attention_judgment_for,
     build_learning_decision_report,
+    discovery_line_for,
 )
 from backend.app.logan_feed import reset_pipeline_state
 from backend.app.main import app
@@ -59,7 +60,40 @@ def test_report_includes_world_learned_relevance_and_attention_sections():
     assert "Learned user context" in report
     assert "Personal relevance" in report
     assert "Attention decision" in report
+    assert "Discovery" in report
     assert "Why not higher/lower" in report
+
+
+def test_discovery_section_appears_between_attention_and_why_not():
+    reset_pipeline_state()
+    report = build_learning_decision_report(LOCAL_FOUNDER_USER_ID, "NVDA")
+    assert report.index("Attention decision") < report.index("Discovery")
+    assert report.index("Discovery") < report.index("Why not higher/lower")
+
+
+def test_discovery_line_for_none_is_honest_ordinary_path():
+    assert "ordinary ranking" in discovery_line_for(None).lower()
+
+
+def test_discovery_line_for_each_known_reason_mentions_the_reason():
+    assert "personal relevance" in discovery_line_for("personal_relevance").lower()
+    assert "strong_world_signal" in discovery_line_for("strong_world_signal")
+    assert "unseen_material_change" in discovery_line_for("unseen_material_change")
+    assert "discovery_allowance" in discovery_line_for("discovery_allowance")
+
+
+def test_discovery_line_for_unrecognized_reason_is_honest_not_fabricated():
+    line = discovery_line_for("totally_made_up_reason")
+    assert "unrecognized" in line.lower()
+    assert "totally_made_up_reason" in line
+
+
+def test_report_for_entity_not_in_feed_reports_discovery_as_not_surfaced():
+    reset_pipeline_state()
+    report = build_learning_decision_report(LOCAL_FOUNDER_USER_ID, "ZZZZ_NOT_REAL")
+    lines = report.splitlines()
+    discovery_index = lines.index("Discovery")
+    assert "not currently surfaced" in lines[discovery_index + 1].lower()
 
 
 def test_watched_entity_report_cites_watch_in_personal_relevance():

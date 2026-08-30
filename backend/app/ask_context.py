@@ -121,6 +121,14 @@ class OpportunityContext(BaseModel):
     trajectory_reason: Optional[str] = None
     evidence: Optional[EvidenceSnapshot] = None
 
+    # Operational Beta Hardening Block 3 (Learning Decision Explainability
+    # V2) -- PrioritizedItem.attention_reason (logan_core/exploration/
+    # engine.py's own closed set, or None), carried through unchanged for
+    # the Learning Decision Report's DISCOVERY section. A categorical label
+    # only (never a raw score) -- same ADR-029 posture as connection_basis
+    # above, not the restricted internal_rank_score itself.
+    attention_reason: Optional[str] = None
+
 
 def _sync_summary(delta: "UserSyncDelta") -> str:
     if delta.status == "UP_TO_DATE":
@@ -220,6 +228,7 @@ def build_opportunity_context(
         previous_trajectory=delta.previous_trajectory if delta else "STEADY",
         trajectory_reason=delta.trajectory_reason if delta else None,
         evidence=delta.evidence if delta else None,
+        attention_reason=result.prioritized_item.attention_reason,
     )
 
 
