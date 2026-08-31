@@ -173,6 +173,20 @@ def live_stock_tickers() -> tuple[str, ...]:
     entirely (the old flag is not additionally consulted in that case) --
     one clear source of truth per configuration, not a merge of both.
     """
+    if universe_manager_enabled():
+        # Universe Manager V1a Runtime Blocker 2 (2026-08-31): once the
+        # gate below is explicitly flipped on for a deployment, the live
+        # ticker list is sourced from the Universe Manager's own durable
+        # MONITORED cohort instead of this raw env var -- a deferred import
+        # to avoid a config.py<->universe_manager.py cycle (universe_manager
+        # already imports from config). An empty cohort (persistence
+        # disabled, or no reevaluation has ever run yet) is treated exactly
+        # like "not configured," never a fault -- see monitored_tickers()'s
+        # own docstring.
+        from .universe_manager import monitored_tickers
+
+        return monitored_tickers()
+
     raw = os.environ.get("STRATUS_LIVE_STOCK_TICKERS", "").strip()
     if not raw:
         return _LEGACY_NVDA_ONLY_TICKERS if live_nvda_earnings_enabled() else ()
@@ -394,15 +408,19 @@ def universe_membership_db_path() -> Path:
 
 
 def universe_manager_enabled() -> bool:
-    """Universe Manager V1a: whether `live_stock_tickers()` should be
-    sourced from the Universe Manager's current MONITORED cohort instead of
-    the raw STRATUS_LIVE_STOCK_TICKERS env var. Defaults to disabled --
-    Universe Manager V1a is built, tested, and ready, but activating it
-    changes which tickers a real deployment polls, which is exactly the
-    kind of infra/production-behavior decision this repo's ADR-008
-    collaboration model reserves for an explicit human choice, not
+    """Universe Manager V1a: whether `live_stock_tickers()` is sourced from
+    the Universe Manager's current MONITORED cohort (via
+    `universe_manager.monitored_tickers()`) instead of the raw
+    STRATUS_LIVE_STOCK_TICKERS env var -- `live_stock_tickers()` itself now
+    checks this flag first (Runtime Blocker 2, 2026-08-31). Defaults to
+    disabled -- Universe Manager V1a is built, tested, and ready, but
+    activating it changes which tickers a real deployment polls, which is
+    exactly the kind of infra/production-behavior decision this repo's
+    ADR-008 collaboration model reserves for an explicit human choice, not
     something this pass turns on unilaterally. Every existing caller/test
-    is completely unaffected while this stays False (the default).
+    is completely unaffected while this stays False (the default) -- the
+    wiring exists at the gate boundary; flipping the gate on for a real
+    deployment is a separate, human decision this session does not make.
     """
     return _env_flag("STRATUS_UNIVERSE_MANAGER_ENABLED")
 

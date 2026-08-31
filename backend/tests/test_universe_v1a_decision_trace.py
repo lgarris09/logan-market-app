@@ -384,6 +384,212 @@ def test_exploration_placement_wiring_is_real_and_never_displaces_watch():
     assert result.opportunity_cost.displaced_thesis_id != watch_id
 
 
+def test_v1a_decision_trace_sourced_from_monitored_cohort(monkeypatch, tmp_path):
+    """Runtime Blocker 2 (2026-08-31): extends the order-of-operations proof
+    one step earlier -- candidate source -> eligibility -> monitored
+    membership (via a real, fixture-provider run_universe_reevaluation()
+    call, standing in for the not-yet-scheduled cadence -- see this
+    session's conformance report for that separate, still-open blocker) ->
+    live_stock_tickers() actually reading that durable MONITORED cohort
+    (config.universe_manager_enabled() flipped on) -> observation/freshness
+    -> objective qualification -> diversity -> Personal Relevance ->
+    Controlled Exploration -> final surfaced ordering, all through the real
+    request path, with the ticker source itself now coming from Universe
+    Manager instead of the raw env var."""
+
+    from backend.app.universe_manager import (
+        reset_universe_manager_state,
+        run_universe_reevaluation,
+    )
+    from logan_core.receptors.providers import (
+        CompanyProfile,
+        EarningsReport,
+        FixtureEarningsProvider,
+        FixtureMarketDataProvider,
+        GradeChange,
+        Quote,
+    )
+    from logan_core.universe.candidate_source import load_candidate_snapshot
+
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    # Deliberately different from the real monitored cohort -- proves
+    # live_stock_tickers() genuinely overrides this, not coincidence.
+    monkeypatch.setenv("STRATUS_LIVE_STOCK_TICKERS", "ZZZZ")
+    reset_universe_manager_state()
+
+    snapshot = load_candidate_snapshot()
+
+    def _quote(symbol: str) -> Quote:
+        return Quote(
+            entity_id=symbol,
+            price=100.0,
+            previous_close=99.0,
+            change_pct=1.0,
+            quote_timestamp=NOW,
+            source_id="fixture",
+            source_name="fixture",
+        )
+
+    def _profile(symbol: str, sector: str) -> CompanyProfile:
+        return CompanyProfile(
+            entity_id=symbol,
+            sector=sector,
+            industry="Fixture",
+            average_volume=1_000_000.0,
+            beta=1.1,
+            source_id="fixture",
+            source_name="fixture",
+        )
+
+    def _earnings(symbol: str) -> EarningsReport:
+        return EarningsReport(
+            entity_id=symbol,
+            actual_eps=1.0,
+            consensus_eps=0.9,
+            fiscal_quarter="Q2 2026",
+            guidance_revised=False,
+            guidance_delta_pct=0.0,
+            report_timestamp=NOW,
+            source_id="fixture",
+            source_name="fixture",
+        )
+
+    def _grade(symbol: str) -> GradeChange:
+        return GradeChange(
+            entity_id=symbol,
+            grading_firm="Fixture Analytics",
+            previous_rating="Hold",
+            new_rating="Buy",
+            action="upgrade",
+            action_date=NOW,
+            source_id="fixture",
+            source_name="fixture",
+        )
+
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {
+        s.symbol: _profile(s.symbol, s.sector or "Technology")
+        for s in snapshot.securities
+    }
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+
+    # Stands in for the not-yet-scheduled production cadence (Runtime
+    # Blocker 1, still open -- see conformance report): a real, explicit
+    # reevaluation run against fixture providers, exactly the pipeline a
+    # scheduled cadence would eventually wrap.
+    run_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+
+    monkeypatch.setenv("STRATUS_UNIVERSE_MANAGER_ENABLED", "true")
+    monkeypatch.setenv("STRATUS_RUNTIME_MODE", "live")
+
+    from backend.app.config import live_stock_tickers
+
+    tickers = live_stock_tickers()
+    assert 25 <= len(tickers) <= 35
+    assert "ZZZZ" not in tickers  # genuinely overrides the raw env var
+
+    # Watch/Learning must never alter membership: watching an arbitrary
+    # cohort member changes nothing about which tickers are monitored.
+    reset_watch_state()
+    create_watch("demo_user", tickers[0])
+    assert live_stock_tickers() == tickers
+
+    live_earnings = {
+        s: [
+            {
+                "symbol": s,
+                "date": NOW.strftime("%Y-%m-%d"),
+                "epsActual": 2.0,
+                "epsEstimated": 1.7,
+            }
+        ]
+        for s in tickers
+    }
+    live_quotes = {
+        s: [
+            {
+                "symbol": s,
+                "price": 150.0,
+                "previousClose": 130.0,
+                "changePercentage": 15.4,
+                "timestamp": int(NOW.timestamp()),
+                "volume": 1_000_000,
+            }
+        ]
+        for s in tickers
+    }
+
+    def _by_symbol(by_symbol):
+        def respond(request):
+            symbol = request.url.params.get("symbol")
+            return httpx.Response(200, json=by_symbol.get(symbol, []))
+
+        return respond
+
+    def _route(handlers_by_path):
+        def handler(request):
+            for path, respond in handlers_by_path.items():
+                if request.url.path.endswith(path):
+                    return respond(request)
+            return httpx.Response(200, json=[])
+
+        return handler
+
+    earnings_client = httpx.Client(
+        transport=httpx.MockTransport(_by_symbol(live_earnings))
+    )
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpEarningsProvider",
+        lambda *a, **kw: FmpEarningsProvider(
+            api_key="test-key-not-real", client=earnings_client
+        ),
+    )
+    market_client = httpx.Client(
+        transport=httpx.MockTransport(
+            _route(
+                {
+                    "/quote": _by_symbol(live_quotes),
+                    "/grades": _by_symbol({}),
+                    "/profile": _by_symbol({}),
+                }
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "backend.app.logan_feed.FmpMarketDataProvider",
+        lambda *a, **kw: FmpMarketDataProvider(
+            api_key="test-key-not-real", client=market_client
+        ),
+    )
+
+    reset_pipeline_state()
+    feed = run_demo_feed("demo_user")
+
+    fed_tickers = {item.entity_id for item in feed.items}
+    # The live feed pipeline actually consumed the MONITORED-cohort ticker
+    # list, not the raw (deliberately wrong) env var.
+    assert fed_tickers & set(tickers)
+    for item in feed.items:
+        if item.entity_id in tickers:
+            assert item.freshness_state is not None
+            assert item.confidence_score is not None
+
+    diversity = get_diversity_decision("demo_user")
+    assert diversity is not None
+    exploration = get_exploration_decision("demo_user")
+    assert exploration is not None
+
+    reset_universe_manager_state()
+
+
 def test_exploration_never_displaces_when_all_selected_are_watch():
     import uuid
 
