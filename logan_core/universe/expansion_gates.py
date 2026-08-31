@@ -9,14 +9,20 @@ future instrumentation task (durable telemetry aggregation) -- this module
 is the decision function that would run once that data exists, not the
 collector itself.
 
-Honest scope note on gate count: the product spec lists seven concrete
-opportunity-quality bullet points but also refers to "5 of the applicable
-6" passing as sufficient for a recommendation. Rather than silently drop
-one of the seven listed checks to force the count to match, this module
-implements all seven and requires at least six of them to pass -- the
-closest integer approximation of "5 of 6" against the fuller set of seven
-actually specified -- a deliberate, disclosed interpretation, not an
-arbitrary threshold.
+UNRESOLVED PLAN CONTRADICTION (flagged 2026-08-30, re-confirmed unresolved
+2026-08-31 -- see this session's own conformance report, item 4): the
+governing plan lists seven concrete opportunity-quality bullet points
+(MIN_DISTINCT_SURFACED_THESES_14D through MIN_MEANINGFUL_REVISION_
+CONTENT_RATE below) but separately states the expansion recommendation
+requires "at least 5 of the applicable 6" of them passing. Seven items
+were specified; "6" was named as the denominator. This is an internal
+inconsistency in the plan text itself, not a gap this module's author is
+positioned to resolve -- OPPORTUNITY_QUALITY_GATES_REQUIRED is set to 6
+(all seven items implemented, six required to pass) as the closest
+integer reading, but this is a stand-in pending the plan owner's explicit
+resolution, not a ratified decision. Do not treat this constant as settled;
+do not silently change it to a different number without that resolution
+either -- flag it again rather than re-guessing.
 """
 
 from dataclasses import dataclass, field

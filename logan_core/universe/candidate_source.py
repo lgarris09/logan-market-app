@@ -4,16 +4,27 @@ recommendation, never STRATUS's preferred-stock list, never a signal of
 opportunity quality on its own. Universe eligibility (eligibility.py)
 still has to accept or reject each entry.
 
-V1 canonical source: a versioned S&P 100 constituent snapshot. Honest V1a
-scope note: this codebase has no licensed index-data provider integration
-(that would be full index-ingestion infrastructure, explicitly out of
-scope for V1a) -- `_SP100_V1` below is a STRATUS-curated approximation of
-well-established S&P 100 constituent membership, not a live feed from an
-index provider. It exists to prove the real mechanism this block actually
-requires (a versioned, reproducible, metadata-complete candidate list a
-downstream eligibility/cohort pass can consume) -- replacing it with a
-real licensed snapshot later is a data change to this one file (or a new
-version registered below), never a re-architecture.
+EXPLICIT CONFORMANCE DETERMINATION (2026-08-31, Universe Manager V1a
+Plan-Conformance Closeout, item 5): the 100 names below are
+**option B -- a STRATUS-curated large-cap approximation, not option A --
+never queried, licensed, or verified against any real S&P 100 constituent
+list at any actual point in time.** They were selected by hand, from this
+model's own general knowledge of long-tenured, widely-recognized S&P
+100-caliber mega-/large-cap US equities, grouped to cover eight GICS-style
+sectors deliberately (never ten more of one sector) -- not retrieved from
+S&P Dow Jones Indices, not retrieved from any FMP index-constituent
+endpoint (FMP does expose one; it is explicitly not called here, matching
+Block 2's "not full index-ingestion infrastructure" scope limit), and not
+cross-checked against any dated, authoritative source. `effective_date` is
+this snapshot's own publish date, not a claim about real S&P 100
+membership on that date. This codebase has no licensed index-data provider
+integration -- `_SP100_V1_ENTRIES` below exists to prove the real mechanism
+this block actually requires (a versioned, reproducible, metadata-complete
+candidate list a downstream eligibility/cohort pass can consume), not to
+assert index accuracy. Replacing it with a real, lawfully-sourced snapshot
+later is a data change to this one file (or a new version registered
+below), never a re-architecture -- see this session's own conformance
+report for whether that replacement is required before V1b.
 
 Refresh cadence (Block 2): monthly, by convention -- registering a new
 `source_version` here. An updated snapshot must never silently rewrite a
