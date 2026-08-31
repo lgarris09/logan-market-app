@@ -245,6 +245,8 @@ def test_live_market_data_response_has_no_internal_or_secret_fields(monkeypatch)
     # Sprint 3.6.9 (Stock Opportunity Logic V2) added the six lifecycle_*
     # fields below deliberately -- see docs/DECISIONS.md's Sprint 3.6.9 ADR.
     # V2.1 (User Sync Gap) added opportunity_revision/user_sync_status.
+    # Universe Manager V1a Plan-Conformance Closeout (2026-08-31) added the
+    # four freshness/diversity/exploration annotation fields.
     nvda_payload = _nvda_item(payload)
     assert set(nvda_payload.keys()) == {
         "event_id",
@@ -274,4 +276,8 @@ def test_live_market_data_response_has_no_internal_or_secret_fields(monkeypatch)
         "evidence",
         "since_last_looked",
         "is_watched",
+        "freshness_state",
+        "diversity_suppressed",
+        "diversity_suppression_reason",
+        "exploration_placement_reason",
     }

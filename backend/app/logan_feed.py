@@ -2,7 +2,7 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -20,17 +20,24 @@ from logan_core.contracts import (  # noqa: E402
     DeliveredItem,
     Domain,
     EvidenceSnapshot,
+    ExplorationPlacementResult,
     FeedbackSignal,
     Holding,
     InteractionType,
     Interest,
+    LifecycleState,
     MarketEvidenceInput,
     MeaningfulChangeType,
     OpportunityRevision,
     RawSignal,
+    ThesisMetadata,
     UserModel,
 )
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
+from logan_core.exploration import (  # noqa: E402
+    apply_exploration_placement,
+    is_exploration_eligible,
+)
 from logan_core.memory import MemoryStore  # noqa: E402
 from logan_core.opportunity_lifecycle import (  # noqa: E402
     NotificationDecision,
@@ -55,8 +62,13 @@ from logan_core.receptors.providers import (  # noqa: E402
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
+    classify_freshness,
     seed_earnings_from_durable_observation,
+    signal_family_contract,
 )
+from logan_core.thesis import apply_diversity_caps, classify_market_driver  # noqa: E402
+from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
+from logan_core.thesis.market_driver import primary_signal_family  # noqa: E402
 from logan_core.trigger_detection import (  # noqa: E402
     StocksTriggerEvaluator,
     evaluate_analyst_grade_condition,
@@ -177,6 +189,22 @@ _opportunity_context_caches: dict[str, OpportunityContextCache] = {}
 # than widening _run_feed_pipeline's own return signature (which many
 # existing call sites already unpack by position).
 _notification_decisions_cache: dict[str, list[NotificationDecision]] = {}
+
+# Universe Manager V1a Plan-Conformance Closeout, Item 3 (Live Controlled
+# Exploration) -- per-user, refreshed wholesale on every
+# `_run_feed_pipeline(user_id)` call, mirroring
+# `_notification_decisions_cache`'s own established shape exactly. Holds
+# the full ExplorationPlacementResult (eligibility/placement/displacement
+# provenance) for observability/testing -- never sent to the client as-is;
+# FeedItem.exploration_placement_reason is the one consumer-facing field
+# derived from it.
+_exploration_decisions_cache: dict[str, ExplorationPlacementResult] = {}
+
+# Item 2 sibling cache -- the full DiversityResult (every suppression's
+# reason + blocking_thesis_id + policy_version, not just the one field
+# FeedItem.diversity_suppression_reason carries), same per-user/refreshed-
+# wholesale shape.
+_diversity_decisions_cache: dict[str, DiversityResult] = {}
 
 # Sprint 3.6.7 Block 4: bounded, process-lifetime Ask STRATUS session store.
 # Deliberately not persisted to SQLite -- session continuity is a short-lived
@@ -1046,6 +1074,8 @@ def reset_pipeline_state() -> None:
         _opportunity_context_caches.clear()
         _ask_sessions.clear()
         _notification_decisions_cache.clear()
+        _exploration_decisions_cache.clear()
+        _diversity_decisions_cache.clear()
 
 
 def purge_user(user_id: str) -> None:
@@ -1430,6 +1460,39 @@ class FeedItem(BaseModel):
     # stock. Never affected by provider_degraded: Watch represents user
     # intent, not current live-data availability.
     is_watched: bool = False
+
+    # Universe Manager V1a Plan-Conformance Closeout, Item 1 (Runtime
+    # Freshness Integration) -- FRESH/RECENTLY_OBSERVED/STALE_WITHIN_GRACE/
+    # UNAVAILABLE (logan_core/receptors/providers/freshness.py), computed
+    # from this item's own primary signal's real captured_at age against
+    # that signal family's existing TTL/grace contract -- never a second,
+    # independently-invented freshness concept. None only when this
+    # item's signal_type has no registered freshness contract (a demo/
+    # simulated signal type outside the three live stock families) --
+    # honest absence, not a fabricated state.
+    freshness_state: str | None = None
+
+    # Item 2 (Live Thesis Diversity) -- set only when this item was
+    # actively excluded from the top-five band by a diversity cap
+    # (thesis/diversity.py). The item's own objective qualification,
+    # confidence, and delivered_item content are completely untouched by
+    # this -- diversity_suppressed only ever affects prominence, never
+    # truth. False/None (the default) covers both "never considered" (not
+    # among the ranked candidates evaluated for the top band) and "made
+    # the top band outright."
+    diversity_suppressed: bool = False
+    diversity_suppression_reason: str | None = None
+
+    # Item 3 (Live Controlled Exploration) -- set only on the single item
+    # (if any) this refresh's Controlled Exploration batch placement chose
+    # to surface outside this user's usual profile
+    # (logan_core/exploration/placement.py). Consumer framing: "Outside
+    # your usual focus" -- mobile renders this from the presence of this
+    # field alone, no new UI contract beyond it. Full eligibility/
+    # placement/displacement provenance is retained server-side (see
+    # get_exploration_decision() below) for diagnostics, not on this
+    # public item.
+    exploration_placement_reason: str | None = None
 
 
 class DemoFeedResponse(BaseModel):
@@ -1926,6 +1989,150 @@ def _run_feed_pipeline(
             user_id, OpportunityContextCache()
         ).replace_all(opportunity_contexts)
 
+        # Universe Manager V1a Plan-Conformance Closeout -- Items 1-3:
+        # runtime freshness classification, live thesis diversity, and live
+        # Controlled Exploration, wired into this real per-user feed path.
+        # A pure post-processing pass over the already-built `items` (still
+        # in the same rank order `results` produced) -- never re-ranks,
+        # never re-scores, never mutates any objective field (confidence,
+        # delivered_item, lifecycle_state, etc.) on any FeedItem. Only ever
+        # sets the four new annotation fields FeedItem gained for this.
+        _SIGNAL_TYPE_TO_FRESHNESS_FAMILY = {
+            "earnings_signal": "earnings",
+            "price_change": "quote",
+            "analyst_change": "analyst_grade",
+        }
+        result_by_event_id = {r.event.event_id: r for _, r in results}
+        item_by_event_id = {item.event_id: item for item in items}
+        thesis_candidates: list[ThesisCandidate] = []
+        for item in items:
+            r = result_by_event_id[item.event_id]
+
+            # Item 1 (Runtime Freshness Integration): classified from this
+            # item's own primary signal's real captured_at age against that
+            # signal family's existing TTL/grace contract (freshness.py) --
+            # never a second, independently-invented freshness concept.
+            # Provider degradation is checked first and takes priority over
+            # a merely-aged signal -- distinct from "no qualifying
+            # opportunity" (a healthy, empty result never reaches this
+            # per-item loop at all).
+            family = _SIGNAL_TYPE_TO_FRESHNESS_FAMILY.get(
+                r.normalized_signals[0].signal_type
+            )
+            if family is not None:
+                if family == "earnings" and ticker_provider_failed.get(
+                    item.entity_id, False
+                ):
+                    item.freshness_state = "UNAVAILABLE"
+                else:
+                    age_seconds = max(
+                        (now - r.normalized_signals[0].captured_at).total_seconds(),
+                        0.0,
+                    )
+                    item.freshness_state = classify_freshness(
+                        has_value=True,
+                        age_seconds=age_seconds,
+                        contract=signal_family_contract(family),
+                    )
+            # else: no registered freshness contract for this signal_type
+            # (a demo/simulated signal type outside the three live stock
+            # families) -- item.freshness_state stays the honest None
+            # default, never a fabricated state.
+
+            # Shared prep for Items 2/3: real trigger-code-derived thesis
+            # metadata (Blocks 9/10, no LLM/embeddings/semantic clustering)
+            # plus an objective-strength proxy from this item's own already-
+            # computed confidence/importance dimensions -- never a new,
+            # independently-tuned score.
+            trigger_codes = sorted({t.trigger_code for t in r.event.trigger_events})
+            driver = classify_market_driver(trigger_codes)
+            primary_family = primary_signal_family(trigger_codes) or "unknown"
+            # Reuses the real sector this same poll's own Evidence +
+            # Trajectory Enrichment (Stock Opportunity Logic V2.2) already
+            # fetched via CompanyProfile -- never a new profile fetch just
+            # for diversity capping. None when evidence/lifecycle tracking
+            # isn't active for this entity -- an honest absence, which
+            # diversity.py's own "UNKNOWN" bucket already handles.
+            metadata = ThesisMetadata(
+                event_id=item.event_id,
+                primary_entity_id=item.entity_id,
+                sector=item.evidence.sector if item.evidence is not None else None,
+                primary_signal_family=primary_family,
+                market_driver_tag=driver,
+                thesis_state=cast(LifecycleState, item.lifecycle_state or "developing"),
+            )
+            objective_strength = min(
+                r.confidence.confidence_score
+                * r.recommendation.dimensions.global_importance
+                * 1.5,
+                1.0,
+            )
+            thesis_candidates.append(
+                ThesisCandidate(
+                    event_id=item.event_id,
+                    rank=item.rank,
+                    metadata=metadata,
+                    is_watched=item.is_watched,
+                    objective_strength=objective_strength,
+                )
+            )
+
+        # Item 2 (Live Thesis Diversity): the top band is this response's
+        # own already-existing rank order's top 5 -- diversity never
+        # reorders or re-scores, it only decides which already-ranked
+        # candidates keep their prominence. A suppressed item's
+        # delivered_item/confidence/lifecycle_state are completely
+        # untouched above; only the two new annotation fields change.
+        diversity_result = apply_diversity_caps(thesis_candidates, top_n=5)
+        _diversity_decisions_cache[user_id] = diversity_result
+        suppressed_by_id = {s.event_id: s for s in diversity_result.suppressed}
+        for item in items:
+            suppression = suppressed_by_id.get(item.event_id)
+            if suppression is not None:
+                item.diversity_suppressed = True
+                item.diversity_suppression_reason = suppression.suppression_reason
+
+        # Item 3 (Live Controlled Exploration): at most one placement,
+        # chosen only from candidates outside the diversity-surviving top
+        # band that genuinely clear is_exploration_eligible()'s objective
+        # bar (never the reverse -- a high personalized attention judgment
+        # is never required, since exploration exists for low/unknown
+        # Personal Relevance specifically). The full ExplorationPlacementResult
+        # (eligibility considered, placement decision, displacement
+        # rationale) is retained in _exploration_decisions_cache for
+        # diagnostics -- the one consumer-facing field is
+        # exploration_placement_reason, set only on the single placed item.
+        top_ids = {c.event_id for c in diversity_result.selected}
+        eligible_pool: list[ThesisCandidate] = []
+        for candidate in thesis_candidates:
+            if candidate.event_id in top_ids:
+                continue
+            r = result_by_event_id[candidate.event_id]
+            item = item_by_event_id[candidate.event_id]
+            relevance = r.recommendation.personal_relevance_result
+            relevance_state = relevance.state if relevance is not None else "unknown"
+            if is_exploration_eligible(
+                recommend=r.recommendation.recommend,
+                global_importance=r.recommendation.dimensions.global_importance,
+                confidence=r.confidence.confidence_score,
+                risk=r.recommendation.dimensions.risk,
+                freshness_state=item.freshness_state or "UNAVAILABLE",
+                is_new_for_user=item.is_new_for_user,
+                is_materially_revised=item.is_updated,
+                personal_relevance_state=relevance_state,
+                has_active_suppression=False,
+            ):
+                eligible_pool.append(candidate)
+
+        exploration_result = apply_exploration_placement(
+            diversity_result.selected, eligible_pool
+        )
+        _exploration_decisions_cache[user_id] = exploration_result
+        if exploration_result.placed_event_id is not None:
+            placed_item = item_by_event_id.get(exploration_result.placed_event_id)
+            if placed_item is not None:
+                placed_item.exploration_placement_reason = exploration_result.reason
+
         # Sprint 3.6.6F (STRATUS Watch): internal-only -- never added to the
         # public FeedItem contract (same discipline as internal_rank_score,
         # ADR-029). PrioritizedItem.interruption=="alert" is the existing,
@@ -2018,3 +2225,26 @@ def get_notification_decisions(user_id: str) -> list[NotificationDecision]:
     """
     _run_feed_pipeline(user_id)
     return list(_notification_decisions_cache.get(user_id, []))
+
+
+def get_exploration_decision(user_id: str) -> Optional[ExplorationPlacementResult]:
+    """Universe Manager V1a Plan-Conformance Closeout, Item 3 -- full
+    provenance for `user_id`'s most recent Controlled Exploration batch
+    placement decision (why eligible candidates were/weren't placed, what
+    was displaced and why, policy version) -- for diagnostics/testing, same
+    "runs the pipeline fresh" discipline as get_notification_decisions().
+    Returns None only if `_run_feed_pipeline` has never been called for
+    this user_id at all (it always sets a result, placed or not, once run).
+    """
+    _run_feed_pipeline(user_id)
+    return _exploration_decisions_cache.get(user_id)
+
+
+def get_diversity_decision(user_id: str) -> Optional[DiversityResult]:
+    """Universe Manager V1a Plan-Conformance Closeout, Item 2 -- full
+    provenance for `user_id`'s most recent thesis-diversity pass (every
+    suppression's reason, blocking_thesis_id, and policy_version) -- same
+    "runs the pipeline fresh" discipline as get_notification_decisions()/
+    get_exploration_decision()."""
+    _run_feed_pipeline(user_id)
+    return _diversity_decisions_cache.get(user_id)
