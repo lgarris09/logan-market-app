@@ -9,12 +9,14 @@ bounded history, and "a healthy empty feed is never a fault."
 from logan_core.diagnostics import (
     FAULT_CATALOG,
     NOT_A_FAULT_NOTES,
+    FaultOccurrence,
     fault_lookup,
     format_fault_catalog,
     format_recent_faults,
     recent_faults,
     record_fault,
     reset_fault_state,
+    set_fault_sink,
 )
 
 
@@ -149,3 +151,37 @@ def test_reset_fault_state_clears_history():
     record_fault("DATA-301", "test_subsystem")
     reset_fault_state()
     assert recent_faults() == []
+
+
+def test_fault_sink_receives_every_occurrence():
+    """V1a Proof-Instrumentation Closeout: an injected sink (dependency
+    injection, not a reverse import -- logan_core never imports
+    backend/app) receives the exact same FaultOccurrence record_fault()
+    itself just produced."""
+    received: list[FaultOccurrence] = []
+    set_fault_sink(received.append)
+    try:
+        occurrence = record_fault("DATA-301", "test_subsystem")
+        assert received == [occurrence]
+    finally:
+        set_fault_sink(None)
+
+
+def test_a_raising_fault_sink_never_breaks_the_caller():
+    """A sink failure must never mask or interrupt the real fault the
+    caller was already reporting."""
+
+    def _raising_sink(occurrence):
+        raise RuntimeError("simulated durable-mirror failure")
+
+    set_fault_sink(_raising_sink)
+    try:
+        occurrence = record_fault("DATA-301", "test_subsystem")
+        assert occurrence.code == "DATA-301"  # record_fault still returned normally
+    finally:
+        set_fault_sink(None)
+
+
+def test_fault_sink_defaults_to_none_and_is_a_no_op():
+    set_fault_sink(None)
+    record_fault("DATA-301", "test_subsystem")  # must not raise with no sink set

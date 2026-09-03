@@ -35,7 +35,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -200,6 +200,27 @@ class FaultOccurrence:
 _MAX_RECENT_OCCURRENCES = 200
 _recent_occurrences: list[FaultOccurrence] = []
 
+# V1a Proof-Instrumentation Closeout: an optional, injectable sink a caller
+# (backend/app) can register to durably mirror every fault occurrence in
+# real time -- this in-memory ring buffer is capped at 200 entries and
+# reset on restart, which is not enough for a genuine durable 14-day
+# FMP-rate-limit-event count. logan_core never imports backend/app (the
+# established, one-way dependency direction -- see this module's own
+# top-of-file docstring); this is dependency injection, not a reverse
+# import, mirroring ProviderScheduler's injectable clock/sleep. A sink
+# that raises is never allowed to break the caller that triggered the
+# fault -- exceptions from it are swallowed here, logged, never
+# propagated.
+FaultSink = Callable[[FaultOccurrence], None]
+_fault_sink: Optional[FaultSink] = None
+
+
+def set_fault_sink(sink: Optional[FaultSink]) -> None:
+    """Registers (or, with `None`, clears) the durable fault-mirroring
+    sink. Test-only / startup-only -- not called from any hot path."""
+    global _fault_sink
+    _fault_sink = sink
+
 
 def record_fault(
     code: str,
@@ -235,6 +256,13 @@ def record_fault(
         f"http_status={http_status} provider_status={provider_status} "
         f"context={occurrence.safe_context}"
     )
+    if _fault_sink is not None:
+        try:
+            _fault_sink(occurrence)
+        except Exception as exc:  # noqa: BLE001 -- a sink failure must never
+            # break the real caller that triggered this fault in the first
+            # place, or mask the original fault behind a sink error.
+            print(f"[fault-sink] durable mirror failed, continuing: {exc}")
     return occurrence
 
 

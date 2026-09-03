@@ -51,6 +51,15 @@ class FmpEndpointCounts:
     cache_hits: int
     suppressed_negative_cache: int
     failures: int
+    # V1a Proof-Instrumentation Closeout: a caller that found the cache
+    # cold, waited on this (endpoint, entity_id)'s warming lock, and then
+    # found the value already warmed by whoever got there first -- a real
+    # network call saved via single-flight coalescing, distinct from a
+    # `cache_hits` warm-cache read (no lock contention at all) and from a
+    # `real_calls` fetch (this caller's own network call). Defaults to 0
+    # so every pre-existing construction site (`FmpEndpointCounts(0, 0, 0,
+    # 0)`) stays valid without updating every call site.
+    coalesced: int = 0
 
     @property
     def total_attempts(self) -> int:
@@ -250,6 +259,8 @@ class FmpResponseCache:
         self._cache_hits: dict[tuple[str, str], int] = {}
         self._suppressed_negative_cache: dict[tuple[str, str], int] = {}
         self._failures_count: dict[tuple[str, str], int] = {}
+        # V1a Proof-Instrumentation Closeout: see FmpEndpointCounts.coalesced.
+        self._coalesced: dict[tuple[str, str], int] = {}
         self._created_at = self._clock()
         # Operational Beta Hardening Block 6 -- Cold-Start Provider Burst
         # Smoothing: a per-(endpoint, entity_id) lock, created lazily and
@@ -316,7 +327,15 @@ class FmpResponseCache:
             now = self._clock()
             entry = self._entries.get(key)
             if entry is not None and (now - entry.cached_at) < effective_ttl:
+                # This caller found the cache cold (the pre-lock check
+                # above missed), waited for this key's lock, and found the
+                # value already warmed by whoever got there first -- a
+                # real network call saved via coalescing. Still counted in
+                # `cache_hits` too (byte-identical to pre-existing
+                # behavior/tests -- this caller's outcome IS a cache hit),
+                # `coalesced` is purely additive, more specific detail.
                 self._bump(self._cache_hits, key)
+                self._bump(self._coalesced, key)
                 return entry.value
 
             # 2026-08-29: a known-recent failure for this exact (endpoint,
@@ -425,6 +444,7 @@ class FmpResponseCache:
         self._cache_hits.clear()
         self._suppressed_negative_cache.clear()
         self._failures_count.clear()
+        self._coalesced.clear()
         self._created_at = self._clock()
 
     def budget_snapshot(self) -> "FmpBudgetSnapshot":
@@ -448,6 +468,7 @@ class FmpResponseCache:
                 cache_hits=self._cache_hits.get(key, 0),
                 suppressed_negative_cache=self._suppressed_negative_cache.get(key, 0),
                 failures=self._failures_count.get(key, 0),
+                coalesced=self._coalesced.get(key, 0),
             )
             for key in sorted(endpoints)
         }
@@ -462,6 +483,7 @@ class FmpResponseCache:
                     + counts.suppressed_negative_cache
                 ),
                 failures=existing.failures + counts.failures,
+                coalesced=existing.coalesced + counts.coalesced,
             )
         age_seconds = max(self._clock() - self._created_at, 0.0)
         return FmpBudgetSnapshot(

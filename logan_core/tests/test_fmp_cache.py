@@ -937,3 +937,63 @@ def test_a_rate_limited_ticker_produces_no_cached_fallback_data():
 
     with pytest.raises(FmpProviderError):
         provider.fetch_latest_earnings("NVDA")
+
+
+def test_coalesced_counter_increments_when_a_waiting_caller_finds_cache_warm():
+    """V1a Proof-Instrumentation Closeout: a caller that finds the cache
+    cold, waits on the per-key warming lock, and then finds the value
+    already warmed by the first caller must never call fetch() itself, and
+    must be counted as `coalesced` (in addition to `cache_hits`, unchanged)
+    -- real threads, not a simulated race, so this proves the actual lock
+    behavior, not just the counter arithmetic in isolation."""
+    import threading
+    import time
+
+    cache = FmpResponseCache(clock=time.monotonic)
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+    second_caller_blocked = threading.Event()
+
+    def slow_fetch():
+        fetch_started.set()
+        release_fetch.wait(timeout=5)
+        return "value"
+
+    def fetch_must_not_be_called():
+        raise AssertionError(
+            "the coalesced (second) caller must never call fetch() itself"
+        )
+
+    results: dict = {}
+
+    def first_caller():
+        results["first"] = cache.get_or_fetch(
+            "endpoint", "AAPL", ttl_seconds=60, fetch=slow_fetch
+        )
+
+    def second_caller():
+        second_caller_blocked.set()
+        results["second"] = cache.get_or_fetch(
+            "endpoint", "AAPL", ttl_seconds=60, fetch=fetch_must_not_be_called
+        )
+
+    t1 = threading.Thread(target=first_caller)
+    t1.start()
+    assert fetch_started.wait(timeout=5)  # t1 now holds AAPL's warming lock
+
+    t2 = threading.Thread(target=second_caller)
+    t2.start()
+    assert second_caller_blocked.wait(timeout=5)
+    time.sleep(0.1)  # let t2 actually reach and block on the lock itself
+
+    release_fetch.set()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert results["first"] == "value"
+    assert results["second"] == "value"
+
+    counts = cache.budget_snapshot().by_endpoint["endpoint"]
+    assert counts.real_calls == 1
+    assert counts.coalesced == 1
+    assert counts.cache_hits == 1  # unchanged pre-existing accounting
