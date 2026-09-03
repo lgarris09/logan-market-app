@@ -425,6 +425,21 @@ def universe_scheduler_state_db_path() -> Path:
     return memory_store_db_path().parent / "universe_scheduler_state.db"
 
 
+def universe_daily_telemetry_db_path() -> Path:
+    """Universe Manager V1a Operational + Supply Telemetry (V1a ITERATE
+    block, Phase 3): the durable SQLite file backing real, day-bucketed
+    pipeline observations (see universe_telemetry_store.py) when
+    memory_persistence_enabled() is true. A separate file from every other
+    Universe Manager store, following the same established sibling-file
+    convention. Overridable via STRATUS_UNIVERSE_TELEMETRY_DB_PATH for test
+    isolation.
+    """
+    override = os.environ.get("STRATUS_UNIVERSE_TELEMETRY_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "universe_daily_telemetry.db"
+
+
 def universe_manager_enabled() -> bool:
     """Universe Manager V1a: whether `live_stock_tickers()` is sourced from
     the Universe Manager's current MONITORED cohort (via

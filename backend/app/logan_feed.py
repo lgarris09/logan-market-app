@@ -97,6 +97,7 @@ from .earnings_cache_store import EarningsCacheStore  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
 from .revision_store import OpportunityRevisionStore  # noqa: E402
+from .universe_telemetry import record_pipeline_observation  # noqa: E402
 from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
 from .watch import is_watched  # noqa: E402
 
@@ -2180,6 +2181,22 @@ def _run_feed_pipeline(
             if decision.should_notify:
                 alert_event_ids.append(r.event.event_id)
         _notification_decisions_cache[user_id] = notification_decisions
+
+        # Universe Manager V1a Operational + Supply Telemetry (V1a ITERATE
+        # block, Phase 3): pure observation of this response's own
+        # already-computed real values, recorded after everything above is
+        # finished -- never influences `items`/`alert_event_ids` in any
+        # way, and record_pipeline_observation() itself never raises (see
+        # its own docstring), so a telemetry failure can never affect this
+        # response.
+        record_pipeline_observation(
+            now=now,
+            thesis_candidates=thesis_candidates,
+            diversity_result=diversity_result,
+            exploration_eligible_pool=eligible_pool,
+            exploration_result=exploration_result,
+            freshness_states=[item.freshness_state for item in items],
+        )
 
     return items, now, alert_event_ids, provider_degraded
 
