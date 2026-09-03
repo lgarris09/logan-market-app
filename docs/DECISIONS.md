@@ -3505,3 +3505,66 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      per-process limiter as every other route (`rate_limit.py`) — not re-evaluated for this specific new
      attack surface beyond generous, defensive-in-depth defaults; a real Clerk-backed deployment may want
      tighter, provider-side abuse protection (Clerk itself rate-limits auth attempts) layered on top later.
+
+## ADR-070: Universe Manager V1a scheduler runtime, crash recovery, and telemetry mechanics
+- Date: 2026-09-03
+- Status: Accepted — **technical implementation only; does not resolve any open V1a product/policy
+  question**
+- Context: Universe Manager V1a's mechanism work (candidate source, eligibility, cohort selection,
+  membership ledger, provider scheduler, expansion gates, exploration, thesis diversity) was already
+  built and tested, but a formal deployment review found three real runtime gaps: (1) nothing in the real
+  backend runtime ever automatically invoked reevaluation, so activating the feature would have done
+  nothing without a separate, undocumented manual trigger; (2) a process crash right after starting a
+  reevaluation run left the durable cadence gate stuck, silently suppressing all reevaluation for up to
+  the full 30-day cadence window with no automatic recovery; (3) `expansion_gates.evaluate_expansion_gates()`
+  had never been called against anything but synthetic test fixtures, so the V1a→V1b expansion question
+  could not yet be asked against real evidence. None of Universe Manager V1a's prior work had a
+  dedicated ADR despite being a large, multi-block initiative — this entry both records these three
+  technical decisions and closes that documentation gap for the mechanism work itself (not for the
+  separately-tracked, still-open policy questions below).
+- Decision:
+  1. **Scheduler runtime-state store** — a dedicated `universe_scheduler_state` SQLite table (own file,
+     own store class `UniverseSchedulerStateStore`), deliberately separate from the Universe Membership
+     Ledger (`universe_store.py`), tracking one row per job (`job_name`, `last_started_at`,
+     `last_completed_at`, `last_succeeded_at`, `last_outcome`). Mirrors this codebase's already-repeated
+     store pattern (config-gated behind `memory_persistence_enabled()`, load-on-first-use) rather than
+     introducing new persistence architecture.
+  2. **Production runtime invocation** — `main.py`'s existing FastAPI lifespan/background-task pattern
+     (the same shape as the existing notification poller) gained a second task,
+     `_universe_reevaluation_poll_loop()`, gated by a new, independent, default-disabled flag
+     (`STRATUS_UNIVERSE_SCHEDULER_ENABLED`) — distinct from `STRATUS_UNIVERSE_MANAGER_ENABLED`, which
+     still separately gates live-feed *consumption* of the monitored cohort. The loop only ever calls the
+     existing durable-cadence-gated `run_scheduled_universe_reevaluation()`, never the un-gated
+     `run_universe_reevaluation()` directly (proven by AST-level source tests, not just mocks). Ownership-
+     tracked module-level task handle prevents duplicate loops within one process without allowing a
+     nested/duplicate lifespan entry's teardown to cancel another entry's still-running task.
+  3. **Crash/interrupted-run recovery** — the smallest deterministic fix compatible with the existing
+     table: a stale-running timeout (1 hour, a generous multiple of a real run's observed few-minutes
+     duration). Gating still checks `last_started_at`; a row stuck at `last_outcome="running"` past the
+     timeout is treated as due regardless of the 30-day cadence floor, while a normally-completed run's
+     cadence protection is completely unaffected. Repeated crashes retry at most once per timeout window,
+     never immediately and never unbounded. No schema change.
+  4. **Telemetry mechanics** — a new, similarly-patterned durable store (`universe_daily_telemetry`,
+     accumulating upsert-by-calendar-day, unlike the append-only membership ledger) records real,
+     already-computed pipeline values (qualified-opportunity counts, distinct thesis keys, entity/sector/
+     signal-family impression concentration, diversity selection/suppression counts, exploration
+     eligible/placed counts, freshness availability) via one read-only, try/except-wrapped call site in
+     `logan_feed.py`, proven never to alter feed output. A new advisory-only orchestration layer
+     (`expansion_review.py`) reads this telemetry and reports whether `evaluate_expansion_gates()` — left
+     completely unmodified — can currently be evaluated at all, distinguishing an insufficient 14-
+     consecutive-calendar-day observation window from an inability to evaluate specific required fields.
+- Consequences: Universe Manager V1a's runtime is now genuinely restart-safe and, once an operator
+  explicitly sets `STRATUS_UNIVERSE_SCHEDULER_ENABLED`, actually self-maintains without a manual trigger
+  — but that flag (like `STRATUS_UNIVERSE_MANAGER_ENABLED`) still defaults to disabled and was not
+  activated by this decision; turning it on for a real deployment remains a separate, explicit,
+  ADR-008-governed choice. This ADR explicitly does **not** resolve, relabel, or take a position on any of
+  the following, which remain open, separately-tracked product/policy questions this technical work
+  deliberately left untouched: the STRATUS-curated candidate-source approximation vs. a licensed S&P 100
+  snapshot; the `OPPORTUNITY_QUALITY_GATES_REQUIRED = 6`-of-7 contradiction against the plan's own "5 of
+  the applicable 6" wording; Controlled Exploration's eligibility calibration. It also does not claim the
+  V1a real-telemetry proof is complete: `STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md`, the
+  actual governing document for the full expansion-gate metric set, does not exist anywhere in this
+  repository (confirmed by a full-repo search), so several plan-named metrics (signal yield, Top-Five
+  Competition Ratio, deterministic Thesis Novelty Rate, complete evidence payload rate) have no confirmed
+  real-data mapping and are explicitly listed as blocked (`universe_telemetry.BLOCKED_METRICS`,
+  `expansion_review.UNCONFIRMED_REQUIRED_FIELDS`) rather than guessed at.
