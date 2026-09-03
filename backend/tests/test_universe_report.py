@@ -11,6 +11,9 @@ from backend.app.universe_manager import (
     reset_universe_manager_state,
     run_universe_reevaluation,
 )
+from backend.app.universe_operational_observations import (
+    reset_operational_observation_state,
+)
 from backend.app.universe_report import build_universe_report
 from backend.app.universe_telemetry import reset_universe_telemetry_state
 from logan_core.receptors.providers import (
@@ -115,8 +118,13 @@ def test_report_reflects_real_monitored_cohort_when_persistence_enabled(
     monkeypatch.setenv(
         "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
     )
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH",
+        str(tmp_path / "operational_observations.db"),
+    )
     reset_universe_manager_state()
     reset_universe_telemetry_state()
+    reset_operational_observation_state()
 
     snapshot = load_candidate_snapshot()
     quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
@@ -154,8 +162,13 @@ def test_report_shows_real_scheduler_job_state_when_persisted(monkeypatch, tmp_p
     monkeypatch.setenv(
         "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
     )
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH",
+        str(tmp_path / "operational_observations.db"),
+    )
     reset_universe_manager_state()
     reset_universe_telemetry_state()
+    reset_operational_observation_state()
 
     from logan_core.universe.candidate_source import load_candidate_snapshot as _lcs
 

@@ -18,6 +18,9 @@ from backend.app.universe_manager import (
     run_scheduled_universe_reevaluation,
     run_universe_reevaluation,
 )
+from backend.app.universe_operational_observations import (
+    reset_operational_observation_state,
+)
 from backend.app.universe_scheduler_store import UniverseSchedulerStateStore
 from backend.app.universe_store import UniverseMembershipStore
 from logan_core.contracts import CandidateSecurity, MembershipRecord
@@ -366,7 +369,12 @@ def _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "universe_scheduler.db")
     )
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH",
+        str(tmp_path / "operational_observations.db"),
+    )
     reset_universe_manager_state()
+    reset_operational_observation_state()
 
 
 def _healthy_fixture_providers():

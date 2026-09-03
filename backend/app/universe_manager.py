@@ -27,6 +27,11 @@ from .config import (
     universe_membership_db_path,
     universe_scheduler_state_db_path,
 )
+from .universe_operational_observations import (
+    record_reevaluation_provider_observations,
+    record_scheduler_wait_samples,
+    record_signal_family_attempt_observations_batch,
+)
 from .universe_scheduler_store import UniverseSchedulerStateStore
 from .universe_store import UniverseMembershipStore
 
@@ -50,6 +55,7 @@ from logan_core.receptors.providers import (  # noqa: E402
     GradeChange,
     ProviderScheduler,
     Quote,
+    fmp_budget_snapshot,
 )
 from logan_core.universe import (  # noqa: E402
     evaluate_eligibility,
@@ -299,6 +305,13 @@ def run_universe_reevaluation(
     now = now or datetime.now(timezone.utc)
     market_data_provider = market_data_provider or FmpMarketDataProvider()
     earnings_provider = earnings_provider or FmpEarningsProvider()
+    # V1a Proof-Instrumentation Closeout: brackets this run's own real
+    # provider calls for durable, source="scheduler" operational-gate
+    # evidence (see universe_operational_observations.py's own disclosed
+    # scope limit on why per-request feed-path calls aren't separately
+    # attributed via this same shared-counter mechanism).
+    provider_calls_before = fmp_budget_snapshot()
+    signal_family_attempts: list[tuple[str, bool]] = []
 
     try:
         snapshot = load_candidate_snapshot()
@@ -313,6 +326,10 @@ def run_universe_reevaluation(
                 now=now,
             )
             evaluated.append((candidate, result))
+            coverage = result.signal_family_coverage
+            signal_family_attempts.append(("price", coverage.price))
+            signal_family_attempts.append(("earnings", coverage.earnings))
+            signal_family_attempts.append(("analyst_grades", coverage.analyst_grades))
 
         cohort = select_monitored_cohort(evaluated)
         reason_codes_by_id = {
@@ -343,6 +360,17 @@ def run_universe_reevaluation(
             context={"reason": str(exc)},
         )
         raise
+    finally:
+        # V1a Proof-Instrumentation Closeout: recorded whether this run
+        # succeeded or failed -- a failed run's real provider calls are
+        # still real evidence for the scheduled-failure-rate gate, and
+        # `finally` runs before the exception above finishes propagating.
+        record_reevaluation_provider_observations(
+            before=provider_calls_before, after=fmp_budget_snapshot(), now=now
+        )
+        if scheduler is not None:
+            record_scheduler_wait_samples(scheduler, now)
+        record_signal_family_attempt_observations_batch(signal_family_attempts, now)
 
     return rebalance
 

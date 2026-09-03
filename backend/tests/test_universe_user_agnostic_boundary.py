@@ -22,6 +22,9 @@ from backend.app.universe_manager import (
     run_scheduled_universe_reevaluation,
     run_universe_reevaluation,
 )
+from backend.app.universe_operational_observations import (
+    reset_operational_observation_state,
+)
 from backend.app.watch import create_watch, reset_watch_state
 from logan_core.receptors.providers import (
     CompanyProfile,
@@ -190,8 +193,13 @@ def test_a_users_watch_never_affects_scheduler_cadence(monkeypatch, tmp_path):
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
     monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
     monkeypatch.setenv("STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "sched.db"))
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH",
+        str(tmp_path / "operational_observations.db"),
+    )
     reset_universe_manager_state()
     reset_watch_state()
+    reset_operational_observation_state()
 
     snapshot = load_candidate_snapshot()
     quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}

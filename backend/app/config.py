@@ -440,6 +440,46 @@ def universe_daily_telemetry_db_path() -> Path:
     return memory_store_db_path().parent / "universe_daily_telemetry.db"
 
 
+def universe_operational_observation_db_path() -> Path:
+    """V1a Proof-Instrumentation Closeout: the durable SQLite file backing
+    genuine per-event operational observations (provider call success/
+    failure, coalescing, scheduler wait-time samples, freshness age/TTL
+    ratios, signal-family attempts) when memory_persistence_enabled() is
+    true -- see universe_operational_observation_store.py. Deliberately a
+    separate file from universe_daily_telemetry.db: that store is a
+    day-bucketed *aggregation* for the opportunity-quality gates; this one
+    is an append-only *event log* for the operational gates, which need a
+    real historical distribution (P95/P99), not a daily rollup. Overridable
+    via STRATUS_OPERATIONAL_OBSERVATION_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_OPERATIONAL_OBSERVATION_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "universe_operational_observations.db"
+
+
+def operational_observation_retention_days() -> int:
+    """V1a Proof-Instrumentation Closeout: how many days of operational
+    event-log history universe_operational_observation_store.py keeps
+    before purging older rows -- bounded, explicitly configurable via
+    STRATUS_OPERATIONAL_OBSERVATION_RETENTION_DAYS. Defaults to 45 days:
+    comfortably covers the Master Plan's 14-consecutive-calendar-day proof
+    window plus a real review/re-run margin, without keeping this
+    operational-proof-only log growing indefinitely (this is explicitly
+    not a general analytics platform -- see the store's own module
+    docstring).
+    """
+    override = os.environ.get(
+        "STRATUS_OPERATIONAL_OBSERVATION_RETENTION_DAYS", ""
+    ).strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return 45
+
+
 def universe_manager_enabled() -> bool:
     """Universe Manager V1a: whether `live_stock_tickers()` is sourced from
     the Universe Manager's current MONITORED cohort (via

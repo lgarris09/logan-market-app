@@ -401,6 +401,9 @@ def test_v1a_decision_trace_sourced_from_monitored_cohort(monkeypatch, tmp_path)
         reset_universe_manager_state,
         run_universe_reevaluation,
     )
+    from backend.app.universe_operational_observations import (
+        reset_operational_observation_state,
+    )
     from logan_core.receptors.providers import (
         CompanyProfile,
         EarningsReport,
@@ -413,10 +416,15 @@ def test_v1a_decision_trace_sourced_from_monitored_cohort(monkeypatch, tmp_path)
 
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
     monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH",
+        str(tmp_path / "operational_observations.db"),
+    )
     # Deliberately different from the real monitored cohort -- proves
     # live_stock_tickers() genuinely overrides this, not coincidence.
     monkeypatch.setenv("STRATUS_LIVE_STOCK_TICKERS", "ZZZZ")
     reset_universe_manager_state()
+    reset_operational_observation_state()
 
     snapshot = load_candidate_snapshot()
 

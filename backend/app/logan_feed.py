@@ -97,6 +97,9 @@ from .earnings_cache_store import EarningsCacheStore  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
 from .revision_store import OpportunityRevisionStore  # noqa: E402
+from .universe_operational_observations import (  # noqa: E402
+    record_freshness_ratio_observation,
+)
 from .universe_telemetry import record_pipeline_observation  # noqa: E402
 from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
 from .watch import is_watched  # noqa: E402
@@ -2030,10 +2033,23 @@ def _run_feed_pipeline(
                         (now - r.normalized_signals[0].captured_at).total_seconds(),
                         0.0,
                     )
+                    contract = signal_family_contract(family)
                     item.freshness_state = classify_freshness(
                         has_value=True,
                         age_seconds=age_seconds,
-                        contract=signal_family_contract(family),
+                        contract=contract,
+                    )
+                    # V1a Proof-Instrumentation Closeout: a genuine numeric
+                    # age/TTL pair, real durable evidence for the Master
+                    # Plan's critical-freshness P95/P99 ratio operational
+                    # gate -- never recorded for the provider-failure or
+                    # no-contract branches, which have no real ratio to
+                    # report.
+                    record_freshness_ratio_observation(
+                        signal_family=family,
+                        age_seconds=age_seconds,
+                        ttl_seconds=contract.target_ttl_seconds,
+                        now=now,
                     )
             # else: no registered freshness contract for this signal_type
             # (a demo/simulated signal type outside the three live stock
