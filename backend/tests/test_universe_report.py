@@ -201,6 +201,15 @@ def test_report_never_claims_a_completed_expansion_proof_without_real_data(
     assert "0 of 14 required consecutive real calendar days" in report
 
 
+def test_report_shows_fail_closed_proof_window_readiness(monkeypatch):
+    """V1a Proof-Instrumentation Closeout: 3 fields remain permanently
+    unconfirmed, so the report must say NO, never a fabricated YES."""
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    report = build_universe_report()
+    assert "READY_TO_START_14_DAY_WINDOW: NO" in report
+    assert "permanently-unconfirmed" in report
+
+
 def test_route_returns_a_report_string():
     response = client.get("/v1/dev/universe-report")
     assert response.status_code == 200

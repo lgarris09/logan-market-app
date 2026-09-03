@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import universe_manager_enabled, universe_scheduler_enabled
-from .expansion_review import build_expansion_review
+from .expansion_review import build_expansion_review, check_proof_window_readiness
 from .opportunity_quality_report import format_opportunity_quality_report
 from .universe_manager import (
     REEVALUATION_MIN_INTERVAL_SECONDS,
@@ -187,6 +187,7 @@ def _telemetry_section() -> list[str]:
     against the governing Master Plan's own exact formulas) are shown when
     real data exists for today, an honest "no data yet" otherwise."""
     review = build_expansion_review()
+    readiness = check_proof_window_readiness()
     lines = [
         "",
         "Telemetry & Expansion Review",
@@ -194,6 +195,7 @@ def _telemetry_section() -> list[str]:
         f"{review.required_consecutive_days} required consecutive real "
         "calendar days",
         f"  expansion-review status: {review.status}",
+        f"  READY_TO_START_14_DAY_WINDOW: {'YES' if readiness.ready else 'NO'}",
     ]
     for note in review.notes:
         lines.append(f"    {note}")
@@ -203,6 +205,12 @@ def _telemetry_section() -> list[str]:
         )
         for field_name, reason in sorted(review.unconfirmed_fields.items()):
             lines.append(f"      {field_name}: {reason}")
+    if not readiness.ready:
+        lines.append(
+            f"    proof-window readiness blocked by "
+            f"{len(readiness.permanently_unconfirmed)} permanently-unconfirmed "
+            "field(s) -- see unconfirmed required fields above"
+        )
 
     today = datetime.now(timezone.utc).date()
     today_rows = daily_telemetry_range(today, today)
