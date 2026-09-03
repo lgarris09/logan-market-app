@@ -398,6 +398,23 @@ class FmpResponseCache:
             # that entry is served instead -- its own `cached_at` is left
             # untouched, so the very next call still attempts a real refetch
             # rather than treating this as a fresh success.
+            # V1a Final Proof-Readiness Closeout: the one real outbound-call
+            # boundary in this whole cache -- every path that reaches here
+            # (both the try below and its except) is a genuine network
+            # attempt this process is about to make/just made, whether it
+            # succeeds or fails. Never reached by a cache hit (returned
+            # above) or a coalesced caller (returned above, inside the
+            # lock, without ever reaching this line) or a suppressed
+            # negative-cache retry (raises above, also without reaching
+            # this line) -- exactly the boundary the historical
+            # peak-calls/minute measurement needs, not an inference from
+            # scheduler jobs, queue depth, or symbols processed.
+            if _call_observer is not None:
+                try:
+                    _call_observer(endpoint)
+                except Exception:  # noqa: BLE001 -- an observer must never
+                    # block or break the real call it's observing.
+                    pass
             try:
                 value = fetch()
             except FmpProviderError as exc:
@@ -524,6 +541,24 @@ class FmpResponseCache:
 
 
 _shared_fmp_cache = FmpResponseCache()
+
+# V1a Final Proof-Readiness Closeout: an optional, injectable observer
+# (dependency injection, not a reverse import -- logan_core still never
+# imports backend/app, mirroring diagnostics.fault_codes.set_fault_sink())
+# invoked exactly once per real outbound provider call, at the one real
+# call boundary inside get_or_fetch() above. Never invoked for a cache
+# hit, a coalesced return, or a suppressed negative-cache retry -- those
+# never reach that line. An observer that raises is swallowed at the call
+# site, never propagated.
+ProviderCallObserver = Callable[[str], None]  # (endpoint) -> None
+_call_observer: Optional[ProviderCallObserver] = None
+
+
+def set_call_observer(observer: Optional[ProviderCallObserver]) -> None:
+    """Registers (or, with `None`, clears) the real-outbound-call
+    observer. Test-only / startup-only -- not called from any hot path."""
+    global _call_observer
+    _call_observer = observer
 
 
 def reset_fmp_cache() -> None:

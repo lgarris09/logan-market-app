@@ -132,6 +132,22 @@ class FaultMirrorObservation:
     correlation_id: str
 
 
+@dataclass(frozen=True)
+class ProviderCallTimestamp:
+    """Master Plan Section 4 operational gate: 'provider burst never
+    >220/min' -- historical peak_calls_per_minute. One row per REAL
+    outbound provider call (see logan_core.receptors.providers.fmp.
+    set_call_observer()'s own docstring for the exact boundary this fires
+    at -- never a cache hit, a coalesced return, or a suppressed
+    negative-cache retry). Deliberately minimal: no entity_id/ticker, no
+    response payload, no user data -- exactly timestamp + endpoint, per
+    explicit instruction."""
+
+    occurred_at: datetime
+    provider: str
+    endpoint: str
+
+
 class UniverseOperationalObservationStore:
     """Durable backing for the five observation tables above -- constructed
     only when config.memory_persistence_enabled() is true. Every `record_*`
@@ -202,6 +218,14 @@ class UniverseOperationalObservationStore:
             "  occurred_at TEXT NOT NULL,"
             "  code TEXT NOT NULL,"
             "  correlation_id TEXT NOT NULL UNIQUE"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_call_timestamps ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  occurred_at TEXT NOT NULL,"
+            "  provider TEXT NOT NULL,"
+            "  endpoint TEXT NOT NULL"
             ")"
         )
         self._conn.commit()
@@ -312,6 +336,16 @@ class UniverseOperationalObservationStore:
             "INSERT OR IGNORE INTO fault_mirror_observations "
             "(occurred_at, code, correlation_id) VALUES (?, ?, ?)",
             (obs.occurred_at.isoformat(), obs.code, obs.correlation_id),
+        )
+        self._conn.commit()
+
+    def record_provider_call_timestamp(self, obs: ProviderCallTimestamp) -> None:
+        """One row per real outbound provider call -- see
+        ProviderCallTimestamp's own docstring for the exact boundary."""
+        self._conn.execute(
+            "INSERT INTO provider_call_timestamps (occurred_at, provider, endpoint) "
+            "VALUES (?, ?, ?)",
+            (obs.occurred_at.isoformat(), obs.provider, obs.endpoint),
         )
         self._conn.commit()
 
@@ -428,35 +462,48 @@ class UniverseOperationalObservationStore:
             for r in rows
         ]
 
+    def provider_call_timestamps_in_range(
+        self, start: datetime, end: datetime
+    ) -> list[ProviderCallTimestamp]:
+        rows = self._conn.execute(
+            "SELECT * FROM provider_call_timestamps "
+            "WHERE occurred_at >= ? AND occurred_at <= ? ORDER BY occurred_at",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return [
+            ProviderCallTimestamp(
+                occurred_at=datetime.fromisoformat(r["occurred_at"]),
+                provider=r["provider"],
+                endpoint=r["endpoint"],
+            )
+            for r in rows
+        ]
+
     # --- retention --------------------------------------------------------
+
+    _ALL_TABLES = (
+        "provider_call_observations",
+        "coalescing_observations",
+        "provider_wait_observations",
+        "freshness_ratio_observations",
+        "signal_family_attempt_observations",
+        "fault_mirror_observations",
+        "provider_call_timestamps",
+    )
 
     def purge_older_than(self, cutoff: date) -> None:
         """Deletes every observation strictly older than `cutoff` across
-        all six tables -- bounded, explicit retention (see module
-        docstring), never touches a row on or after `cutoff`."""
+        every table -- bounded, explicit retention (see module docstring),
+        never touches a row on or after `cutoff`."""
         cutoff_text = cutoff.isoformat()
-        for table in (
-            "provider_call_observations",
-            "coalescing_observations",
-            "provider_wait_observations",
-            "freshness_ratio_observations",
-            "signal_family_attempt_observations",
-            "fault_mirror_observations",
-        ):
+        for table in self._ALL_TABLES:
             self._conn.execute(
                 f"DELETE FROM {table} WHERE occurred_at < ?", (cutoff_text,)
             )
         self._conn.commit()
 
     def clear(self) -> None:
-        for table in (
-            "provider_call_observations",
-            "coalescing_observations",
-            "provider_wait_observations",
-            "freshness_ratio_observations",
-            "signal_family_attempt_observations",
-            "fault_mirror_observations",
-        ):
+        for table in self._ALL_TABLES:
             self._conn.execute(f"DELETE FROM {table}")
         self._conn.commit()
 

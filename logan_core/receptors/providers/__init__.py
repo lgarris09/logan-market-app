@@ -39,9 +39,11 @@ from .fmp import (
     FmpMarketDataProvider,
     FmpProviderError,
     FmpResponseCache,
+    ProviderCallObserver,
     fmp_budget_snapshot,
     reset_fmp_cache,
     seed_earnings_from_durable_observation,
+    set_call_observer,
 )
 from .freshness import (
     SIGNAL_FRESHNESS_CONTRACTS,
@@ -90,9 +92,11 @@ __all__ = [
     "FmpResponseCache",
     "FmpBudgetSnapshot",
     "FmpEndpointCounts",
+    "ProviderCallObserver",
     "fmp_budget_snapshot",
     "reset_fmp_cache",
     "seed_earnings_from_durable_observation",
+    "set_call_observer",
     "FMP_SOURCE_ID",
     "FMP_SOURCE_NAME",
     "FMP_API_KEY_ENV_VAR",

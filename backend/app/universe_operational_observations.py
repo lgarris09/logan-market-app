@@ -12,7 +12,7 @@ observes, it never breaks the real work it's observing" discipline.
 
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +26,7 @@ from .universe_operational_observation_store import (
     FaultMirrorObservation,
     FreshnessRatioObservation,
     ProviderCallObservation,
+    ProviderCallTimestamp,
     ProviderWaitObservation,
     SignalFamilyAttemptObservation,
     UniverseOperationalObservationStore,
@@ -36,7 +37,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.diagnostics import FaultOccurrence, set_fault_sink  # noqa: E402
-from logan_core.receptors.providers import FmpBudgetSnapshot  # noqa: E402
+from logan_core.receptors.providers import (  # noqa: E402
+    FmpBudgetSnapshot,
+    set_call_observer,
+)
 from logan_core.receptors.providers.scheduler import ProviderScheduler  # noqa: E402
 
 _store: Optional[UniverseOperationalObservationStore] = None
@@ -59,6 +63,23 @@ def _fault_sink_callback(occurrence: FaultOccurrence) -> None:
     )
 
 
+def _call_observer_callback(endpoint: str) -> None:
+    """Registered once via set_call_observer() -- durably records exactly
+    one row per real outbound provider call. A no-op when persistence is
+    disabled. `datetime.now(timezone.utc)` is read here, synchronously, at
+    the moment the real call boundary in fmp.py fires this callback --
+    genuine wall-clock time, never the injectable monotonic clock fmp.py's
+    own cache/TTL logic uses for deterministic test timing."""
+    store = _get_store()
+    if store is None:
+        return
+    store.record_provider_call_timestamp(
+        ProviderCallTimestamp(
+            occurred_at=datetime.now(timezone.utc), provider="fmp", endpoint=endpoint
+        )
+    )
+
+
 def _get_store() -> Optional[UniverseOperationalObservationStore]:
     global _store
     if not memory_persistence_enabled():
@@ -70,28 +91,31 @@ def _get_store() -> Optional[UniverseOperationalObservationStore]:
     return _store
 
 
-# Registered at import time (not lazily inside _get_store()) so a fault
-# occurring before this module's first real recording call is never
-# missed -- the callback itself checks memory_persistence_enabled() /
-# _get_store() internally and is a total no-op when disabled, so eager
+# Registered at import time (not lazily inside _get_store()) so a fault or
+# real call occurring before this module's first real recording call is
+# never missed -- both callbacks check memory_persistence_enabled() /
+# _get_store() internally and are total no-ops when disabled, so eager
 # registration has no real side effect on its own (consistent with "an
 # import must never start anything by itself").
 set_fault_sink(_fault_sink_callback)
+set_call_observer(_call_observer_callback)
 
 
 def reset_operational_observation_state() -> None:
     """Test-only (and general-purpose "start over") hook, mirroring every
     other store's identical reset_*_state() shape. Re-arms (never clears)
-    the fault sink -- it must stay registered across a reset exactly like
-    it does across a real process restart (this module gets re-imported,
-    which re-registers it); a test calling this must still durably capture
-    the very next fault, not need a second, unrelated call first."""
+    the fault sink and call observer -- they must stay registered across a
+    reset exactly like they do across a real process restart (this module
+    gets re-imported, which re-registers them); a test calling this must
+    still durably capture the very next fault/call, not need a second,
+    unrelated call first."""
     global _store
     if _store is not None:
         _store.close()
     _store = None
     _last_persisted_wait_sample_index.clear()
     set_fault_sink(_fault_sink_callback)
+    set_call_observer(_call_observer_callback)
 
 
 def _maybe_purge(now: datetime) -> None:
@@ -267,6 +291,7 @@ class OperationalGateEvidence:
     critical_freshness_p99_ratio: Optional[float]
     coalescing_success_rate: Optional[float]
     signal_family_yield: dict
+    peak_calls_per_minute: Optional[int]
 
 
 def build_operational_gate_evidence(
@@ -287,6 +312,7 @@ def build_operational_gate_evidence(
             critical_freshness_p99_ratio=None,
             coalescing_success_rate=None,
             signal_family_yield={},
+            peak_calls_per_minute=None,
         )
 
     faults = store.fault_mirrors_in_range(start, end)
@@ -344,7 +370,39 @@ def build_operational_gate_evidence(
         critical_freshness_p99_ratio=p99_ratio,
         coalescing_success_rate=coalescing_rate,
         signal_family_yield=signal_family_yield,
+        peak_calls_per_minute=historical_peak_calls_per_minute(start, end),
     )
+
+
+def historical_peak_calls_per_minute(start: datetime, end: datetime) -> Optional[int]:
+    """Master Plan Section 4 operational gate: 'provider burst never
+    >220/min'. Deterministic definition: buckets every real outbound
+    provider call (see fmp.py's own call-observer boundary) into its
+    FIXED calendar-minute (occurred_at truncated to the minute, e.g.
+    "2026-09-03T12:34"), then returns the largest single bucket's count --
+    a real historical peak, computed from real persisted timestamps, never
+    the current instantaneous rate (see ProviderScheduler.
+    current_calls_per_minute(), a completely separate, point-in-time-only
+    signal this function never touches or substitutes for).
+
+    Fixed-minute bucketing (not a sliding 60-second window) is the
+    explicit, documented choice here -- simpler, and every call falls into
+    exactly one bucket unambiguously, so a call landing near a minute
+    boundary is handled the same deterministic way every time. Returns
+    None only when zero real calls exist in the window (honest "no data,"
+    never a fabricated 0).
+    """
+    store = _get_store()
+    if store is None:
+        return None
+    timestamps = store.provider_call_timestamps_in_range(start, end)
+    if not timestamps:
+        return None
+    bucket_counts: dict[str, int] = {}
+    for entry in timestamps:
+        bucket_key = entry.occurred_at.replace(second=0, microsecond=0).isoformat()
+        bucket_counts[bucket_key] = bucket_counts.get(bucket_key, 0) + 1
+    return max(bucket_counts.values())
 
 
 def observation_coverage(start: date, end: date) -> dict:

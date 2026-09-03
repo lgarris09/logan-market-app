@@ -997,3 +997,112 @@ def test_coalesced_counter_increments_when_a_waiting_caller_finds_cache_warm():
     assert counts.real_calls == 1
     assert counts.coalesced == 1
     assert counts.cache_hits == 1  # unchanged pre-existing accounting
+
+
+def test_call_observer_fires_exactly_once_per_real_outbound_call():
+    """V1a Final Proof-Readiness Closeout: the observer must fire once for
+    a genuine cold fetch, and never again for a subsequent warm-cache
+    read of the exact same key -- proving cache hits do not count as
+    outbound provider calls."""
+    from logan_core.receptors.providers.fmp import set_call_observer
+
+    observed = []
+    set_call_observer(lambda endpoint: observed.append(endpoint))
+    try:
+        clock = _FakeClock()
+        cache = FmpResponseCache(clock=clock)
+        cache.get_or_fetch("quote", "AAPL", ttl_seconds=60, fetch=lambda: "value")
+        assert observed == ["quote"]
+
+        # A warm-cache read of the same key -- must not fire again.
+        cache.get_or_fetch("quote", "AAPL", ttl_seconds=60, fetch=lambda: "value")
+        assert observed == ["quote"]
+    finally:
+        set_call_observer(None)
+
+
+def test_call_observer_never_fires_for_a_coalesced_caller():
+    """The coalesced (second) caller in the race above must never trigger
+    a second real-call observation -- only the actual underlying provider
+    call counts, not the number of callers who benefited from it."""
+    import threading
+    import time
+
+    from logan_core.receptors.providers.fmp import set_call_observer
+
+    observed = []
+    set_call_observer(lambda endpoint: observed.append(endpoint))
+    try:
+        cache = FmpResponseCache(clock=time.monotonic)
+        fetch_started = threading.Event()
+        release_fetch = threading.Event()
+        second_caller_blocked = threading.Event()
+
+        def slow_fetch():
+            fetch_started.set()
+            release_fetch.wait(timeout=5)
+            return "value"
+
+        def second_caller():
+            second_caller_blocked.set()
+            cache.get_or_fetch(
+                "endpoint", "AAPL", ttl_seconds=60, fetch=lambda: "unreachable"
+            )
+
+        t1 = threading.Thread(
+            target=lambda: cache.get_or_fetch(
+                "endpoint", "AAPL", ttl_seconds=60, fetch=slow_fetch
+            )
+        )
+        t1.start()
+        assert fetch_started.wait(timeout=5)
+
+        t2 = threading.Thread(target=second_caller)
+        t2.start()
+        assert second_caller_blocked.wait(timeout=5)
+        time.sleep(0.1)
+
+        release_fetch.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        # Exactly one real call observed, despite two callers.
+        assert observed == ["endpoint"]
+    finally:
+        set_call_observer(None)
+
+
+def test_call_observer_fires_on_a_failed_real_call_too():
+    """A failed outbound attempt is still a real outbound call."""
+    from logan_core.receptors.providers.fmp import set_call_observer
+
+    observed = []
+    set_call_observer(lambda endpoint: observed.append(endpoint))
+    try:
+        clock = _FakeClock()
+        cache = FmpResponseCache(clock=clock)
+
+        def failing_fetch():
+            raise FmpProviderError("simulated failure", status_code=500)
+
+        try:
+            cache.get_or_fetch("quote", "AAPL", ttl_seconds=60, fetch=failing_fetch)
+        except FmpProviderError:
+            pass
+        assert observed == ["quote"]
+    finally:
+        set_call_observer(None)
+
+
+def test_no_observer_registered_is_a_silent_no_op():
+    """The default state (no observer) must never raise or change
+    behavior -- every pre-existing cache test in this file relies on
+    this."""
+    from logan_core.receptors.providers.fmp import set_call_observer
+
+    set_call_observer(None)
+    clock = _FakeClock()
+    cache = FmpResponseCache(clock=clock)
+    assert (
+        cache.get_or_fetch("quote", "AAPL", ttl_seconds=60, fetch=lambda: "ok") == "ok"
+    )

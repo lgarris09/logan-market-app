@@ -19,12 +19,14 @@ from backend.app.universe_operational_observation_store import (
     FaultMirrorObservation,
     FreshnessRatioObservation,
     ProviderCallObservation,
+    ProviderCallTimestamp,
     ProviderWaitObservation,
     SignalFamilyAttemptObservation,
     UniverseOperationalObservationStore,
 )
 from backend.app.universe_operational_observations import (
     build_operational_gate_evidence,
+    historical_peak_calls_per_minute,
     observation_coverage,
     record_freshness_ratio_observation,
     record_reevaluation_provider_observations,
@@ -389,3 +391,122 @@ def test_real_reevaluation_run_populates_the_observation_layer(monkeypatch, tmp_
     )
     assert evidence.time_sensitive_delay_p95_seconds is not None
     assert "price" in evidence.signal_family_yield
+
+
+# --- V1a Final Proof-Readiness Closeout: historical peak calls/minute -------
+
+
+def test_historical_peak_is_none_with_no_real_calls(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    peak = historical_peak_calls_per_minute(
+        NOW - timedelta(minutes=1), NOW + timedelta(minutes=1)
+    )
+    assert peak is None
+
+
+def test_calls_spanning_a_minute_boundary_are_bucketed_deterministically(
+    monkeypatch, tmp_path
+):
+    """Two calls one second apart but on opposite sides of a calendar-
+    minute boundary must land in two different, deterministic buckets --
+    never merged, never ambiguous."""
+    _enable(monkeypatch, tmp_path)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    minute_boundary = datetime(2026, 9, 3, 12, 35, 0, tzinfo=timezone.utc)
+    store.record_provider_call_timestamp(
+        ProviderCallTimestamp(
+            occurred_at=minute_boundary - timedelta(seconds=1),
+            provider="fmp",
+            endpoint="quote",
+        )
+    )
+    store.record_provider_call_timestamp(
+        ProviderCallTimestamp(
+            occurred_at=minute_boundary, provider="fmp", endpoint="quote"
+        )
+    )
+    store.close()
+
+    peak = historical_peak_calls_per_minute(
+        minute_boundary - timedelta(minutes=1), minute_boundary + timedelta(minutes=1)
+    )
+    # One call in each of two distinct minute buckets -- peak is 1, not 2,
+    # proving they were never merged across the boundary.
+    assert peak == 1
+
+
+def test_greater_than_220_calls_per_minute_is_detectable(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    minute = datetime(2026, 9, 3, 12, 35, 0, tzinfo=timezone.utc)
+    for i in range(225):
+        store.record_provider_call_timestamp(
+            ProviderCallTimestamp(
+                occurred_at=minute + timedelta(milliseconds=i),
+                provider="fmp",
+                endpoint="quote",
+            )
+        )
+    store.close()
+
+    peak = historical_peak_calls_per_minute(
+        minute - timedelta(minutes=1), minute + timedelta(minutes=1)
+    )
+    assert peak == 225
+    assert peak > 220
+
+
+def test_historical_peak_survives_a_simulated_restart(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    minute = datetime(2026, 9, 3, 12, 35, 0, tzinfo=timezone.utc)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    for i in range(5):
+        store.record_provider_call_timestamp(
+            ProviderCallTimestamp(
+                occurred_at=minute + timedelta(seconds=i),
+                provider="fmp",
+                endpoint="quote",
+            )
+        )
+    store.close()
+
+    reset_operational_observation_state()  # simulates a process restart
+
+    peak = historical_peak_calls_per_minute(
+        minute - timedelta(minutes=1), minute + timedelta(minutes=1)
+    )
+    assert peak == 5
+
+
+def test_historical_peak_is_not_replaced_by_current_instantaneous_rate(
+    monkeypatch, tmp_path
+):
+    """The historical peak (from real persisted timestamps) and the
+    current, point-in-time scheduler rate are proven to be two genuinely
+    separate signals -- a high real historical peak must be reported even
+    when the current live scheduler shows a low or zero instantaneous
+    rate, and vice versa."""
+    _enable(monkeypatch, tmp_path)
+    minute = datetime(2026, 9, 3, 12, 35, 0, tzinfo=timezone.utc)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    for i in range(50):
+        store.record_provider_call_timestamp(
+            ProviderCallTimestamp(
+                occurred_at=minute + timedelta(milliseconds=i),
+                provider="fmp",
+                endpoint="quote",
+            )
+        )
+    store.close()
+
+    from logan_core.receptors.providers import ProviderScheduler
+
+    idle_scheduler = ProviderScheduler()  # a fresh scheduler -- 0 current calls/min
+    evidence = build_operational_gate_evidence(
+        minute - timedelta(minutes=1), minute + timedelta(minutes=1)
+    )
+    assert evidence.peak_calls_per_minute == 50
+    assert idle_scheduler.current_calls_per_minute() == 0
+    # The historical field is untouched by, and independent of, the
+    # scheduler's own current-window reading.
+    assert evidence.peak_calls_per_minute != idle_scheduler.current_calls_per_minute()
