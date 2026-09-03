@@ -97,6 +97,25 @@ def test_missing_days_are_a_real_gap_not_zero_filled(monkeypatch, tmp_path):
     assert rows[0].date == today.isoformat()
 
 
+def test_recorded_freshness_counts_reflect_real_item_states(monkeypatch, tmp_path):
+    """Phase 6 safeguard: a recorded day's freshness_unavailable_count must
+    reflect the pipeline's own real, already-computed freshness_state
+    values -- never silently zero (which would misrepresent stale/
+    unavailable data as current) and never silently equal to the total
+    (which would misrepresent healthy data as unavailable)."""
+    _enable_persistence(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc).date()
+
+    demo = run_demo_feed()
+    row = daily_telemetry_range(today, today)[0]
+
+    real_unavailable = sum(
+        1 for item in demo.items if item.freshness_state in (None, "UNAVAILABLE")
+    )
+    assert row.freshness_total_count == len(demo.items)
+    assert row.freshness_unavailable_count == real_unavailable
+
+
 def test_blocked_metrics_are_named_and_not_silently_implemented():
     """Governance guard: the metrics this session found no definition for
     anywhere in the repo stay explicitly listed as blocked, not quietly

@@ -19,6 +19,7 @@ from backend.app.universe_manager import (
     evaluate_candidate_eligibility,
     monitored_tickers,
     reset_universe_manager_state,
+    run_scheduled_universe_reevaluation,
     run_universe_reevaluation,
 )
 from backend.app.watch import create_watch, reset_watch_state
@@ -106,6 +107,11 @@ def test_no_universe_manager_function_accepts_a_user_identity():
         rebalance_membership,
         evaluate_candidate_eligibility,
         run_universe_reevaluation,
+        # V1a ITERATE block, Phase 6: the new scheduler-cadence entry point
+        # must satisfy the exact same user-agnostic boundary as the
+        # reevaluation function it wraps -- cadence is a fact about the
+        # job, never about who is asking.
+        run_scheduled_universe_reevaluation,
     ]
     disallowed_substrings = (
         "user",
@@ -171,3 +177,75 @@ def test_monitored_tickers_output_is_identical_regardless_of_which_user_asks(
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
     params = inspect.signature(monitored_tickers).parameters
     assert len(params) == 0
+
+
+# --- V1a ITERATE block, Phase 6: scheduler cadence boundary -------------------
+
+
+def test_a_users_watch_never_affects_scheduler_cadence(monkeypatch, tmp_path):
+    """The Phase 1/2 scheduler-persistence closeout's own cadence gate must
+    be exactly as user-agnostic as the reevaluation it wraps -- a Watch
+    created between two scheduled-reevaluation calls must never change
+    whether the second one is due."""
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv("STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "sched.db"))
+    reset_universe_manager_state()
+    reset_watch_state()
+
+    snapshot = load_candidate_snapshot()
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {s.symbol: _profile(s.symbol) for s in snapshot.securities}
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+
+    first = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    assert first.executed is True
+
+    create_watch("some-real-user", "AAPL")
+
+    # Immediately due again, per the exact same cadence math -- a Watch
+    # created in between changes nothing about it.
+    second = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    assert second.executed is False
+    assert "minimum cadence" in second.skipped_reason
+
+
+def test_scheduler_and_telemetry_modules_never_import_learning_or_watch():
+    """A source-level structural guarantee, not just a behavioral test:
+    the scheduler-persistence and telemetry-recording modules never even
+    import anything from logan_core.learning, logan_core.personal_relevance,
+    or backend.app.watch -- the boundary can't be silently reintroduced by
+    a future edit that "just reads" learning state, because the import
+    itself would show up here."""
+    import backend.app.universe_manager as universe_manager_module
+    import backend.app.universe_scheduler_store as universe_scheduler_store_module
+    import backend.app.universe_telemetry as universe_telemetry_module
+    import backend.app.universe_telemetry_store as universe_telemetry_store_module
+
+    disallowed = ("logan_core.learning", "logan_core.personal_relevance", "watch")
+    for module in (
+        universe_manager_module,
+        universe_scheduler_store_module,
+        universe_telemetry_module,
+        universe_telemetry_store_module,
+    ):
+        source = inspect.getsource(module)
+        import_lines = [
+            line
+            for line in source.splitlines()
+            if line.strip().startswith(("import ", "from "))
+        ]
+        for line in import_lines:
+            lowered = line.lower()
+            assert not any(
+                bad in lowered for bad in disallowed
+            ), f"{module.__name__} has a disallowed import: {line.strip()!r}"
