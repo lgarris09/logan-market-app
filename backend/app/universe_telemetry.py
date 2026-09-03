@@ -51,7 +51,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from logan_core.contracts import ExplorationPlacementResult  # noqa: E402
+from logan_core.contracts import (  # noqa: E402
+    ConclusionConfidence,
+    DeliveredItem,
+    ExplorationPlacementResult,
+    TriggerEvent,
+)
 from logan_core.diagnostics import recent_faults  # noqa: E402
 from logan_core.receptors.providers import fmp_budget_snapshot  # noqa: E402
 from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
@@ -80,13 +85,10 @@ BLOCKED_METRICS = (
     # Ratio / Thesis Novelty Rate, which Section 16A defines exactly) --
     # only the raw distribution (signal_family_impression_counts) is real.
     "signal_family_yield_rate",
-    # Master Plan Section 4: "≥95% complete evidence/explanation chains" --
-    # no field anywhere in this codebase's FeedItem/DeliveredItem/
-    # ConclusionConfidence contracts marks an item's evidence payload as
-    # "complete," and the plan itself never enumerates what completeness
-    # requires. Computing this would mean inventing the definition, not
-    # observing an existing signal.
-    "complete_evidence_payload_rate",
+    # complete_evidence_payload_rate is NO LONGER blocked -- V1a Final
+    # Proof-Readiness Closeout: Chuck/Logan approved a deterministic
+    # per-surfaced-thesis definition (see
+    # compute_thesis_evidence_completeness()), now implemented and wired.
     # Master Plan Section 4's Material Revision Rubric names seven
     # auditable classes (STATE_CHANGE, EVIDENCE_STRENGTH_CHANGE,
     # TRAJECTORY_CHANGE, INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE,
@@ -151,6 +153,7 @@ def build_observation_delta(
     exploration_eligible_pool: list[ThesisCandidate],
     exploration_result: ExplorationPlacementResult,
     freshness_states: list[Optional[str]],
+    thesis_completeness: Optional[dict[str, bool]] = None,
 ) -> DailyObservationDelta:
     """Pure transformation from one real `_run_feed_pipeline()` call's
     already-computed values into one day's observation delta -- no I/O, no
@@ -204,6 +207,7 @@ def build_observation_delta(
         # -- "eligible distinct theses before diversity constraints" --
         # this observation's own distinct thesis count, pre-diversity.
         pre_diversity_thesis_count=len(distinct_thesis_keys),
+        thesis_completeness_by_event_id=dict(thesis_completeness or {}),
     )
 
 
@@ -215,6 +219,7 @@ def record_pipeline_observation(
     exploration_eligible_pool: list[ThesisCandidate],
     exploration_result: ExplorationPlacementResult,
     freshness_states: list[Optional[str]],
+    thesis_completeness: Optional[dict[str, bool]] = None,
 ) -> None:
     """The single call site's entry point (logan_feed.py). Never raises --
     a telemetry failure must never affect a real request's response. A
@@ -230,6 +235,7 @@ def record_pipeline_observation(
             exploration_eligible_pool=exploration_eligible_pool,
             exploration_result=exploration_result,
             freshness_states=freshness_states,
+            thesis_completeness=thesis_completeness,
         )
         store.record(now.date(), delta)
     except Exception as exc:  # noqa: BLE001 -- telemetry must never break a request
@@ -373,6 +379,76 @@ def max_single_sector_impression_share(row: DailyUniverseTelemetry) -> Optional[
     if total == 0:
         return None
     return max(row.sector_impression_counts.values()) / total
+
+
+def compute_thesis_evidence_completeness(
+    *,
+    delivered_item: DeliveredItem,
+    confidence: Optional[ConclusionConfidence],
+    trigger_events: list[TriggerEvent],
+    freshness_state: Optional[str],
+) -> bool:
+    """V1a Final Proof-Readiness Closeout, item 1: the approved,
+    deterministic per-surfaced-thesis (event_id) completeness definition.
+    Pure and real -- every input is an already-computed real object from
+    one pipeline result, nothing inferred or fabricated.
+
+    A thesis is complete only when ALL of the following hold:
+      - headline / what_happened / why_it_matters / why_now are all
+        present and non-empty (DeliveredItem's own real narrative fields).
+      - at least one real supporting TriggerEvent exists
+        (event.trigger_events -- the canonical evidence-linkage list this
+        codebase already produces per qualifying opportunity).
+      - a ConclusionConfidence representation exists, and its
+        confidence_score is present. `ConclusionConfidence.confidence_score`
+        is a required (non-Optional) field in this codebase's contract, so
+        `confidence is not None` is the only reachable failure mode here in
+        practice -- checked explicitly anyway, per instruction, rather than
+        assumed.
+      - freshness is honestly represented and not degraded past the
+        permitted grace policy: `UNAVAILABLE` (no value at all, or past
+        even the grace window -- freshness.py's own definition) makes the
+        chain incomplete. `STALE_WITHIN_GRACE` does NOT automatically fail
+        completeness -- the evidence is still within the explicitly
+        permitted grace policy, and this codebase always truthfully
+        exposes that degraded state on the item (freshness_state is never
+        hidden or overridden), satisfying the "honestly disclosed"
+        requirement structurally, not by a separate disclosure check.
+        `None` (no registered freshness contract for this item's signal
+        type, e.g. a demo/simulated entity) does not by itself fail
+        completeness -- freshness simply doesn't apply to that item, and
+        no plan text requires it to for that case.
+    """
+    if not delivered_item.headline.strip():
+        return False
+    if not delivered_item.what_happened.strip():
+        return False
+    if not delivered_item.why_it_matters.strip():
+        return False
+    if not delivered_item.why_now.strip():
+        return False
+    if len(trigger_events) < 1:
+        return False
+    if confidence is None:
+        return False
+    if confidence.confidence_score is None:
+        return False
+    if freshness_state == "UNAVAILABLE":
+        return False
+    return True
+
+
+def complete_evidence_payload_rate(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 4: `>=95% complete evidence/explanation
+    chains`. Rate over DISTINCT surfaced theses (event_id keys), each
+    counted once regardless of how many times it was polled today --
+    polling-frequency-immune by construction, since
+    thesis_completeness_by_event_id is a latest-observation-wins dict, not
+    a summed counter."""
+    if not row.thesis_completeness_by_event_id:
+        return None
+    values = row.thesis_completeness_by_event_id.values()
+    return sum(1 for v in values if v) / len(values)
 
 
 def stale_grace_read_rate(row: DailyUniverseTelemetry) -> Optional[float]:

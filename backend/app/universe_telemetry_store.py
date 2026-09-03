@@ -106,6 +106,16 @@ class DailyUniverseTelemetry(BaseModel):
     # peak_pre_diversity_thesis_count, but summed (not maxed) across the
     # day's observations, matching every other count field's convention.
     top_five_eligible_count: int = 0
+    # V1a Final Proof-Readiness Closeout: Master Plan Section 4's
+    # `complete_evidence_payload_rate` gate. Keyed by event_id (a surfaced
+    # thesis's stable identity within one process's lifetime) -> whether
+    # that thesis was complete the LAST time it was observed today --
+    # neither summed nor unioned. A thesis polled 50 times today occupies
+    # exactly one dict entry regardless, so the rate this day's row derives
+    # (see universe_telemetry.complete_evidence_payload_rate()) is immune
+    # to polling frequency by construction, same discipline as
+    # entity_impression_counts' own key-set property.
+    thesis_completeness_by_event_id: dict[str, bool] = Field(default_factory=dict)
 
 
 class DailyObservationDelta(BaseModel):
@@ -140,12 +150,24 @@ class DailyObservationDelta(BaseModel):
     pre_diversity_thesis_count: int = 0  # this observation's own count -- both
     # summed into top_five_eligible_count and maxed into
     # peak_pre_diversity_thesis_count by record() below.
+    thesis_completeness_by_event_id: dict[str, bool] = Field(default_factory=dict)
 
 
 def _merge_counts(existing: dict[str, int], delta: dict[str, int]) -> dict[str, int]:
     merged = dict(existing)
     for key, value in delta.items():
         merged[key] = merged.get(key, 0) + value
+    return merged
+
+
+def _merge_latest(existing: dict[str, bool], delta: dict[str, bool]) -> dict[str, bool]:
+    """Latest-observation-wins merge, deliberately never summed or unioned
+    -- a thesis's completeness reflects its most recently observed state,
+    and a single event_id occupies exactly one dict entry regardless of
+    how many times it was observed today (the polling-frequency-immunity
+    property complete_evidence_payload_rate() depends on)."""
+    merged = dict(existing)
+    merged.update(delta)
     return merged
 
 
@@ -180,7 +202,8 @@ class UniverseDailyTelemetryStore:
             "  exploration_placed_count INTEGER NOT NULL DEFAULT 0,"
             "  freshness_state_counts TEXT NOT NULL DEFAULT '{}',"
             "  peak_pre_diversity_thesis_count INTEGER NOT NULL DEFAULT 0,"
-            "  top_five_eligible_count INTEGER NOT NULL DEFAULT 0"
+            "  top_five_eligible_count INTEGER NOT NULL DEFAULT 0,"
+            "  thesis_completeness_by_event_id TEXT NOT NULL DEFAULT '{}'"
             ")"
         )
         self._conn.commit()
@@ -205,6 +228,9 @@ class UniverseDailyTelemetryStore:
             freshness_state_counts=json.loads(row["freshness_state_counts"]),
             peak_pre_diversity_thesis_count=row["peak_pre_diversity_thesis_count"],
             top_five_eligible_count=row["top_five_eligible_count"],
+            thesis_completeness_by_event_id=json.loads(
+                row["thesis_completeness_by_event_id"]
+            ),
         )
 
     def get(self, day: date) -> Optional[DailyUniverseTelemetry]:
@@ -250,6 +276,9 @@ class UniverseDailyTelemetryStore:
                 freshness_state_counts=dict(delta.freshness_state_counts),
                 peak_pre_diversity_thesis_count=delta.pre_diversity_thesis_count,
                 top_five_eligible_count=delta.pre_diversity_thesis_count,
+                thesis_completeness_by_event_id=dict(
+                    delta.thesis_completeness_by_event_id
+                ),
             )
         else:
             merged = DailyUniverseTelemetry(
@@ -303,6 +332,10 @@ class UniverseDailyTelemetryStore:
                 top_five_eligible_count=(
                     existing.top_five_eligible_count + delta.pre_diversity_thesis_count
                 ),
+                thesis_completeness_by_event_id=_merge_latest(
+                    existing.thesis_completeness_by_event_id,
+                    delta.thesis_completeness_by_event_id,
+                ),
             )
 
         self._conn.execute(
@@ -315,8 +348,9 @@ class UniverseDailyTelemetryStore:
             "  suppression_reason_counts,"
             "  exploration_eligible_count, exploration_placed_count,"
             "  freshness_state_counts,"
-            "  peak_pre_diversity_thesis_count, top_five_eligible_count"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "  peak_pre_diversity_thesis_count, top_five_eligible_count,"
+            "  thesis_completeness_by_event_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(date) DO UPDATE SET "
             "  observation_count = excluded.observation_count,"
             "  raw_qualified_observation_count = excluded.raw_qualified_observation_count,"
@@ -332,7 +366,8 @@ class UniverseDailyTelemetryStore:
             "  exploration_placed_count = excluded.exploration_placed_count,"
             "  freshness_state_counts = excluded.freshness_state_counts,"
             "  peak_pre_diversity_thesis_count = excluded.peak_pre_diversity_thesis_count,"
-            "  top_five_eligible_count = excluded.top_five_eligible_count",
+            "  top_five_eligible_count = excluded.top_five_eligible_count,"
+            "  thesis_completeness_by_event_id = excluded.thesis_completeness_by_event_id",
             (
                 merged.date,
                 merged.observation_count,
@@ -350,6 +385,7 @@ class UniverseDailyTelemetryStore:
                 json.dumps(merged.freshness_state_counts),
                 merged.peak_pre_diversity_thesis_count,
                 merged.top_five_eligible_count,
+                json.dumps(merged.thesis_completeness_by_event_id),
             ),
         )
         self._conn.commit()

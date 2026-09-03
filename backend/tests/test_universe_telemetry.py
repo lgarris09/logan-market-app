@@ -143,16 +143,15 @@ def test_recorded_freshness_counts_reflect_real_item_states(monkeypatch, tmp_pat
 
 
 def test_blocked_metrics_are_named_and_not_silently_implemented():
-    """Governance guard, updated for the Master Plan reconciliation block:
-    with the plan text now available, Top-Five Competition Ratio and
-    Thesis Novelty Rate have exact formulas (Section 16A) and are wired --
-    removed from this list. The remaining entries either have no formula
-    anywhere in the plan, or need a confirmed classification-mapping
-    decision, or need a durable event-log subsystem this block does not
-    build -- none are silently guessed at."""
+    """Governance guard, updated for the V1a Final Proof-Readiness
+    Closeout: complete_evidence_payload_rate now has an approved
+    deterministic definition and is implemented -- removed from this
+    list. The remaining entries either have no formula anywhere in the
+    plan, or need a confirmed classification-mapping decision, or need a
+    durable event-log subsystem this block does not build -- none are
+    silently guessed at."""
     assert set(BLOCKED_METRICS) == {
         "signal_family_yield_rate",
-        "complete_evidence_payload_rate",
         "material_revision_rubric_classification_rate",
         "time_sensitive_delay_p95_seconds",
         "time_sensitive_delay_p99_seconds",

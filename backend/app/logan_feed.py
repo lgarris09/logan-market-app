@@ -100,7 +100,10 @@ from .revision_store import OpportunityRevisionStore  # noqa: E402
 from .universe_operational_observations import (  # noqa: E402
     record_freshness_ratio_observation,
 )
-from .universe_telemetry import record_pipeline_observation  # noqa: E402
+from .universe_telemetry import (  # noqa: E402
+    compute_thesis_evidence_completeness,
+    record_pipeline_observation,
+)
 from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
 from .watch import is_watched  # noqa: E402
 
@@ -2009,6 +2012,7 @@ def _run_feed_pipeline(
         result_by_event_id = {r.event.event_id: r for _, r in results}
         item_by_event_id = {item.event_id: item for item in items}
         thesis_candidates: list[ThesisCandidate] = []
+        thesis_completeness: dict[str, bool] = {}
         for item in items:
             r = result_by_event_id[item.event_id]
 
@@ -2055,6 +2059,23 @@ def _run_feed_pipeline(
             # (a demo/simulated signal type outside the three live stock
             # families) -- item.freshness_state stays the honest None
             # default, never a fabricated state.
+
+            # V1a Final Proof-Readiness Closeout: the approved evidence-
+            # completeness definition, computed from this item's own
+            # already-real DeliveredItem/ConclusionConfidence/TriggerEvent
+            # data plus the freshness_state just classified above -- see
+            # universe_telemetry.compute_thesis_evidence_completeness()'s
+            # own docstring for the exact rule. Keyed by event_id so a
+            # thesis polled repeatedly today occupies one dict entry, never
+            # inflating or deflating the day's completeness rate.
+            thesis_completeness[str(item.event_id)] = (
+                compute_thesis_evidence_completeness(
+                    delivered_item=r.delivered_item,
+                    confidence=r.confidence,
+                    trigger_events=r.event.trigger_events,
+                    freshness_state=item.freshness_state,
+                )
+            )
 
             # Shared prep for Items 2/3: real trigger-code-derived thesis
             # metadata (Blocks 9/10, no LLM/embeddings/semantic clustering)
@@ -2212,6 +2233,7 @@ def _run_feed_pipeline(
             exploration_eligible_pool=eligible_pool,
             exploration_result=exploration_result,
             freshness_states=[item.freshness_state for item in items],
+            thesis_completeness=thesis_completeness,
         )
 
     return items, now, alert_event_ids, provider_degraded
