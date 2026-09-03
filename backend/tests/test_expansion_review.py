@@ -121,23 +121,18 @@ def test_evaluated_status_is_currently_unreachable():
 
 
 def test_unconfirmed_field_reasons_are_one_of_the_named_categories():
-    """V1a Proof-Instrumentation Closeout: every remaining gap must be
-    classified as exactly one of the three honest reasons -- never a vague
-    catch-all that hides whether the fix needs a policy decision or is
-    genuinely undefined."""
-    valid_reasons = {
-        "point_in_time_only",
-        "needs_policy_mapping",
-        "no_plan_definition",
-    }
+    """V1a Final Proof-Readiness Closeout: the one remaining gap must be
+    classified as the honest named reason -- never a vague catch-all that
+    hides whether the fix needs a policy decision or is genuinely
+    undefined."""
+    valid_reasons = {"needs_policy_mapping"}
     assert set(UNCONFIRMED_REQUIRED_FIELDS.values()) <= valid_reasons
     # Down from all 18 fields (V1a ITERATE block) to 10 (Master Plan
-    # reconciliation) to exactly 3 now that the durable operational
-    # observation layer confirmed 7 more real sources.
-    assert len(UNCONFIRMED_REQUIRED_FIELDS) == 3
+    # reconciliation) to 3 (V1a Proof-Instrumentation Closeout) to exactly
+    # 1 now that peak_calls_per_minute and complete_evidence_payload_rate
+    # both have real, durable, deterministic implementations.
+    assert len(UNCONFIRMED_REQUIRED_FIELDS) == 1
     assert set(UNCONFIRMED_REQUIRED_FIELDS) == {
-        "peak_calls_per_minute",
-        "complete_evidence_payload_rate",
         "meaningful_revision_content_rate",
     }
 
@@ -190,6 +185,8 @@ def test_real_time_window_evidence_gaps_reports_everything_missing_with_no_data(
 
     assert gaps["time_sensitive_delay_p95_seconds"] == "no_real_observations_in_window"
     assert gaps["distinct_surfaced_theses_14d"] == "no_real_observations_in_window"
+    assert gaps["peak_calls_per_minute"] == "no_real_observations_in_window"
+    assert gaps["complete_evidence_payload_rate"] == "no_real_observations_in_window"
     # Plain counts (0 is a real, honest answer -- "no faults occurred" /
     # "no bad ledger rows exist" -- not "no evidence was collected") are
     # never treated as gaps, mirroring unexplained_universe_changes' own
@@ -231,3 +228,59 @@ def test_real_time_window_evidence_gaps_shrinks_with_real_operational_data(
     assert "scheduled_fetch_failure_rate" not in gaps
     # Still a real gap -- no wait samples or freshness ratios were recorded.
     assert "time_sensitive_delay_p95_seconds" in gaps
+
+
+def test_peak_calls_per_minute_gap_shrinks_with_a_real_recorded_call(
+    monkeypatch, tmp_path
+):
+    from backend.app.universe_operational_observation_store import (
+        ProviderCallTimestamp,
+    )
+
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH", str(tmp_path / "obs.db")
+    )
+    monkeypatch.setenv(
+        "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
+    )
+    reset_operational_observation_state()
+    reset_universe_telemetry_state()
+
+    now = datetime.now(timezone.utc)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    store.record_provider_call_timestamp(
+        ProviderCallTimestamp(occurred_at=now, provider="fmp", endpoint="quote")
+    )
+    store.close()
+
+    gaps = real_time_window_evidence_gaps(
+        now - timedelta(minutes=1), now + timedelta(minutes=1)
+    )
+    assert "peak_calls_per_minute" not in gaps
+
+
+def test_complete_evidence_payload_rate_gap_shrinks_with_real_thesis_data(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv(
+        "STRATUS_OPERATIONAL_OBSERVATION_DB_PATH", str(tmp_path / "obs.db")
+    )
+    monkeypatch.setenv(
+        "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
+    )
+    reset_operational_observation_state()
+    reset_universe_telemetry_state()
+
+    today = date.today()
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    store.record(
+        today,
+        DailyObservationDelta(thesis_completeness_by_event_id={"EVT-1": True}),
+    )
+    store.close()
+
+    now = datetime.now(timezone.utc)
+    gaps = real_time_window_evidence_gaps(now - timedelta(days=1), now)
+    assert "complete_evidence_payload_rate" not in gaps
