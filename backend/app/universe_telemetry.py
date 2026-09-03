@@ -448,6 +448,36 @@ def collect_real_operational_signals(*, scheduler=None) -> RealOperationalSignal
     )
 
 
+def _query_persisted_revisions(start: date, end: date) -> list[tuple[str, str]]:
+    """Shared read-only query against OpportunityRevisionStore's own
+    SQLite file -- returns (created_at, change_type) pairs in [start, end].
+    No change to revision_store.py itself."""
+    import sqlite3
+
+    from .config import revision_store_db_path
+
+    if not memory_persistence_enabled():
+        return []
+    path = revision_store_db_path()
+    if not path.exists():
+        return []
+    conn = sqlite3.connect(str(path))
+    try:
+        rows = conn.execute(
+            "SELECT created_at, change_type FROM opportunity_revisions"
+        ).fetchall()
+    finally:
+        conn.close()
+    matches = []
+    for created_at_text, change_type in rows:
+        created_at = datetime.fromisoformat(created_at_text)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        if start <= created_at.date() <= end:
+            matches.append((created_at_text, change_type))
+    return matches
+
+
 def real_meaningful_revision_count(start: date, end: date) -> int:
     """Real count of GLOBAL meaningful revisions in [start, end], sourced
     directly from the already-existing, already-durable
@@ -458,25 +488,74 @@ def real_meaningful_revision_count(start: date, end: date) -> int:
     count only -- see BLOCKED_METRICS for why the Material Revision
     Rubric's >=70% rubric-CLASS rate is not computed from it.
     """
-    import sqlite3
+    return len(_query_persisted_revisions(start, end))
 
-    from .config import revision_store_db_path
 
-    if not memory_persistence_enabled():
-        return 0
-    path = revision_store_db_path()
-    if not path.exists():
-        return 0
-    conn = sqlite3.connect(str(path))
-    try:
-        rows = conn.execute("SELECT created_at FROM opportunity_revisions").fetchall()
-    finally:
-        conn.close()
-    count = 0
-    for (created_at_text,) in rows:
-        created_at = datetime.fromisoformat(created_at_text)
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        if start <= created_at.date() <= end:
-            count += 1
-    return count
+# Material Revision Rubric mapping (V1a Proof-Instrumentation Closeout,
+# item 7): OpportunityRevision.change_type -> one of the Master Plan's
+# seven auditable classes (STATE_CHANGE, EVIDENCE_STRENGTH_CHANGE,
+# TRAJECTORY_CHANGE, INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE,
+# PERSONAL_RELEVANCE_CHANGE, FRESHNESS_DEGRADED_CHANGE).
+#
+# Only mappings with a direct, objective name correspondence are included
+# here -- per explicit instruction, "do not fabricate classifications."
+# `personal_relevance_increased/decreased` and the four `trajectory_*`
+# values map to PERSONAL_RELEVANCE_CHANGE / TRAJECTORY_CHANGE with no
+# judgment call involved (the change_type name already states the rubric
+# class). The remaining nine real change_type values
+# (new_opportunity, confidence_increased, confidence_decreased,
+# new_signal_appeared, convergence_formed, aged_to_cooling, aged_to_stale,
+# aged_to_expired, reactivated) each plausibly fit STATE_CHANGE or
+# EVIDENCE_STRENGTH_CHANGE, but deciding which is a real classification
+# policy call this session does not make -- see this session's own report
+# for the specific proposal Chuck/Logan can confirm or correct.
+# INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE, and
+# FRESHNESS_DEGRADED_CHANGE have no current change_type representation at
+# all -- a genuinely missing primitive, not an unmapped existing one.
+REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE: dict[str, str] = {
+    "personal_relevance_increased": "PERSONAL_RELEVANCE_CHANGE",
+    "personal_relevance_decreased": "PERSONAL_RELEVANCE_CHANGE",
+    "trajectory_strengthening": "TRAJECTORY_CHANGE",
+    "trajectory_weakening": "TRAJECTORY_CHANGE",
+    "trajectory_reversing": "TRAJECTORY_CHANGE",
+    "trajectory_reaccelerated": "TRAJECTORY_CHANGE",
+}
+
+# The nine real, persisted change_type values with a plausible but
+# unconfirmed rubric mapping -- reported separately from
+# REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE's confident set, never silently
+# merged into it.
+UNMAPPED_REVISION_CHANGE_TYPES = (
+    "new_opportunity",
+    "confidence_increased",
+    "confidence_decreased",
+    "new_signal_appeared",
+    "convergence_formed",
+    "aged_to_cooling",
+    "aged_to_stale",
+    "aged_to_expired",
+    "reactivated",
+)
+
+
+def classify_persisted_revisions(start: date, end: date) -> dict:
+    """Real, auditable evidence for Chuck/Logan's Material Revision Rubric
+    policy decision -- classifies every real persisted revision in
+    [start, end] using ONLY the confident name-correspondence mappings
+    above, and separately counts everything else as "unclassified" rather
+    than guessing. This is deliberately NOT the >=70% rubric rate itself
+    (that requires every revision classified, which this session cannot do
+    without a policy decision) -- it is real, current-state evidence to
+    inform that decision. `change_type == "none"` rows do not occur in
+    this store (only meaningful revisions are ever persisted), so no
+    "none" bucket exists here.
+    """
+    counts: dict[str, int] = {}
+    unclassified = 0
+    for _created_at, change_type in _query_persisted_revisions(start, end):
+        rubric_class = REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE.get(change_type)
+        if rubric_class is None:
+            unclassified += 1
+        else:
+            counts[rubric_class] = counts.get(rubric_class, 0) + 1
+    return {"classified": counts, "unclassified": unclassified}

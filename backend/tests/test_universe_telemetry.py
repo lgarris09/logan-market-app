@@ -218,6 +218,82 @@ def test_real_meaningful_revision_count_reflects_real_store_rows(monkeypatch, tm
     )
 
 
+# --- V1a Proof-Instrumentation Closeout: Material Revision Rubric mapping ----
+
+
+def test_classify_persisted_revisions_maps_only_confident_change_types(
+    monkeypatch, tmp_path
+):
+    from backend.app.revision_store import OpportunityRevisionStore
+    from backend.app.universe_telemetry import classify_persisted_revisions
+    from logan_core.contracts import OpportunityRevision
+
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    revisions_path = tmp_path / "revisions.db"
+    monkeypatch.setenv("STRATUS_REVISIONS_DB_PATH", str(revisions_path))
+
+    store = OpportunityRevisionStore(str(revisions_path))
+    today = datetime.now(timezone.utc)
+
+    def _revision(revision: int, change_type) -> OpportunityRevision:
+        return OpportunityRevision(
+            entity_id="SYMBOL:AAPL",
+            revision=revision,
+            lifecycle_state="developing",
+            confidence_score=0.8,
+            trigger_codes=["STOCK_PRICE_MOVE_SIGNIFICANT"],
+            change_type=change_type,
+            reason="test",
+            created_at=today,
+        )
+
+    store.append(_revision(1, "personal_relevance_increased"))
+    store.append(_revision(2, "trajectory_strengthening"))
+    store.append(_revision(3, "confidence_increased"))  # deliberately unmapped
+    store.close()
+
+    result = classify_persisted_revisions(today.date(), today.date())
+    assert result["classified"] == {
+        "PERSONAL_RELEVANCE_CHANGE": 1,
+        "TRAJECTORY_CHANGE": 1,
+    }
+    assert result["unclassified"] == 1
+
+
+def test_classify_persisted_revisions_confident_map_has_no_ambiguous_entries():
+    """Governance guard: every mapped change_type must be one this session
+    judged as a direct, unambiguous name correspondence -- confidence_*/
+    aged_to_*/new_*/convergence_formed/reactivated/new_opportunity must
+    never silently appear here."""
+    from backend.app.universe_telemetry import (
+        REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE,
+        UNMAPPED_REVISION_CHANGE_TYPES,
+    )
+
+    assert set(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) == {
+        "personal_relevance_increased",
+        "personal_relevance_decreased",
+        "trajectory_strengthening",
+        "trajectory_weakening",
+        "trajectory_reversing",
+        "trajectory_reaccelerated",
+    }
+    assert set(UNMAPPED_REVISION_CHANGE_TYPES) == {
+        "new_opportunity",
+        "confidence_increased",
+        "confidence_decreased",
+        "new_signal_appeared",
+        "convergence_formed",
+        "aged_to_cooling",
+        "aged_to_stale",
+        "aged_to_expired",
+        "reactivated",
+    }
+    assert not set(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) & set(
+        UNMAPPED_REVISION_CHANGE_TYPES
+    )
+
+
 # --- Master Plan reconciliation: derived-metric functions --------------------
 
 
