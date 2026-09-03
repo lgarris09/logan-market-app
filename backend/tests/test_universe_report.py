@@ -12,6 +12,7 @@ from backend.app.universe_manager import (
     run_universe_reevaluation,
 )
 from backend.app.universe_report import build_universe_report
+from backend.app.universe_telemetry import reset_universe_telemetry_state
 from logan_core.receptors.providers import (
     CompanyProfile,
     EarningsReport,
@@ -111,7 +112,11 @@ def test_report_reflects_real_monitored_cohort_when_persistence_enabled(
 ):
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
     monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv(
+        "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
+    )
     reset_universe_manager_state()
+    reset_universe_telemetry_state()
 
     snapshot = load_candidate_snapshot()
     quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
@@ -146,7 +151,11 @@ def test_report_shows_real_scheduler_job_state_when_persisted(monkeypatch, tmp_p
     monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
     monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
     monkeypatch.setenv("STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "sched.db"))
+    monkeypatch.setenv(
+        "STRATUS_UNIVERSE_TELEMETRY_DB_PATH", str(tmp_path / "telemetry.db")
+    )
     reset_universe_manager_state()
+    reset_universe_telemetry_state()
 
     from logan_core.universe.candidate_source import load_candidate_snapshot as _lcs
 

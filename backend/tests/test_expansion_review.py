@@ -107,6 +107,23 @@ def test_evaluated_status_is_currently_unreachable():
     assert len(UNCONFIRMED_REQUIRED_FIELDS) > 0
 
 
+def test_unconfirmed_field_reasons_are_one_of_the_named_categories():
+    """Master Plan reconciliation: every remaining gap must be classified
+    as exactly one of the four honest reasons -- never a vague catch-all
+    that hides whether the fix needs a policy decision, a durable event-log
+    build, or is genuinely undefined."""
+    valid_reasons = {
+        "no_durable_event_log",
+        "point_in_time_only",
+        "needs_policy_mapping",
+        "no_plan_definition",
+    }
+    assert set(UNCONFIRMED_REQUIRED_FIELDS.values()) <= valid_reasons
+    # And down from all 18 fields to exactly 10, now that 8 have confirmed
+    # real sources per the Master Plan's own text.
+    assert len(UNCONFIRMED_REQUIRED_FIELDS) == 10
+
+
 def test_review_is_pure_and_deterministic(monkeypatch, tmp_path):
     """No mutation, no side effect, no expansion/deployment action --
     calling it twice with the same inputs returns the same result."""

@@ -1,34 +1,42 @@
-"""Universe Manager V1a Operational + Supply Telemetry (V1a ITERATE block,
-Phase 3) -- real-data recording and reporting for the metrics the Master
-Plan's 14-consecutive-calendar-day expansion-gate proof needs.
+"""Universe Manager V1a Operational + Supply Telemetry -- real-data
+recording and reporting for the metrics
+STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md (the governing
+Master Plan, located outside this repository and now available) requires
+for the 14-consecutive-calendar-day expansion-gate proof.
 
-Governance note, load-bearing: the actual governing document
-(`STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md`) is not present
-anywhere in this repository (confirmed by a full-repo search this session)
--- everything wired here traces to a concept this codebase's *own* existing
-code already defines and names (expansion_gates.py's seven opportunity-
-quality gates, thesis/diversity.py's SuppressionRecord, exploration/'s
-eligibility+placement, freshness.py's classification states, the Universe
-Manager V1a scheduler-state store). Three specifically-requested metrics
-have zero definition anywhere in this codebase or repo -- "signal yield,"
-"Top-Five Competition Ratio," and "deterministic Thesis Novelty Rate" --
-and are deliberately NOT implemented here. Inventing a definition for any
-of them would be exactly the "invent a substitute definition" this block
-was explicitly told not to do. See `BLOCKED_METRICS` below and this
-session's own final report for the precise governance gap.
+Reconciliation note (Master Plan Reconciliation + V1a Telemetry Completion
+block): the previous pass ("V1a ITERATE") ran without access to the
+Master Plan text and therefore treated several metrics as unimplementable
+without a definition -- signal_yield, top_five_competition_ratio,
+deterministic_thesis_novelty_rate. The plan text is now available (Section
+3, Section 4, Section 16A) and gives exact formulas for Top-Five
+Competition Ratio and Thesis Novelty Rate, both now wired below. It does
+NOT give an exact, checkable definition of "complete evidence/explanation
+chain," and its Material Revision Rubric (Section 4) names seven auditable
+change classes that do not correspond 1:1 to this codebase's existing
+`OpportunityRevision.change_type` values -- both remain in
+`BLOCKED_METRICS`, for different reasons (no definition at all, vs. a
+definition that needs a confirmed mapping decision before it can be
+computed without guessing). "Signal-family yield" is named in the plan's
+measurement list but never given a formula anywhere (unlike Top-Five
+Competition Ratio and Thesis Novelty Rate, which Section 16A defines
+precisely) -- the raw distribution (signal_family_impression_counts) is
+real and wired; a true yield (rate) needs an attempted/eligible-per-family
+denominator this codebase does not track, so it stays blocked too.
 
 Telemetry observes; it never decides. Every function in this module is
-read-only with respect to the pipeline it observes -- `record_pipeline_observation()`
-is called after a feed response is already fully computed, wrapped in
-try/except at its one call site (logan_feed.py), so a telemetry failure
-can never affect a real request's output. Nothing here touches
-qualification, ranking, polling cadence, or Personal Relevance.
+read-only with respect to the pipeline it observes --
+`record_pipeline_observation()` is called after a feed response is
+already fully computed, wrapped in try/except at its one call site
+(logan_feed.py), so a telemetry failure can never affect a real request's
+output. Nothing here touches qualification, ranking, polling cadence, or
+Personal Relevance.
 """
 
 import sys
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -48,20 +56,62 @@ from logan_core.diagnostics import recent_faults  # noqa: E402
 from logan_core.receptors.providers import fmp_budget_snapshot  # noqa: E402
 from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
 
-# Requested by name in the V1a ITERATE block but with no definition
-# anywhere in this codebase, this repo's docs, or the (missing) governing
-# plan file -- not implemented, not approximated, not silently redefined.
+# Master Plan Section 16A defines an exact formula for these two; neither
+# is guessed. TOP_FIVE_POSITIONS is the plan's own literal "/ 5" --
+# thesis/diversity.py's DEFAULT_TOP_N, not independently chosen here.
+TOP_FIVE_POSITIONS = 5
+
+# Master Plan Section 16A: Thesis Novelty Rate's "recent deterministic
+# thesis metadata" has no explicit window size stated for this specific
+# metric -- this session reuses the plan's own dominant window (the
+# 14-consecutive-calendar-day proof window used everywhere else in the
+# plan) as the most defensible default, NOT a number the plan states for
+# this metric specifically. Flagged as an explicit assumption, not a
+# silent invention of the underlying formula (which the plan does give
+# exactly).
+THESIS_NOVELTY_RECENCY_WINDOW_DAYS = 14
+
+# Requested by name in the V1a work but with no exact, checkable
+# definition anywhere in the Master Plan (confirmed against the full text)
+# or this codebase -- not implemented, not approximated, not silently
+# redefined.
 BLOCKED_METRICS = (
-    "signal_yield",
-    "top_five_competition_ratio",
-    "deterministic_thesis_novelty_rate",
-    # "evidence completeness" (MIN_COMPLETE_EVIDENCE_PAYLOAD_RATE) is also
-    # blocked, distinctly: expansion_gates.py already names this gate, but
+    # No formula anywhere in the Master Plan (unlike Top-Five Competition
+    # Ratio / Thesis Novelty Rate, which Section 16A defines exactly) --
+    # only the raw distribution (signal_family_impression_counts) is real.
+    "signal_family_yield_rate",
+    # Master Plan Section 4: "≥95% complete evidence/explanation chains" --
     # no field anywhere in this codebase's FeedItem/DeliveredItem/
     # ConclusionConfidence contracts marks an item's evidence payload as
-    # "complete" -- computing this would mean inventing what "complete"
-    # means, not observing an existing signal.
+    # "complete," and the plan itself never enumerates what completeness
+    # requires. Computing this would mean inventing the definition, not
+    # observing an existing signal.
     "complete_evidence_payload_rate",
+    # Master Plan Section 4's Material Revision Rubric names seven
+    # auditable classes (STATE_CHANGE, EVIDENCE_STRENGTH_CHANGE,
+    # TRAJECTORY_CHANGE, INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE,
+    # PERSONAL_RELEVANCE_CHANGE, FRESHNESS_DEGRADED_CHANGE) that do not
+    # correspond 1:1 to OpportunityRevision.change_type's existing 15
+    # values -- some mappings are obvious (personal_relevance_increased ->
+    # PERSONAL_RELEVANCE_CHANGE), others are genuinely ambiguous
+    # (confidence_increased -> EVIDENCE_STRENGTH_CHANGE or STATE_CHANGE?).
+    # The raw meaningful-revision count is real (real_meaningful_revision_count());
+    # the rubric-CLASS-based >=70% rate needs a confirmed mapping decision
+    # before it can be computed without guessing a classification policy.
+    "material_revision_rubric_classification_rate",
+    # Master Plan Section 4 operational gates: time-sensitive scheduler
+    # delay P95/P99, critical freshness P95/P99 ratio, a genuine historical
+    # peak calls/minute, and coalescing success rate all require a
+    # per-event latency/ratio distribution history this codebase has no
+    # durable event log for. Building one is a materially new persistence
+    # subsystem -- flagged for review per this block's own stop condition,
+    # not built here.
+    "time_sensitive_delay_p95_seconds",
+    "time_sensitive_delay_p99_seconds",
+    "critical_freshness_p95_ratio",
+    "critical_freshness_p99_ratio",
+    "peak_calls_per_minute_historical",
+    "coalescing_success_rate",
 )
 
 _store: Optional[UniverseDailyTelemetryStore] = None
@@ -115,26 +165,40 @@ def build_observation_delta(
     signal_family_counts = Counter(
         c.metadata.primary_signal_family for c in thesis_candidates
     )
-    freshness_total = len(freshness_states)
-    freshness_unavailable = sum(
-        1 for state in freshness_states if state in (None, "UNAVAILABLE")
+    driver_counts = Counter(c.metadata.market_driver_tag for c in thesis_candidates)
+    suppression_reason_counts = Counter(
+        s.suppression_reason for s in diversity_result.suppressed
     )
+    # Master Plan Section 3: freshness states are FRESH / RECENTLY_OBSERVED
+    # / STALE_WITHIN_GRACE / UNAVAILABLE -- "NO_CONTRACT" is this
+    # codebase's own honest fourth case (an item whose signal_type has no
+    # registered freshness contract at all), never silently folded into
+    # UNAVAILABLE (a materially different, real-degradation state).
+    freshness_counts = Counter(state or "NO_CONTRACT" for state in freshness_states)
+
+    distinct_thesis_keys = {_thesis_key(c) for c in thesis_candidates}
 
     return DailyObservationDelta(
         qualified_opportunity_count=len(thesis_candidates),
-        distinct_thesis_keys=[_thesis_key(c) for c in thesis_candidates],
+        distinct_thesis_keys=sorted(distinct_thesis_keys),
         entity_impression_counts=dict(entity_counts),
         sector_impression_counts=dict(sector_counts),
         signal_family_impression_counts=dict(signal_family_counts),
+        driver_impression_counts=dict(driver_counts),
         diversity_selected_count=len(diversity_result.selected),
         diversity_suppressed_count=len(diversity_result.suppressed),
+        suppression_reason_counts={
+            str(reason): count for reason, count in suppression_reason_counts.items()
+        },
         exploration_eligible_count=len(exploration_eligible_pool),
         exploration_placed_count=(
             1 if exploration_result.placed_event_id is not None else 0
         ),
-        freshness_unavailable_count=freshness_unavailable,
-        freshness_total_count=freshness_total,
-        top_five_eligible_count=len(diversity_result.selected),
+        freshness_state_counts=dict(freshness_counts),
+        # Master Plan Section 16A: Top-Five Competition Ratio's numerator
+        # -- "eligible distinct theses before diversity constraints" --
+        # this observation's own distinct thesis count, pre-diversity.
+        pre_diversity_thesis_count=len(distinct_thesis_keys),
     )
 
 
@@ -177,6 +241,131 @@ def daily_telemetry_range(start: date, end: date) -> list[DailyUniverseTelemetry
     return store.range(start, end)
 
 
+# --- Master Plan Section 16A: derived metrics, computed from already- ---
+# --- persisted real daily rows, no new storage needed for either. -------
+
+
+def top_five_competition_ratio(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 16A: `eligible distinct theses before diversity
+    constraints / 5`. Uses `peak_pre_diversity_thesis_count` (the largest
+    single-observation count that day), never a sum across the day's
+    observations -- a sum would scale with polling frequency, not real
+    competition for the five slots. Returns None only when the row itself
+    represents zero observations (should not occur for a real persisted
+    row, but guarded rather than dividing nonsense)."""
+    if row.observation_count == 0:
+        return None
+    return row.peak_pre_diversity_thesis_count / TOP_FIVE_POSITIONS
+
+
+def thesis_novelty_rate(
+    rows_by_date: dict[str, DailyUniverseTelemetry],
+    target: date,
+    *,
+    recency_window_days: int = THESIS_NOVELTY_RECENCY_WINDOW_DAYS,
+) -> Optional[float]:
+    """Master Plan Section 16A: `surfaceable theses not materially
+    duplicating recent deterministic thesis metadata / total surfaceable
+    theses`. "Recent" is this session's own explicit
+    `recency_window_days`-day assumption (see module docstring) -- the
+    underlying comparison (thesis-key set membership) is deterministic and
+    metadata-based only, per the plan's own explicit instruction not to
+    imply semantic equivalence detection.
+
+    `rows_by_date` must be keyed by ISO date string (as
+    `DailyUniverseTelemetry.date` already is) and should span at least
+    `target - recency_window_days` through `target` for an honest answer;
+    a caller with a shorter history will get a rate computed against
+    whatever "recent" history actually exists, never fabricated.
+    """
+    target_row = rows_by_date.get(target.isoformat())
+    if target_row is None or not target_row.distinct_thesis_keys:
+        return None
+
+    recent_keys: set = set()
+    for offset in range(1, recency_window_days + 1):
+        prior_row = rows_by_date.get((target - timedelta(days=offset)).isoformat())
+        if prior_row is not None:
+            recent_keys.update(prior_row.distinct_thesis_keys)
+
+    target_keys = set(target_row.distinct_thesis_keys)
+    novel_keys = target_keys - recent_keys
+    return len(novel_keys) / len(target_keys)
+
+
+def max_consecutive_zero_qualified_days(rows: list[DailyUniverseTelemetry]) -> int:
+    """Master Plan Section 4's operational gate input -- `rows` must be in
+    ascending date order with no caller-side gap-filling; a missing date
+    (no row at all) is treated the same as a genuine zero-qualified day
+    for this specific run-length count, since Section 16A's own
+    No-Opportunity Day definition ("zero objectively qualified theses
+    survive... before personalization") does not distinguish "STRATUS
+    observed zero" from "STRATUS was not observed that day" -- both mean
+    no evidence of qualified supply exists for that day. Days are compared
+    by calendar continuity (not just list adjacency), so a real gap is
+    correctly counted as intervening zero-days.
+    """
+    if not rows:
+        return 0
+    by_date = {row.date: row for row in rows}
+    start = date.fromisoformat(rows[0].date)
+    end = date.fromisoformat(rows[-1].date)
+
+    longest = current = 0
+    cursor = start
+    while cursor <= end:
+        row = by_date.get(cursor.isoformat())
+        is_zero_day = row is None or row.qualified_opportunity_count == 0
+        current = current + 1 if is_zero_day else 0
+        longest = max(longest, current)
+        cursor += timedelta(days=1)
+    return longest
+
+
+def top_five_diversity_survival_rate(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 4: `>=90% of top-five candidates survive
+    diversity checks`. survival_rate = selected / (selected + suppressed)
+    -- both already real, wired counts."""
+    total = row.diversity_selected_count + row.diversity_suppressed_count
+    if total == 0:
+        return None
+    return row.diversity_selected_count / total
+
+
+def max_single_entity_impression_share(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 4: `no entity >30% of top-five impressions`."""
+    total = sum(row.entity_impression_counts.values())
+    if total == 0:
+        return None
+    return max(row.entity_impression_counts.values()) / total
+
+
+def max_single_sector_impression_share(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 4: `no sector >40%`."""
+    total = sum(row.sector_impression_counts.values())
+    if total == 0:
+        return None
+    return max(row.sector_impression_counts.values()) / total
+
+
+def stale_grace_read_rate(row: DailyUniverseTelemetry) -> Optional[float]:
+    """Master Plan Section 4: `stale-grace reads <2%` -- real, from
+    freshness.py's own STALE_WITHIN_GRACE state, now that freshness is
+    tracked per-state rather than as a single available/unavailable
+    boolean."""
+    total = sum(row.freshness_state_counts.values())
+    if total == 0:
+        return None
+    return row.freshness_state_counts.get("STALE_WITHIN_GRACE", 0) / total
+
+
+def user_visible_stale_beyond_grace_count(row: DailyUniverseTelemetry) -> int:
+    """Master Plan Section 4: `user-visible stale beyond grace: 0`. Maps
+    directly to freshness.py's own UNAVAILABLE state definition ("no value
+    at all, or past even the grace window") -- a real count, not a proxy."""
+    return row.freshness_state_counts.get("UNAVAILABLE", 0)
+
+
 @dataclass(frozen=True)
 class RealOperationalSignals:
     """Real, currently-observable operational signals -- explicitly
@@ -185,8 +374,7 @@ class RealOperationalSignals:
     per-call provider history; `recent_faults()` is an in-memory ring
     buffer capped at 200 entries, and `fmp_budget_snapshot()` is cumulative
     since process start). Callers must not present these as satisfying the
-    Master Plan's literal 14-day requirement -- see `data_window` on each
-    field's own docstring in `universe_report.py`'s Telemetry section.
+    Master Plan's literal 14-day requirement.
     """
 
     fmp_rate_limit_responses: int
@@ -239,11 +427,9 @@ def real_meaningful_revision_count(start: date, end: date) -> int:
     OpportunityRevisionStore's own SQLite file (opportunity_revisions.db)
     -- no new instrumentation needed for the numerator, and no change to
     revision_store.py itself (a plain, read-only, schema-matching query
-    against its file, not a private-attribute reach-in). There is
-    currently no tracked denominator (total observation attempts,
-    meaningful or not), so this is real evidence toward
-    MIN_MEANINGFUL_REVISION_CONTENT_RATE's numerator only -- see this
-    session's report for why the rate itself isn't computed.
+    against its file, not a private-attribute reach-in). This is the raw
+    count only -- see BLOCKED_METRICS for why the Material Revision
+    Rubric's >=70% rubric-CLASS rate is not computed from it.
     """
     import sqlite3
 

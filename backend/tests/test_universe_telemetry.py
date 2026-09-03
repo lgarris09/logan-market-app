@@ -4,15 +4,27 @@ alters feed output, accumulates correctly within a day, and that the
 explicitly-blocked metrics stay unimplemented rather than guessed at.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from backend.app.logan_feed import reset_pipeline_state, run_demo_feed
 from backend.app.universe_telemetry import (
     BLOCKED_METRICS,
     collect_real_operational_signals,
     daily_telemetry_range,
+    max_consecutive_zero_qualified_days,
+    max_single_entity_impression_share,
+    max_single_sector_impression_share,
     real_meaningful_revision_count,
     reset_universe_telemetry_state,
+    stale_grace_read_rate,
+    thesis_novelty_rate,
+    top_five_competition_ratio,
+    top_five_diversity_survival_rate,
+    user_visible_stale_beyond_grace_count,
+)
+from backend.app.universe_telemetry_store import (
+    DailyObservationDelta,
+    UniverseDailyTelemetryStore,
 )
 
 
@@ -98,33 +110,47 @@ def test_missing_days_are_a_real_gap_not_zero_filled(monkeypatch, tmp_path):
 
 
 def test_recorded_freshness_counts_reflect_real_item_states(monkeypatch, tmp_path):
-    """Phase 6 safeguard: a recorded day's freshness_unavailable_count must
+    """Phase 6 safeguard, extended for the per-state breakdown (Master Plan
+    reconciliation block): a recorded day's freshness_state_counts must
     reflect the pipeline's own real, already-computed freshness_state
-    values -- never silently zero (which would misrepresent stale/
-    unavailable data as current) and never silently equal to the total
-    (which would misrepresent healthy data as unavailable)."""
+    values exactly, per state -- never silently zero (which would
+    misrepresent stale/unavailable data as current) and never collapsed
+    into a single bucket that loses the FRESH/RECENTLY_OBSERVED/
+    STALE_WITHIN_GRACE/UNAVAILABLE distinction the Master Plan explicitly
+    asks to be formalized."""
     _enable_persistence(monkeypatch, tmp_path)
     today = datetime.now(timezone.utc).date()
 
     demo = run_demo_feed()
     row = daily_telemetry_range(today, today)[0]
 
-    real_unavailable = sum(
-        1 for item in demo.items if item.freshness_state in (None, "UNAVAILABLE")
-    )
-    assert row.freshness_total_count == len(demo.items)
-    assert row.freshness_unavailable_count == real_unavailable
+    real_counts: dict = {}
+    for item in demo.items:
+        key = item.freshness_state or "NO_CONTRACT"
+        real_counts[key] = real_counts.get(key, 0) + 1
+
+    assert row.freshness_state_counts == real_counts
+    assert sum(row.freshness_state_counts.values()) == len(demo.items)
 
 
 def test_blocked_metrics_are_named_and_not_silently_implemented():
-    """Governance guard: the metrics this session found no definition for
-    anywhere in the repo stay explicitly listed as blocked, not quietly
-    added to any real snapshot function."""
+    """Governance guard, updated for the Master Plan reconciliation block:
+    with the plan text now available, Top-Five Competition Ratio and
+    Thesis Novelty Rate have exact formulas (Section 16A) and are wired --
+    removed from this list. The remaining entries either have no formula
+    anywhere in the plan, or need a confirmed classification-mapping
+    decision, or need a durable event-log subsystem this block does not
+    build -- none are silently guessed at."""
     assert set(BLOCKED_METRICS) == {
-        "signal_yield",
-        "top_five_competition_ratio",
-        "deterministic_thesis_novelty_rate",
+        "signal_family_yield_rate",
         "complete_evidence_payload_rate",
+        "material_revision_rubric_classification_rate",
+        "time_sensitive_delay_p95_seconds",
+        "time_sensitive_delay_p99_seconds",
+        "critical_freshness_p95_ratio",
+        "critical_freshness_p99_ratio",
+        "peak_calls_per_minute_historical",
+        "coalescing_success_rate",
     }
 
 
@@ -181,3 +207,123 @@ def test_real_meaningful_revision_count_reflects_real_store_rows(monkeypatch, tm
         )
         == 0
     )
+
+
+# --- Master Plan reconciliation: derived-metric functions --------------------
+
+
+def test_top_five_competition_ratio_uses_peak_not_sum(tmp_path):
+    """Master Plan Section 16A: peak_pre_diversity_thesis_count is MAXED
+    across the day's observations, not summed -- a day polled twice (12
+    theses, then 8 theses) must report ratio = 12/5, never (12+8)/5."""
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    day = date(2026, 9, 2)
+    store.record(day, DailyObservationDelta(pre_diversity_thesis_count=12))
+    store.record(day, DailyObservationDelta(pre_diversity_thesis_count=8))
+    row = store.get(day)
+    store.close()
+
+    assert row is not None
+    assert row.peak_pre_diversity_thesis_count == 12
+    assert top_five_competition_ratio(row) == 12 / 5
+
+
+def test_thesis_novelty_rate_deterministic_against_recent_history(tmp_path):
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    target = date(2026, 9, 14)
+    store.record(
+        target - timedelta(days=1),
+        DailyObservationDelta(distinct_thesis_keys=["AAPL|EARNINGS_RESULT"]),
+    )
+    store.record(
+        target,
+        DailyObservationDelta(
+            distinct_thesis_keys=[
+                "AAPL|EARNINGS_RESULT",  # duplicates yesterday -- not novel
+                "TSLA|PRICE_DISLOCATION",  # new -- novel
+            ]
+        ),
+    )
+    rows = {row.date: row for row in store.range(target - timedelta(days=14), target)}
+    store.close()
+
+    rate = thesis_novelty_rate(rows, target)
+    assert rate == 0.5  # 1 of 2 theses is novel
+
+
+def test_thesis_novelty_rate_is_none_with_no_observations_that_day(tmp_path):
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    rows = {row.date: row for row in store.range(date(2026, 1, 1), date(2026, 1, 1))}
+    store.close()
+    assert thesis_novelty_rate(rows, date(2026, 1, 1)) is None
+
+
+def test_max_consecutive_zero_qualified_days_counts_real_gaps(tmp_path):
+    """A missing day (no persisted row at all) counts the same as a real
+    zero-qualified day, per No-Opportunity Day's own Master Plan
+    definition -- both mean no evidence of qualified supply exists."""
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    base = date(2026, 9, 1)
+    store.record(base, DailyObservationDelta(qualified_opportunity_count=5))
+    # base+1, base+2, base+3 intentionally never recorded -- a real gap.
+    store.record(
+        base + timedelta(days=4), DailyObservationDelta(qualified_opportunity_count=0)
+    )
+    store.record(
+        base + timedelta(days=5), DailyObservationDelta(qualified_opportunity_count=3)
+    )
+    rows = store.range(base, base + timedelta(days=5))
+    store.close()
+
+    # 3 missing days (2,3,4) + 1 explicit zero day (5) = 4 consecutive.
+    assert max_consecutive_zero_qualified_days(rows) == 4
+
+
+def test_top_five_diversity_survival_rate(tmp_path):
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    day = date(2026, 9, 2)
+    store.record(
+        day,
+        DailyObservationDelta(diversity_selected_count=9, diversity_suppressed_count=1),
+    )
+    row = store.get(day)
+    store.close()
+    assert row is not None
+    assert top_five_diversity_survival_rate(row) == 0.9
+
+
+def test_max_single_entity_and_sector_impression_share(tmp_path):
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    day = date(2026, 9, 2)
+    store.record(
+        day,
+        DailyObservationDelta(
+            entity_impression_counts={"AAPL": 3, "TSLA": 1},
+            sector_impression_counts={"Technology": 4},
+        ),
+    )
+    row = store.get(day)
+    store.close()
+    assert row is not None
+    assert max_single_entity_impression_share(row) == 3 / 4
+    assert max_single_sector_impression_share(row) == 1.0
+
+
+def test_stale_grace_and_unavailable_real_counts(tmp_path):
+    store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    day = date(2026, 9, 2)
+    store.record(
+        day,
+        DailyObservationDelta(
+            freshness_state_counts={
+                "FRESH": 6,
+                "STALE_WITHIN_GRACE": 1,
+                "UNAVAILABLE": 1,
+            }
+        ),
+    )
+    row = store.get(day)
+    store.close()
+    assert row is not None
+    assert stale_grace_read_rate(row) == 1 / 8
+    assert user_visible_stale_beyond_grace_count(row) == 1

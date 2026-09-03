@@ -12,19 +12,26 @@ action).
 
 Honest scope note (Block 19): the Provider section reuses the exact same
 fmp_budget_snapshot() this codebase's existing /v1/dev/fmp-budget route
-already reports from -- real, live-traffic-derived numbers. The Exploration
-section reports the schema/zero-state honestly: exploration/placement.py
-(Commit 4) is built and tested but not yet wired into the live per-user
-feed-assembly path (backend/app/logan_feed.py) -- doing so is a distinct,
-larger integration step deliberately not taken this pass (see this
-session's own report), so there is no real placement history to
-aggregate yet. This section says so plainly rather than fabricating
-numbers.
+already reports from -- real, live-traffic-derived numbers.
+
+Updated (V1a ITERATE + Master Plan Reconciliation blocks): the Exploration
+section previously said Controlled Exploration/Thesis Diversity were "not
+yet wired into the live per-user feed-assembly path," which became false
+once commit 3d6f05f wired both into backend/app/logan_feed.py -- this was
+stale documentation, not current behavior, and was corrected in-place
+along with the report content itself. The report now also has Scheduler
+and Telemetry & Expansion Review sections sourced from real persisted
+runtime state (see universe_manager.py's scheduler-state store and
+universe_telemetry.py's daily telemetry store), including real Top-Five
+Competition Ratio and Thesis Novelty Rate values per
+STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md Section 16A's exact
+formulas. Every section reports an honest zero-state, never a fabricated
+number, when the underlying real data doesn't exist yet.
 """
 
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import universe_manager_enabled, universe_scheduler_enabled
@@ -36,7 +43,12 @@ from .universe_manager import (
     get_membership_store,
     get_scheduler_state,
 )
-from .universe_telemetry import BLOCKED_METRICS, daily_telemetry_range
+from .universe_telemetry import (
+    BLOCKED_METRICS,
+    daily_telemetry_range,
+    thesis_novelty_rate,
+    top_five_competition_ratio,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -167,10 +179,13 @@ def _scheduler_section() -> list[str]:
 
 
 def _telemetry_section() -> list[str]:
-    """V1a ITERATE block, Phase 5: real telemetry coverage + the honest
-    expansion-review status -- distinguishes an insufficient observation
-    window from an inability to evaluate the gates, never presents either
-    as a completed, evidence-backed V1a proof."""
+    """Real telemetry coverage + the honest expansion-review status --
+    distinguishes an insufficient observation window from an inability to
+    evaluate the gates, never presents either as a completed, evidence-
+    backed V1a proof. Master Plan Reconciliation update: today's real
+    Top-Five Competition Ratio and Thesis Novelty Rate (both now wired
+    against the governing Master Plan's own exact formulas) are shown when
+    real data exists for today, an honest "no data yet" otherwise."""
     review = build_expansion_review()
     lines = [
         "",
@@ -184,13 +199,42 @@ def _telemetry_section() -> list[str]:
         lines.append(f"    {note}")
     if review.status == "UNABLE_TO_EVALUATE":
         lines.append(
-            f"    unconfirmed required fields ({len(review.unconfirmed_fields)}): "
-            + ", ".join(review.unconfirmed_fields)
+            f"    unconfirmed required fields ({len(review.unconfirmed_fields)}):"
         )
+        for field_name, reason in sorted(review.unconfirmed_fields.items()):
+            lines.append(f"      {field_name}: {reason}")
+
+    today = datetime.now(timezone.utc).date()
+    today_rows = daily_telemetry_range(today, today)
+    if today_rows:
+        row = today_rows[0]
+        ratio = top_five_competition_ratio(row)
+        history = {
+            r.date: r for r in daily_telemetry_range(today - timedelta(days=14), today)
+        }
+        novelty = thesis_novelty_rate(history, today)
+        lines.append(
+            "  today's Top-Five Competition Ratio: "
+            + (f"{ratio:.2f}" if ratio is not None else "no data")
+            + " (eligible distinct theses before diversity / 5; near 1.0 "
+            "means displaying rather than prioritizing)"
+        )
+        lines.append(
+            "  today's Thesis Novelty Rate: "
+            + (f"{novelty:.2f}" if novelty is not None else "no data")
+            + " (vs. the prior 14 days' deterministic thesis metadata; "
+            "deterministic only, no semantic comparison)"
+        )
+    else:
+        lines.append(
+            "  Top-Five Competition Ratio / Thesis Novelty Rate: no real "
+            "observations recorded yet today"
+        )
+
     lines.append(
-        "  blocked metrics (no definition found anywhere in this repository "
-        "-- see backend/app/universe_telemetry.py's BLOCKED_METRICS): "
-        + ", ".join(BLOCKED_METRICS)
+        "  blocked metrics (no definition in the governing Master Plan or "
+        "this repository -- see backend/app/universe_telemetry.py's "
+        "BLOCKED_METRICS): " + ", ".join(BLOCKED_METRICS)
     )
     return lines
 
