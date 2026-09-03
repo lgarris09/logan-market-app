@@ -443,6 +443,28 @@ def universe_manager_enabled() -> bool:
     return _env_flag("STRATUS_UNIVERSE_MANAGER_ENABLED")
 
 
+def universe_scheduler_enabled() -> bool:
+    """Universe Manager V1a Scheduler Runtime Invocation (V1a ITERATE
+    block): whether `main.py`'s `_lifespan()` starts the background task
+    that automatically calls `universe_manager.run_scheduled_universe_
+    reevaluation()` on a schedule. Deliberately a separate flag from
+    `universe_manager_enabled()` -- that one gates whether the live feed
+    *consumes* the Universe Manager's monitored cohort; this one gates
+    whether the scheduler that *maintains* that cohort runs at all. An
+    operator can enable this to warm/maintain the cohort and inspect it via
+    `/v1/dev/universe-report` before separately deciding to flip
+    `universe_manager_enabled()` for real feed consumption.
+
+    Defaults to disabled -- matching every other capability's rollout
+    convention in this codebase. Turning this on for a real deployment
+    means the process makes real, budgeted FMP calls on a schedule, which
+    is a production-behavior decision ADR-008's collaboration model
+    reserves for an explicit human choice, not something this pass turns on
+    unilaterally.
+    """
+    return _env_flag("STRATUS_UNIVERSE_SCHEDULER_ENABLED")
+
+
 def cors_allowed_origins() -> list[str]:
     """Sprint 3.6.9 Block 1: environment-configurable CORS policy, replacing
     the previous hardcoded `allow_origins=["*"]`. Reads

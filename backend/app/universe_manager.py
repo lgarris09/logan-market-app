@@ -356,6 +356,19 @@ UNIVERSE_REEVALUATION_JOB = "universe_reevaluation"
 # can inject a short interval without monkeypatching a module constant.
 REEVALUATION_MIN_INTERVAL_SECONDS = 30.0 * 24.0 * 3600.0
 
+# V1a ITERATE block, Phase 2 (crash/interrupted-run recovery): the smallest
+# deterministic fix for the reviewed gap that a crash right after
+# mark_started() -- last_outcome stuck at "running" forever, since nothing
+# ever calls mark_completed() -- would otherwise suppress reevaluation for
+# the *entire* 30-day REEVALUATION_MIN_INTERVAL_SECONDS window. A real
+# reevaluation run legitimately takes "a couple of minutes" to pace ~400
+# calls through the ceiling (see run_universe_reevaluation()'s own
+# docstring) -- one hour is a generous multiple of that, comfortably above
+# any legitimate in-progress run, while still being a small fraction of the
+# 30-day cadence. No schema change: this reads the exact same
+# last_started_at/last_outcome fields the runtime-state table already has.
+STALE_RUNNING_TIMEOUT_SECONDS = 3600.0
+
 
 @dataclass(frozen=True)
 class ScheduledReevaluationOutcome:
@@ -377,6 +390,7 @@ def run_scheduled_universe_reevaluation(
     scheduler: Optional[ProviderScheduler] = None,
     now: Optional[datetime] = None,
     min_interval_seconds: float = REEVALUATION_MIN_INTERVAL_SECONDS,
+    stale_running_timeout_seconds: float = STALE_RUNNING_TIMEOUT_SECONDS,
 ) -> ScheduledReevaluationOutcome:
     """The restart-safe cadence wrapper around `run_universe_reevaluation()`
     -- the real production entry point a background scheduler should call
@@ -392,6 +406,20 @@ def run_scheduled_universe_reevaluation(
     burn the provider budget (`run_universe_reevaluation()` itself already
     paces any single run's own calls via `scheduler`; this is the layer
     above that, pacing *whether a run happens at all*).
+
+    V1a ITERATE block, Phase 2 (crash/interrupted-run recovery): a stale
+    "running" row -- `last_outcome == "running"` and `last_started_at` more
+    than `stale_running_timeout_seconds` in the past -- is treated as due
+    regardless of `min_interval_seconds`. This is the one exception to the
+    cadence gate above, and it only ever fires for a row that never
+    reached `mark_completed()` (a genuine legitimate run always does,
+    within minutes) -- a normal completed run (`last_outcome` "success" or
+    "failure") is never affected by this, so restart protection for
+    ordinary cadence is completely unchanged. Bounded and safe under
+    repeated crashes: each recovered attempt still writes a fresh
+    `last_started_at` via `mark_started()` below, so a persistent crash
+    loop retries at most once every `stale_running_timeout_seconds`, never
+    immediately and never unboundedly.
 
     When persistence is disabled there is no durable state to gate
     against, so this always executes -- byte-identical to calling
@@ -411,7 +439,11 @@ def run_scheduled_universe_reevaluation(
         state = store.get(UNIVERSE_REEVALUATION_JOB)
         if state is not None and state.last_started_at is not None:
             elapsed = (now - state.last_started_at).total_seconds()
-            if elapsed < min_interval_seconds:
+            is_stale_running_recovery = (
+                state.last_outcome == "running"
+                and elapsed >= stale_running_timeout_seconds
+            )
+            if elapsed < min_interval_seconds and not is_stale_running_recovery:
                 return ScheduledReevaluationOutcome(
                     executed=False,
                     skipped_reason=(
@@ -444,6 +476,42 @@ def run_scheduled_universe_reevaluation(
         )
     return ScheduledReevaluationOutcome(
         executed=True, skipped_reason=None, rebalance=rebalance
+    )
+
+
+_production_scheduler: Optional[ProviderScheduler] = None
+
+
+def _get_production_scheduler() -> ProviderScheduler:
+    """One long-lived `ProviderScheduler` instance for the real production
+    scheduler loop (`main.py`'s `_universe_reevaluation_poll_loop()`) -- a
+    fresh instance per call would reset the rolling rate-window state every
+    tick, defeating the point of the shared call-admission budget. Not
+    reset by `reset_universe_manager_state()` (that hook simulates a
+    *process* restart, at which point a fresh scheduler with an empty
+    rate-window is exactly correct real behavior)."""
+    global _production_scheduler
+    if _production_scheduler is None:
+        _production_scheduler = ProviderScheduler()
+    return _production_scheduler
+
+
+def run_production_scheduled_reevaluation(
+    *, now: Optional[datetime] = None
+) -> ScheduledReevaluationOutcome:
+    """The real, production-shaped entry point for a background scheduler
+    to call (Universe Manager V1a Scheduler Runtime Invocation) --
+    constructs real `FmpMarketDataProvider`/`FmpEarningsProvider` instances
+    (`run_scheduled_universe_reevaluation()`'s own default behavior) and
+    paces every call through this module's single long-lived
+    `ProviderScheduler`. Never bypasses `run_scheduled_universe_
+    reevaluation()`'s own durable cadence gate -- this is a thin
+    convenience wrapper supplying the two production-only construction
+    choices (real providers, one persistent scheduler instance), not a
+    second code path around it.
+    """
+    return run_scheduled_universe_reevaluation(
+        scheduler=_get_production_scheduler(), now=now
     )
 
 

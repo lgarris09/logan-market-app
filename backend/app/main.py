@@ -2,7 +2,7 @@ import asyncio
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +16,7 @@ from .config import (
     legacy_memory_db_path,
     live_stock_tickers,
     startup_config_summary,
+    universe_scheduler_enabled,
 )
 from .data import DEMO_OPPORTUNITIES
 from .learning import (
@@ -81,6 +82,7 @@ from .telemetry_models import (
     TelemetryEventRequest,
     TelemetryEventResponse,
 )
+from .universe_manager import run_production_scheduled_reevaluation
 from .universe_report import build_universe_report
 from .user_context import (
     AccountLinkConflictError,
@@ -161,6 +163,51 @@ async def _notification_poll_loop() -> None:
             print(f"[notifications] poller error, will retry next cycle: {exc}")
 
 
+# Universe Manager V1a Scheduler Runtime Invocation (V1a ITERATE block): how
+# often this process *checks* whether a reevaluation is due, not how often a
+# real reevaluation actually runs -- that cadence is entirely owned by
+# run_scheduled_universe_reevaluation()'s own durable, restart-safe gate
+# (universe_manager.REEVALUATION_MIN_INTERVAL_SECONDS, ~30 days). A daily
+# check is ample resolution for a monthly-cadence action; this constant only
+# bounds how promptly a newly-due reevaluation is noticed after the gate
+# opens, never how often FMP is actually called.
+UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS = 24.0 * 3600.0
+
+
+async def _universe_reevaluation_poll_loop() -> None:
+    """Mirrors `_notification_poll_loop()`'s exact shape (sleep-then-check,
+    offload the sync/blocking call via `asyncio.to_thread`, never let one
+    bad cycle kill future cycles) -- calls
+    `run_production_scheduled_reevaluation()`, which itself calls
+    `universe_manager.run_scheduled_universe_reevaluation()` (never the
+    un-gated `run_universe_reevaluation()` directly), so this loop can never
+    bypass the durable cadence gate. Deliberately has no Personal Learning
+    input anywhere in this call chain.
+    """
+    while True:
+        await asyncio.sleep(UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS)
+        try:
+            outcome = await asyncio.to_thread(run_production_scheduled_reevaluation)
+            if outcome.executed:
+                churn = outcome.rebalance.churn_count if outcome.rebalance else 0
+                print(f"[universe] scheduled reevaluation executed: churn={churn}")
+            else:
+                print(
+                    f"[universe] scheduled reevaluation skipped: {outcome.skipped_reason}"
+                )
+        except Exception as exc:  # noqa: BLE001 -- see lifespan docstring below
+            print(f"[universe] scheduler poller error, will retry next cycle: {exc}")
+
+
+# Module-level handle, not a local in `_lifespan()` -- lets a second
+# `_lifespan()` entry within the same process (e.g. a test opening a second
+# `TestClient` context before the first's shutdown ran) detect and skip
+# starting a second loop instead of silently doubling the scheduler's real
+# FMP call volume. `_lifespan()` itself only ever creates one when this is
+# still None.
+_universe_scheduler_task: Optional[asyncio.Task] = None
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Sprint 3.6.6F -- STRATUS Watch. Starts the one piece of real
@@ -174,6 +221,21 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     never double-sends. Never lets a dispatch failure kill the loop -- one
     bad cycle must not silently end all future notifications for the rest
     of the process's life.
+
+    Universe Manager V1a Scheduler Runtime Invocation (V1a ITERATE block):
+    a second background task, started only when `universe_scheduler_enabled()`
+    is true (STRATUS_UNIVERSE_SCHEDULER_ENABLED, default False -- distinct
+    from, and independent of, STRATUS_UNIVERSE_MANAGER_ENABLED, which gates
+    live-feed *consumption* of the monitored cohort, not whether the
+    scheduler that maintains it runs at all). Default-off matches every
+    other capability's rollout convention in this codebase
+    (STRATUS_LIVE_NVDA_EARNINGS, STRATUS_PERSIST_MEMORY, STRATUS_LLM_ASK) --
+    turning this on for a real deployment makes real, budgeted FMP calls on
+    a schedule, which is exactly the kind of production-behavior decision
+    ADR-008's collaboration model reserves for an explicit human choice, not
+    something this pass turns on unilaterally. Importing this module (or
+    any module it depends on) never triggers a reevaluation by itself --
+    only this flag, checked here at startup, does.
     """
     # Sprint 3.6.9 Block 1: one loud, non-secret line stating this process's
     # effective configuration -- printed at startup so a hosted deployment's
@@ -182,8 +244,30 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # on, the active CORS policy) without requiring a code change to check.
     print(startup_config_summary())
     task = asyncio.create_task(_notification_poll_loop())
+
+    global _universe_scheduler_task
+    # `started_universe_task_here` (not just "is _universe_scheduler_task
+    # set") tracks whether *this* _lifespan() invocation is the one that
+    # created it -- a duplicate/nested entry within the same process (the
+    # exact scenario the module-level guard above exists for) correctly
+    # skips creating a second task, but must equally never cancel/clear the
+    # *other* invocation's task on its own exit, or a nested entry's
+    # teardown would silently kill the outer, legitimately-still-running
+    # scheduler task out from under it.
+    started_universe_task_here = False
+    if universe_scheduler_enabled() and _universe_scheduler_task is None:
+        _universe_scheduler_task = asyncio.create_task(
+            _universe_reevaluation_poll_loop()
+        )
+        started_universe_task_here = True
+        print("[universe] scheduler runtime task started")
+
     yield
+
     task.cancel()
+    if started_universe_task_here and _universe_scheduler_task is not None:
+        _universe_scheduler_task.cancel()
+        _universe_scheduler_task = None
 
 
 app = FastAPI(
