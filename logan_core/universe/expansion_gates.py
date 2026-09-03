@@ -9,20 +9,24 @@ future instrumentation task (durable telemetry aggregation) -- this module
 is the decision function that would run once that data exists, not the
 collector itself.
 
-UNRESOLVED PLAN CONTRADICTION (flagged 2026-08-30, re-confirmed unresolved
-2026-08-31 -- see this session's own conformance report, item 4): the
-governing plan lists seven concrete opportunity-quality bullet points
-(MIN_DISTINCT_SURFACED_THESES_14D through MIN_MEANINGFUL_REVISION_
-CONTENT_RATE below) but separately states the expansion recommendation
-requires "at least 5 of the applicable 6" of them passing. Seven items
-were specified; "6" was named as the denominator. This is an internal
-inconsistency in the plan text itself, not a gap this module's author is
-positioned to resolve -- OPPORTUNITY_QUALITY_GATES_REQUIRED is set to 6
-(all seven items implemented, six required to pass) as the closest
-integer reading, but this is a stand-in pending the plan owner's explicit
-resolution, not a ratified decision. Do not treat this constant as settled;
-do not silently change it to a different number without that resolution
-either -- flag it again rather than re-guessing.
+RESOLVED PLAN CONTRADICTION (flagged 2026-08-30, reconciled 2026-09-03 via
+Master Plan CR-2026-002): the governing plan's Section 4 lists exactly six
+concrete opportunity-quality bullet points as "At minimum" (distinct
+theses through complete evidence payload rate) and separately states the
+Material Revision Rubric's >=70% target as its own, distinct quality
+target -- not a seventh opportunity-quality gate. This module previously
+implemented a seven-item/six-required model that folded
+meaningful_revision_content_rate into the opportunity-quality count, an
+interpretation the plan text never actually stated. CR-2026-002 ratifies
+the plan's own six-bullet reading: `OpportunityQualityMetricsSnapshot` now
+has exactly the six fields the plan lists, all six are required
+(`OPPORTUNITY_QUALITY_GATE_COUNT == OPPORTUNITY_QUALITY_GATES_REQUIRED ==
+6`), and Material Revision is evaluated separately via
+`MaterialRevisionMetricsSnapshot`/`material_revision_check` on
+`ExpansionGateReport` -- reported, but never folded into
+`recommend_expansion`'s pass/fail result (matching Section 4's own "if
+operations pass but yield fails, do not automatically add more stocks --
+investigate" framing: a diagnostic signal, not a hard gate).
 """
 
 from dataclasses import dataclass, field
@@ -55,9 +59,15 @@ MIN_TOP_FIVE_DIVERSITY_SURVIVAL_RATE = 0.90
 MAX_SINGLE_ENTITY_IMPRESSION_SHARE = 0.30
 MAX_SINGLE_SECTOR_IMPRESSION_SHARE = 0.40
 MIN_COMPLETE_EVIDENCE_PAYLOAD_RATE = 0.95
+
+# Material Revision Rubric target -- reported separately (see
+# MaterialRevisionMetricsSnapshot / material_revision_check below), never
+# one of the six opportunity-quality gates.
 MIN_MEANINGFUL_REVISION_CONTENT_RATE = 0.70
 
-OPPORTUNITY_QUALITY_GATE_COUNT = 7
+# CR-2026-002: exactly the six gates Section 4 lists as "At minimum" --
+# all six required, no partial-pass model.
+OPPORTUNITY_QUALITY_GATE_COUNT = 6
 OPPORTUNITY_QUALITY_GATES_REQUIRED = 6
 
 
@@ -84,6 +94,14 @@ class OpportunityQualityMetricsSnapshot:
     max_single_entity_impression_share: float
     max_single_sector_impression_share: float
     complete_evidence_payload_rate: float
+
+
+@dataclass(frozen=True)
+class MaterialRevisionMetricsSnapshot:
+    """Material Revision Rubric target, evaluated and reported separately
+    from the six opportunity-quality gates (CR-2026-002) -- never counted
+    toward `opportunity_quality_gates_passed_count` or `recommend_expansion`."""
+
     meaningful_revision_content_rate: float
 
 
@@ -103,6 +121,10 @@ class ExpansionGateReport:
     operational_checks: list[GateCheckResult] = field(default_factory=list)
     opportunity_quality_checks: list[GateCheckResult] = field(default_factory=list)
     unresolved_integrity_incident: bool = False
+    # Reported alongside the six opportunity-quality gates but structurally
+    # separate -- see MaterialRevisionMetricsSnapshot's docstring. None
+    # when the caller didn't supply a MaterialRevisionMetricsSnapshot.
+    material_revision_check: Optional[GateCheckResult] = None
 
     @property
     def all_operational_gates_pass(self) -> bool:
@@ -235,13 +257,21 @@ def _opportunity_quality_checks(
             f"{m.complete_evidence_payload_rate:.2f} (must be >= "
             f"{MIN_COMPLETE_EVIDENCE_PAYLOAD_RATE})",
         ),
-        _check(
-            "meaningful_revision_content_rate",
-            m.meaningful_revision_content_rate >= MIN_MEANINGFUL_REVISION_CONTENT_RATE,
-            f"{m.meaningful_revision_content_rate:.2f} (must be >= "
-            f"{MIN_MEANINGFUL_REVISION_CONTENT_RATE})",
-        ),
     ]
+
+
+def _material_revision_check(m: MaterialRevisionMetricsSnapshot) -> GateCheckResult:
+    """CR-2026-002: reported separately from the six opportunity-quality
+    gates -- this result is never included in
+    `opportunity_quality_gates_passed_count` and never affects
+    `recommend_expansion`."""
+    return _check(
+        "meaningful_revision_content_rate",
+        m.meaningful_revision_content_rate >= MIN_MEANINGFUL_REVISION_CONTENT_RATE,
+        f"{m.meaningful_revision_content_rate:.2f} (must be >= "
+        f"{MIN_MEANINGFUL_REVISION_CONTENT_RATE}) -- separate quality "
+        "target, does not affect recommend_expansion",
+    )
 
 
 def evaluate_expansion_gates(
@@ -249,6 +279,7 @@ def evaluate_expansion_gates(
     opportunity_quality: OpportunityQualityMetricsSnapshot,
     *,
     warmup_days_elapsed: int,
+    material_revision: Optional[MaterialRevisionMetricsSnapshot] = None,
     unresolved_integrity_incident: bool = False,
     now: Optional[datetime] = None,
 ) -> ExpansionGateReport:
@@ -257,6 +288,11 @@ def evaluate_expansion_gates(
     initial warming is complete, and the scheduler has stabilized") -- this
     function does not itself know when that was, it only checks the count
     a caller supplies against `MIN_WARMUP_DAYS`.
+
+    `material_revision` is optional and, when supplied, is evaluated and
+    reported on the result but never affects `recommend_expansion`
+    (CR-2026-002) -- omitting it simply means the report carries no
+    material_revision_check, not a failure.
     """
     now = now or datetime.now(timezone.utc)
     return ExpansionGateReport(
@@ -267,4 +303,9 @@ def evaluate_expansion_gates(
         operational_checks=_operational_checks(operational),
         opportunity_quality_checks=_opportunity_quality_checks(opportunity_quality),
         unresolved_integrity_incident=unresolved_integrity_incident,
+        material_revision_check=(
+            _material_revision_check(material_revision)
+            if material_revision is not None
+            else None
+        ),
     )
