@@ -398,6 +398,7 @@ def test_first_scheduled_run_executes_and_records_success(monkeypatch, tmp_path)
 
     assert outcome.executed is True
     assert outcome.skipped_reason is None
+    assert outcome.rebalance is not None
     assert 25 <= len(outcome.rebalance.admitted) <= 35
 
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
@@ -425,6 +426,7 @@ def test_too_early_second_run_is_skipped_not_executed(monkeypatch, tmp_path):
     )
     assert second.executed is False
     assert second.rebalance is None
+    assert second.skipped_reason is not None
     assert "minimum cadence" in second.skipped_reason
 
 
@@ -495,6 +497,7 @@ def test_scheduler_state_survives_a_simulated_restart(monkeypatch, tmp_path):
         market_data_provider=market, earnings_provider=earnings, now=NOW
     )
     state_before = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state_before is not None
 
     reset_universe_manager_state()  # simulates a process restart
 
@@ -542,8 +545,6 @@ def test_production_wrapper_respects_persisted_cadence_across_a_restart(
     """The production entry point (real providers + one persistent
     ProviderScheduler) restart-respects the exact same durable cadence gate
     -- not just the lower-level wrapper the other tests exercise directly."""
-    from backend.app.universe_manager import run_production_scheduled_reevaluation
-
     _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
     market, earnings = _healthy_fixture_providers()
 
@@ -569,7 +570,6 @@ def test_production_wrapper_respects_persisted_cadence_across_a_restart(
         market_data_provider=market, earnings_provider=earnings, now=NOW
     )
     assert again.executed is False
-    assert run_production_scheduled_reevaluation  # real entry point importable
 
 
 # --- Phase 2: crash / interrupted-run recovery (V1a ITERATE block) -----------
@@ -585,6 +585,7 @@ def test_crash_after_mark_started_leaves_the_row_running(monkeypatch, tmp_path):
     store.close()
 
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
     assert state.last_outcome == "running"
     assert state.last_completed_at is None
 
@@ -635,6 +636,7 @@ def test_stale_running_row_becomes_eligible_after_the_recovery_bound(
     assert outcome.executed is True
 
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
     assert state.last_outcome == "success"
 
 
@@ -730,12 +732,14 @@ def test_scheduler_store_mark_started_then_completed_round_trips(tmp_path):
     store.mark_started("universe_reevaluation", NOW)
 
     running = store.get("universe_reevaluation")
+    assert running is not None
     assert running.last_outcome == "running"
     assert running.last_started_at == NOW
     assert running.last_completed_at is None
 
     store.mark_completed("universe_reevaluation", NOW, outcome="success")
     done = store.get("universe_reevaluation")
+    assert done is not None
     assert done.last_outcome == "success"
     assert done.last_completed_at == NOW
     assert done.last_succeeded_at == NOW
@@ -748,6 +752,7 @@ def test_scheduler_store_failure_never_fabricates_last_succeeded_at(tmp_path):
     store.mark_completed("universe_reevaluation", NOW, outcome="failure")
 
     state = store.get("universe_reevaluation")
+    assert state is not None
     assert state.last_outcome == "failure"
     assert state.last_succeeded_at is None
     store.close()

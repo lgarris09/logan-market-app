@@ -84,6 +84,7 @@ def test_shutdown_cancels_the_task(monkeypatch):
         return task
 
     task = asyncio.run(_run())
+    assert task is not None
     assert task.cancelled()
     assert main._universe_scheduler_task is None
 
@@ -104,6 +105,7 @@ def test_duplicate_lifespan_entry_does_not_start_a_second_task(monkeypatch):
             # alive and untouched. Checked *inside* the outer context,
             # before its own teardown runs.
             still_running_task = main._universe_scheduler_task
+            assert still_running_task is not None
             assert not still_running_task.done()
             return first_task, second_task, still_running_task
 

@@ -209,7 +209,7 @@ _universe_scheduler_task: Optional[asyncio.Task] = None
 
 
 @asynccontextmanager
-async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def _lifespan(_app: Optional[FastAPI]) -> AsyncIterator[None]:
     """Sprint 3.6.6F -- STRATUS Watch. Starts the one piece of real
     infrastructure this slice adds: something that notices a newly-
     qualifying live opportunity on its own, independent of any client

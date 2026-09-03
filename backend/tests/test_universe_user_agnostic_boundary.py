@@ -216,6 +216,7 @@ def test_a_users_watch_never_affects_scheduler_cadence(monkeypatch, tmp_path):
         market_data_provider=market, earnings_provider=earnings, now=NOW
     )
     assert second.executed is False
+    assert second.skipped_reason is not None
     assert "minimum cadence" in second.skipped_reason
 
 
