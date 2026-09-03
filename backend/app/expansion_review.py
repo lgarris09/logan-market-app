@@ -24,13 +24,13 @@ distinguishing three different honest states a caller must never conflate:
       below) is returned as-is.
 
 Master Plan Reconciliation + V1a Final Proof-Readiness Closeout update: the
-governing document (STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md)
+governing document (STRATUS_Master_Implementation_Plan_2026-08-30_REV1.md,
+superseded by REV2's Section 21 execution-status updates and CR-2026-002)
 was located outside this repository and has now been read in full, and a
 durable per-event operational observation layer
 (universe_operational_observations.py) now exists. Together these confirmed
-real sources for 17 of the 18 fields evaluate_expansion_gates() requires --
-only 1 remains unconfirmed, for a specific, named reason (see the dict
-below), not guessed at:
+real sources for 18 of the 18 fields evaluate_expansion_gates() requires --
+UNCONFIRMED_REQUIRED_FIELDS is now empty (see below).
 
   fmp_rate_limit_responses, scheduled_fetch_failure_rate,
   time_sensitive_delay_p95/p99_seconds, critical_freshness_p95/p99_ratio,
@@ -46,30 +46,37 @@ below), not guessed at:
   max_single_entity/sector_impression_share, stale_grace_read_rate,
   user_visible_stale_beyond_grace_count, complete_evidence_payload_rate --
   real via universe_telemetry.daily_telemetry_range()
-  (complete_evidence_payload_rate added this closeout: a deterministic,
-  approved definition over real surfaced theses -- see
+  (complete_evidence_payload_rate added the prior closeout: a
+  deterministic, approved definition over real surfaced theses -- see
   compute_thesis_evidence_completeness() and
-  complete_evidence_payload_rate() in universe_telemetry.py -- note the
-  definition itself is a governing V1a validation clarification that still
-  needs recording in the Master Plan/change-log before the proof window
-  starts; that governance step is outside this module's scope).
+  complete_evidence_payload_rate() in universe_telemetry.py).
+  meaningful_revision_content_rate -- real via
+  universe_telemetry.meaningful_revision_content_rate(), the last of the
+  18 fields, closed out this session: a deterministic
+  change_type -> Material Revision Rubric class mapping approved via
+  Master Plan CR-2026-002 now covers all 15 real persisted
+  OpportunityRevision.change_type values (14 mapped +
+  new_opportunity excluded from the denominator) -- see
+  REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE in universe_telemetry.py.
 
-Gate-policy direction (per explicit instruction, not a code change): for
-planning purposes, the Master Plan's Section 4 "Opportunity-quality gates"
-are treated as the six explicit bullets it lists (distinct theses,
-no-opportunity-day run length, diversity survival, entity share, sector
-share, evidence completeness), stated as "At minimum" -- i.e. all six, not
-"N of 6". The Material Revision Rubric's own ">=70%" target is a *separate*
-quality target, not silently folded into a seventh opportunity-quality
-gate. This module does NOT change `expansion_gates.py`'s
-`OPPORTUNITY_QUALITY_GATE_COUNT = 7` / `OPPORTUNITY_QUALITY_GATES_REQUIRED
-= 6` constants or logic in any way -- that requires a Master Plan
-governance entry/change record, per explicit instruction, and remains
-Chuck/Logan's call. `meaningful_revision_content_rate` stays listed below
-as one of the fields `evaluate_expansion_gates()` structurally requires to
-run at all (its Python dataclass has no optional fields), distinct from
-the separate policy question of whether it should count as one of "the"
-opportunity-quality gates.
+Gate-policy resolution (Master Plan CR-2026-002, 2026-09-03): the prior
+closeout treated the Master Plan's Section 4 "Opportunity-quality gates"
+as the six explicit bullets it lists (distinct theses, no-opportunity-day
+run length, diversity survival, entity share, sector share, evidence
+completeness), stated as "At minimum" -- i.e. all six, not "N of 6" -- as
+a planning-only interpretation that deliberately left
+`expansion_gates.py`'s code untouched pending a governance entry.
+CR-2026-002 now formally ratifies that reading: `expansion_gates.py`'s
+`OpportunityQualityMetricsSnapshot` has exactly six fields,
+`OPPORTUNITY_QUALITY_GATE_COUNT == OPPORTUNITY_QUALITY_GATES_REQUIRED ==
+6`, and `meaningful_revision_content_rate` is evaluated as a separate
+`MaterialRevisionMetricsSnapshot` / `material_revision_check` that is
+reported but never folded into `recommend_expansion`'s six-gate pass/fail
+result. `_CONFIRMED_OPPORTUNITY_QUALITY_FIELDS` below still lists
+meaningful_revision_content_rate alongside the six gates -- it remains one
+of the 18 fields this module tracks proof-readiness for, distinct from
+the separate policy question (now resolved) of whether it counts as one
+of "the" six opportunity-quality gates.
 """
 
 from dataclasses import dataclass, field
@@ -77,35 +84,34 @@ from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
 from .universe_operational_observations import build_operational_gate_evidence
-from .universe_telemetry import complete_evidence_payload_rate, daily_telemetry_range
+from .universe_telemetry import (
+    UnmappedRevisionChangeType,
+    complete_evidence_payload_rate,
+    daily_telemetry_range,
+    meaningful_revision_content_rate,
+)
 
 REQUIRED_CONSECUTIVE_DAYS = 14
+TOTAL_REQUIRED_FIELDS = 18
 
 ExpansionReviewStatus = Literal[
     "INSUFFICIENT_OBSERVATION_WINDOW", "UNABLE_TO_EVALUATE", "EVALUATED"
 ]
 
-# The 1 (of 18) evaluate_expansion_gates() field with no confirmed-real
-# source *at all* -- distinct from a field that has a real source but
-# happens to have zero observations in a particular window (see
+# V1a Final Proof-Readiness Closeout (Master Plan CR-2026-002): empty.
+# Every one of the 18 fields evaluate_expansion_gates() requires now has a
+# confirmed, currently-wired real source -- meaningful_revision_content_rate
+# was the last one, closed out via a deterministic change_type -> Material
+# Revision Rubric class mapping (see universe_telemetry.py's
+# REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE). Left as a dict (not deleted) so a
+# future field that genuinely can't be confirmed has an established place
+# to be listed -- distinct from a field that has a real source but happens
+# to have zero observations in a particular window (see
 # check_proof_window_readiness()'s own per-window evidence check for that
 # case).
-#   "needs_policy_mapping": the Master Plan states an exact target but the
-#       classification/mapping needed to compute it deterministically from
-#       existing data has not been confirmed by Chuck/Logan (see this
-#       session's Material Revision Rubric mapping report: 6 of the 15 real
-#       persisted change types map to a rubric class with high confidence;
-#       9 remain UNCLASSIFIED because they require semantic interpretation
-#       the Master Plan text does not resolve deterministically -- and
-#       several of the 9 unclassified types are realistically expected to
-#       occur during any real 14-day window, so a classified/total rate
-#       computed today would silently misrepresent them as "not material"
-#       rather than "not yet policy-mapped").
-UNCONFIRMED_REQUIRED_FIELDS: dict[str, str] = {
-    "meaningful_revision_content_rate": "needs_policy_mapping",
-}
+UNCONFIRMED_REQUIRED_FIELDS: dict[str, str] = {}
 
-# The 17 fields that DO have a confirmed real source -- used by
+# The 18 fields that DO have a confirmed real source -- used by
 # check_proof_window_readiness() to fail closed per-window (a confirmed
 # source with zero real observations in a specific window is not "ready"
 # either).
@@ -129,6 +135,7 @@ _CONFIRMED_OPPORTUNITY_QUALITY_FIELDS = (
     "stale_grace_read_rate",
     "user_visible_stale_beyond_grace_count",
     "complete_evidence_payload_rate",
+    "meaningful_revision_content_rate",
 )
 
 
@@ -187,28 +194,58 @@ def build_expansion_review(*, as_of: Optional[date] = None) -> ExpansionReviewRe
             ),
         )
 
-    # The window requirement is satisfied, but 1 of the 18 fields
-    # evaluate_expansion_gates() requires still has no confirmed-real
-    # source at all -- see UNCONFIRMED_REQUIRED_FIELDS for exactly which,
-    # and why. (Whether the 17 confirmed fields have real *data* in this
-    # specific window is a separate, per-window question -- see
-    # check_proof_window_readiness() below.)
+    if UNCONFIRMED_REQUIRED_FIELDS:
+        # A future field could become unconfirmed again (see
+        # UNCONFIRMED_REQUIRED_FIELDS's own docstring) -- this branch stays
+        # in place even though the dict is empty as of this closeout.
+        return ExpansionReviewResult(
+            status="UNABLE_TO_EVALUATE",
+            as_of=as_of,
+            consecutive_days_observed=consecutive_days,
+            required_consecutive_days=REQUIRED_CONSECUTIVE_DAYS,
+            unconfirmed_fields=dict(UNCONFIRMED_REQUIRED_FIELDS),
+            notes=(
+                "14-consecutive-day observation window satisfied, but "
+                f"{len(UNCONFIRMED_REQUIRED_FIELDS)} of {TOTAL_REQUIRED_FIELDS} "
+                "fields evaluate_expansion_gates() requires have no "
+                "confirmed-real source yet (see unconfirmed_fields for "
+                "exactly which and why). The existing gate-count policy "
+                "(expansion_gates.OPPORTUNITY_QUALITY_GATES_REQUIRED) is "
+                "completely untouched and unevaluated here -- this is not a "
+                "failed gate, it is an unanswerable question given current "
+                "evidence.",
+            ),
+        )
+
+    # V1a Final Proof-Readiness Closeout: all 18 fields are now confirmed
+    # (UNCONFIRMED_REQUIRED_FIELDS is empty), but this module still does
+    # not assemble real evidence into OperationalMetricsSnapshot /
+    # OpportunityQualityMetricsSnapshot / MaterialRevisionMetricsSnapshot
+    # and call the existing evaluate_expansion_gates() with it -- that
+    # live-evaluation wiring is a distinct, not-yet-implemented
+    # integration task, explicitly out of this closeout's scope (see
+    # Master Plan CR-2026-002, "no change to V1a scope ... sequencing").
+    # Status therefore stays UNABLE_TO_EVALUATE (accurately -- this
+    # function genuinely cannot evaluate the gates yet), never a
+    # fabricated EVALUATED. Use check_proof_window_readiness() to answer
+    # "is the 14-day clock startable" -- that question doesn't depend on
+    # this wiring existing.
     return ExpansionReviewResult(
         status="UNABLE_TO_EVALUATE",
         as_of=as_of,
         consecutive_days_observed=consecutive_days,
         required_consecutive_days=REQUIRED_CONSECUTIVE_DAYS,
-        unconfirmed_fields=dict(UNCONFIRMED_REQUIRED_FIELDS),
+        unconfirmed_fields={},
         notes=(
-            "14-consecutive-day observation window satisfied, but "
-            f"{len(UNCONFIRMED_REQUIRED_FIELDS)} of 18 fields "
-            "evaluate_expansion_gates() requires have no confirmed-real "
-            "source yet (see unconfirmed_fields for exactly which and "
-            "why). The existing gate-count policy "
-            "(expansion_gates.OPPORTUNITY_QUALITY_GATES_REQUIRED) is "
-            "completely untouched and unevaluated here -- this is not a "
-            "failed gate, it is an unanswerable question given current "
-            "evidence.",
+            f"All {TOTAL_REQUIRED_FIELDS} of {TOTAL_REQUIRED_FIELDS} required "
+            "fields now have confirmed-real sources (see "
+            "check_proof_window_readiness() for the fail-closed wiring "
+            "check), but this module does not yet assemble that real "
+            "evidence into a live call to evaluate_expansion_gates() -- "
+            "that integration is a separate, not-yet-implemented task. This "
+            "status answers 'can the gates be evaluated right now,' not "
+            "'is the 14-day clock startable' -- see "
+            "check_proof_window_readiness() for that question.",
         ),
     )
 
@@ -245,26 +282,34 @@ def check_proof_window_readiness() -> ProofWindowReadiness:
             ready=False,
             permanently_unconfirmed=dict(UNCONFIRMED_REQUIRED_FIELDS),
             notes=(
-                f"{len(UNCONFIRMED_REQUIRED_FIELDS)} of 18 required fields have "
-                "no confirmed, durably-recording real source at all -- starting "
-                "the 14-day clock now would still leave these fields "
-                "unanswerable on Day 14, regardless of how much other real "
-                "evidence accumulates. See permanently_unconfirmed for exactly "
-                "which fields and why.",
+                f"{len(UNCONFIRMED_REQUIRED_FIELDS)} of {TOTAL_REQUIRED_FIELDS} "
+                "required fields have no confirmed, durably-recording real "
+                "source at all -- starting the 14-day clock now would still "
+                "leave these fields unanswerable on Day 14, regardless of how "
+                "much other real evidence accumulates. See "
+                "permanently_unconfirmed for exactly which fields and why.",
             ),
         )
     return ProofWindowReadiness(
         ready=True,
         permanently_unconfirmed={},
         notes=(
-            "Every one of the 18 fields evaluate_expansion_gates() requires "
-            "has a confirmed, currently-wired real recording mechanism.",
+            f"Every one of the {TOTAL_REQUIRED_FIELDS} fields "
+            "evaluate_expansion_gates() requires has a confirmed, "
+            "currently-wired real recording mechanism.",
         ),
     )
 
 
+def confirmed_field_count() -> int:
+    """`PROOF_INPUTS_CONFIRMED_REAL` -- how many of the 18 required fields
+    currently have a confirmed real source. Reported alongside
+    READY_TO_START_14_DAY_WINDOW."""
+    return TOTAL_REQUIRED_FIELDS - len(UNCONFIRMED_REQUIRED_FIELDS)
+
+
 def real_time_window_evidence_gaps(start: datetime, end: datetime) -> dict:
-    """A second, complementary fail-closed check: even for the 17
+    """A second, complementary fail-closed check: even for the 18
     confirmed fields, a specific [start, end] window can genuinely have
     zero real observations (e.g. persistence was only just enabled, or the
     scheduler hasn't run yet in that window). Returns the subset of
@@ -292,9 +337,20 @@ def real_time_window_evidence_gaps(start: datetime, end: datetime) -> dict:
         if value is None:
             gaps[field_name] = "no_real_observations_in_window"
 
+    # meaningful_revision_content_rate is sourced from
+    # OpportunityRevisionStore's own SQLite file, entirely independent of
+    # the daily_telemetry_range() store the other opportunity-quality
+    # fields below use -- computed unconditionally, never coupled to
+    # whether daily_rows is empty (revision data can exist with zero daily
+    # telemetry rows, or vice versa).
+    _daily_quality_fields = tuple(
+        f
+        for f in _CONFIRMED_OPPORTUNITY_QUALITY_FIELDS
+        if f != "meaningful_revision_content_rate"
+    )
     daily_rows = daily_telemetry_range(start.date(), end.date())
     if not daily_rows:
-        for field_name in _CONFIRMED_OPPORTUNITY_QUALITY_FIELDS:
+        for field_name in _daily_quality_fields:
             gaps[field_name] = "no_real_observations_in_window"
     else:
         # complete_evidence_payload_rate is per-day (thesis_completeness_
@@ -304,6 +360,19 @@ def real_time_window_evidence_gaps(start: datetime, end: datetime) -> dict:
         # this specific field even when daily_rows overall is non-empty.
         if all(complete_evidence_payload_rate(row) is None for row in daily_rows):
             gaps["complete_evidence_payload_rate"] = "no_real_observations_in_window"
+
+    try:
+        revision_rate = meaningful_revision_content_rate(start.date(), end.date())
+    except UnmappedRevisionChangeType:
+        # A real, reachable revision exists in this window whose
+        # change_type has no approved rubric mapping -- a more severe,
+        # distinct condition than "no evidence collected," never conflated
+        # with it.
+        gaps["meaningful_revision_content_rate"] = "unmapped_change_type_encountered"
+    else:
+        if revision_rate is None:
+            gaps["meaningful_revision_content_rate"] = "no_real_observations_in_window"
+
     # unexplained_universe_changes is always computable (zero is a real,
     # honest answer when the membership ledger has no bad rows), so it
     # never appears here as a gap.

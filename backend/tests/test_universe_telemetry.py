@@ -144,15 +144,15 @@ def test_recorded_freshness_counts_reflect_real_item_states(monkeypatch, tmp_pat
 
 def test_blocked_metrics_are_named_and_not_silently_implemented():
     """Governance guard, updated for the V1a Final Proof-Readiness
-    Closeout: complete_evidence_payload_rate now has an approved
-    deterministic definition and is implemented -- removed from this
-    list. The remaining entries either have no formula anywhere in the
-    plan, or need a confirmed classification-mapping decision, or need a
+    Closeout: complete_evidence_payload_rate and
+    material_revision_rubric_classification_rate (now
+    meaningful_revision_content_rate) both now have approved deterministic
+    definitions and are implemented -- removed from this list. The
+    remaining entries have no formula anywhere in the plan, or need a
     durable event-log subsystem this block does not build -- none are
     silently guessed at."""
     assert set(BLOCKED_METRICS) == {
         "signal_family_yield_rate",
-        "material_revision_rubric_classification_rate",
         "time_sensitive_delay_p95_seconds",
         "time_sensitive_delay_p99_seconds",
         "critical_freshness_p95_ratio",
@@ -220,9 +220,13 @@ def test_real_meaningful_revision_count_reflects_real_store_rows(monkeypatch, tm
 # --- V1a Proof-Instrumentation Closeout: Material Revision Rubric mapping ----
 
 
-def test_classify_persisted_revisions_maps_only_confident_change_types(
+def test_classify_persisted_revisions_maps_all_confident_change_types(
     monkeypatch, tmp_path
 ):
+    """V1a Final Proof-Readiness Closeout (CR-2026-002): confidence_increased
+    is now an approved EVIDENCE_STRENGTH_CHANGE mapping, not "deliberately
+    unmapped" -- and new_opportunity is excluded entirely (neither
+    classified nor unclassified)."""
     from backend.app.revision_store import OpportunityRevisionStore
     from backend.app.universe_telemetry import classify_persisted_revisions
     from logan_core.contracts import OpportunityRevision
@@ -248,49 +252,270 @@ def test_classify_persisted_revisions_maps_only_confident_change_types(
 
     store.append(_revision(1, "personal_relevance_increased"))
     store.append(_revision(2, "trajectory_strengthening"))
-    store.append(_revision(3, "confidence_increased"))  # deliberately unmapped
+    store.append(_revision(3, "confidence_increased"))
+    store.append(_revision(4, "aged_to_expired"))  # multi-class
+    store.append(_revision(5, "new_opportunity"))  # excluded entirely
     store.close()
 
     result = classify_persisted_revisions(today.date(), today.date())
     assert result["classified"] == {
         "PERSONAL_RELEVANCE_CHANGE": 1,
         "TRAJECTORY_CHANGE": 1,
+        "EVIDENCE_STRENGTH_CHANGE": 1,
+        "STATE_CHANGE": 1,
+        "FRESHNESS_DEGRADED_CHANGE": 1,
     }
+    assert result["unclassified"] == 0
+
+
+def test_classify_persisted_revisions_unclassified_on_a_genuinely_unmapped_type(
+    monkeypatch, tmp_path
+):
+    """Fail-closed guard: a change_type not in
+    REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE and not excluded (simulating a
+    future MeaningfulChangeType value added without a rubric-mapping
+    decision -- inserted directly via SQL since the real pydantic model
+    rejects an invalid Literal) lands in "unclassified", never silently
+    dropped or guessed."""
+    import sqlite3
+
+    from backend.app.revision_store import OpportunityRevisionStore
+
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    revisions_path = tmp_path / "revisions.db"
+    monkeypatch.setenv("STRATUS_REVISIONS_DB_PATH", str(revisions_path))
+
+    store = OpportunityRevisionStore(str(revisions_path))
+    store.close()
+
+    today = datetime.now(timezone.utc)
+    conn = sqlite3.connect(str(revisions_path))
+    conn.execute(
+        "INSERT INTO opportunity_revisions (entity_id, revision, "
+        "lifecycle_state, confidence_score, trigger_codes, change_type, "
+        "reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "SYMBOL:AAPL",
+            1,
+            "developing",
+            0.8,
+            "[]",
+            "some_future_change_type",
+            "test",
+            today.isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    from backend.app.universe_telemetry import classify_persisted_revisions
+
+    result = classify_persisted_revisions(today.date(), today.date())
+    assert result["classified"] == {}
     assert result["unclassified"] == 1
 
 
-def test_classify_persisted_revisions_confident_map_has_no_ambiguous_entries():
-    """Governance guard: every mapped change_type must be one this session
-    judged as a direct, unambiguous name correspondence -- confidence_*/
-    aged_to_*/new_*/convergence_formed/reactivated/new_opportunity must
-    never silently appear here."""
+def test_classify_persisted_revisions_confident_map_covers_all_15_real_types():
+    """Governance guard (CR-2026-002): every real, persisted
+    MeaningfulChangeType value (except new_opportunity, which is excluded
+    from the denominator entirely, not "unmapped") must have a confident,
+    approved rubric-class mapping."""
     from backend.app.universe_telemetry import (
+        EXCLUDED_FROM_REVISION_RATE_DENOMINATOR,
         REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE,
-        UNMAPPED_REVISION_CHANGE_TYPES,
     )
 
-    assert set(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) == {
-        "personal_relevance_increased",
-        "personal_relevance_decreased",
-        "trajectory_strengthening",
-        "trajectory_weakening",
-        "trajectory_reversing",
-        "trajectory_reaccelerated",
+    assert REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE == {
+        "personal_relevance_increased": ("PERSONAL_RELEVANCE_CHANGE",),
+        "personal_relevance_decreased": ("PERSONAL_RELEVANCE_CHANGE",),
+        "trajectory_strengthening": ("TRAJECTORY_CHANGE",),
+        "trajectory_weakening": ("TRAJECTORY_CHANGE",),
+        "trajectory_reversing": ("TRAJECTORY_CHANGE",),
+        "trajectory_reaccelerated": ("TRAJECTORY_CHANGE",),
+        "confidence_increased": ("EVIDENCE_STRENGTH_CHANGE",),
+        "confidence_decreased": ("EVIDENCE_STRENGTH_CHANGE",),
+        "new_signal_appeared": ("EVIDENCE_STRENGTH_CHANGE",),
+        "convergence_formed": ("EVIDENCE_STRENGTH_CHANGE",),
+        "aged_to_cooling": ("TIME_SENSITIVITY_CHANGE",),
+        "aged_to_stale": ("FRESHNESS_DEGRADED_CHANGE",),
+        "aged_to_expired": ("STATE_CHANGE", "FRESHNESS_DEGRADED_CHANGE"),
+        "reactivated": ("STATE_CHANGE",),
     }
-    assert set(UNMAPPED_REVISION_CHANGE_TYPES) == {
-        "new_opportunity",
-        "confidence_increased",
-        "confidence_decreased",
-        "new_signal_appeared",
-        "convergence_formed",
-        "aged_to_cooling",
-        "aged_to_stale",
-        "aged_to_expired",
-        "reactivated",
-    }
+    assert set(EXCLUDED_FROM_REVISION_RATE_DENOMINATOR) == {"new_opportunity"}
     assert not set(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) & set(
-        UNMAPPED_REVISION_CHANGE_TYPES
+        EXCLUDED_FROM_REVISION_RATE_DENOMINATOR
     )
+    # All 15 real MeaningfulChangeType values (excluding "none", which is
+    # never persisted) are accounted for -- 14 mapped + 1 excluded.
+    assert len(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) == 14
+
+
+# --- V1a Final Proof-Readiness Closeout: meaningful_revision_content_rate ----
+
+
+def _revision_store(monkeypatch, tmp_path):
+    from backend.app.revision_store import OpportunityRevisionStore
+
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    revisions_path = tmp_path / "revisions.db"
+    monkeypatch.setenv("STRATUS_REVISIONS_DB_PATH", str(revisions_path))
+    return OpportunityRevisionStore(str(revisions_path)), revisions_path
+
+
+def _make_revision(revision: int, change_type, created_at, reason="test"):
+    from logan_core.contracts import OpportunityRevision
+
+    return OpportunityRevision(
+        entity_id="SYMBOL:AAPL",
+        revision=revision,
+        lifecycle_state="developing",
+        confidence_score=0.8,
+        trigger_codes=["STOCK_PRICE_MOVE_SIGNIFICANT"],
+        change_type=change_type,
+        reason=reason,
+        created_at=created_at,
+    )
+
+
+def test_meaningful_revision_content_rate_none_with_no_eligible_revisions(
+    monkeypatch, tmp_path
+):
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    assert meaningful_revision_content_rate(today.date(), today.date()) is None
+
+
+def test_meaningful_revision_content_rate_excludes_new_opportunity(
+    monkeypatch, tmp_path
+):
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    store, _ = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    store.append(_make_revision(1, "new_opportunity", today))
+    store.append(_make_revision(2, "confidence_increased", today))
+    store.close()
+
+    # Denominator is 1 (new_opportunity excluded), numerator is 1
+    # (confidence_increased is mapped and has a real reason) -> 1.0, not
+    # diluted by the excluded row.
+    assert meaningful_revision_content_rate(today.date(), today.date()) == 1.0
+
+
+def test_meaningful_revision_content_rate_multi_class_counts_once(
+    monkeypatch, tmp_path
+):
+    """aged_to_expired maps to two rubric classes but must still count as
+    exactly one denominator (and, with a real reason, one numerator)
+    event -- never duplicated."""
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    store, _ = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    store.append(_make_revision(1, "aged_to_expired", today))
+    store.close()
+
+    assert meaningful_revision_content_rate(today.date(), today.date()) == 1.0
+
+
+def test_meaningful_revision_content_rate_numerator_requires_a_real_explanation(
+    monkeypatch, tmp_path
+):
+    """A mapped change_type with no user-legible explanation (empty/
+    whitespace-only reason) still counts in the denominator but not the
+    numerator."""
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    store, _ = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    store.append(_make_revision(1, "confidence_increased", today, reason="   "))
+    store.append(_make_revision(2, "reactivated", today, reason="Reactivated."))
+    store.close()
+
+    rate = meaningful_revision_content_rate(today.date(), today.date())
+    assert rate == 0.5  # 1 of 2 eligible revisions has a real explanation
+
+
+def test_meaningful_revision_content_rate_denominator_and_numerator_correctness(
+    monkeypatch, tmp_path
+):
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    store, _ = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    store.append(_make_revision(1, "new_opportunity", today))  # excluded
+    store.append(_make_revision(2, "confidence_increased", today))  # eligible, real
+    store.append(_make_revision(3, "trajectory_weakening", today))  # eligible, real
+    store.append(
+        _make_revision(4, "aged_to_cooling", today, reason="")
+    )  # eligible, no explanation
+    store.close()
+
+    # denominator: 3 eligible (new_opportunity excluded); numerator: 2
+    # (aged_to_cooling has no real explanation).
+    rate = meaningful_revision_content_rate(today.date(), today.date())
+    assert rate == 2 / 3
+
+
+def test_meaningful_revision_content_rate_fails_closed_on_unmapped_type(
+    monkeypatch, tmp_path
+):
+    import sqlite3
+
+    from backend.app.universe_telemetry import (
+        UnmappedRevisionChangeType,
+        meaningful_revision_content_rate,
+    )
+
+    _, revisions_path = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    conn = sqlite3.connect(str(revisions_path))
+    conn.execute(
+        "INSERT INTO opportunity_revisions (entity_id, revision, "
+        "lifecycle_state, confidence_score, trigger_codes, change_type, "
+        "reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "SYMBOL:AAPL",
+            1,
+            "developing",
+            0.8,
+            "[]",
+            "some_future_change_type",
+            "test",
+            today.isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    import pytest
+
+    with pytest.raises(UnmappedRevisionChangeType):
+        meaningful_revision_content_rate(today.date(), today.date())
+
+
+def test_meaningful_revision_content_rate_reprocessing_does_not_duplicate(
+    monkeypatch, tmp_path
+):
+    """OpportunityRevisionStore.append() is INSERT OR IGNORE on
+    (entity_id, revision) -- a retried/re-delivered write for a revision
+    already in the store must not inflate either the denominator or the
+    numerator."""
+    from backend.app.universe_telemetry import meaningful_revision_content_rate
+
+    store, _ = _revision_store(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc)
+    revision = _make_revision(1, "confidence_increased", today)
+    store.append(revision)
+    store.append(revision)  # simulated retry/reprocess of the same revision
+    store.close()
+
+    assert meaningful_revision_content_rate(today.date(), today.date()) == 1.0
+    from backend.app.universe_telemetry import real_meaningful_revision_count
+
+    assert real_meaningful_revision_count(today.date(), today.date()) == 1
 
 
 # --- Master Plan reconciliation: derived-metric functions --------------------

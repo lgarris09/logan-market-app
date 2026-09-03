@@ -35,7 +35,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import universe_manager_enabled, universe_scheduler_enabled
-from .expansion_review import build_expansion_review, check_proof_window_readiness
+from .expansion_review import (
+    TOTAL_REQUIRED_FIELDS,
+    build_expansion_review,
+    check_proof_window_readiness,
+    confirmed_field_count,
+)
 from .opportunity_quality_report import format_opportunity_quality_report
 from .universe_manager import (
     REEVALUATION_MIN_INTERVAL_SECONDS,
@@ -195,6 +200,8 @@ def _telemetry_section() -> list[str]:
         f"{review.required_consecutive_days} required consecutive real "
         "calendar days",
         f"  expansion-review status: {review.status}",
+        f"  PROOF_INPUTS_CONFIRMED_REAL: {confirmed_field_count()} of "
+        f"{TOTAL_REQUIRED_FIELDS}",
         f"  READY_TO_START_14_DAY_WINDOW: {'YES' if readiness.ready else 'NO'}",
     ]
     for note in review.notes:

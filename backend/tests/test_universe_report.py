@@ -201,13 +201,17 @@ def test_report_never_claims_a_completed_expansion_proof_without_real_data(
     assert "0 of 14 required consecutive real calendar days" in report
 
 
-def test_report_shows_fail_closed_proof_window_readiness(monkeypatch):
-    """V1a Proof-Instrumentation Closeout: 3 fields remain permanently
-    unconfirmed, so the report must say NO, never a fabricated YES."""
+def test_report_shows_ready_proof_window_after_final_closeout(monkeypatch):
+    """V1a Final Proof-Readiness Closeout: all 18 fields now have a
+    confirmed, currently-wired real source, so readiness is wiring-only and
+    reports YES regardless of whether persistence/data exists in this
+    process -- never a fabricated NO left over from the prior closeout's 1
+    permanently-unconfirmed field."""
     monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
     report = build_universe_report()
-    assert "READY_TO_START_14_DAY_WINDOW: NO" in report
-    assert "permanently-unconfirmed" in report
+    assert "PROOF_INPUTS_CONFIRMED_REAL: 18 of 18" in report
+    assert "READY_TO_START_14_DAY_WINDOW: YES" in report
+    assert "permanently-unconfirmed" not in report
 
 
 def test_route_returns_a_report_string():

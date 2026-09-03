@@ -10,14 +10,16 @@ Master Plan text and therefore treated several metrics as unimplementable
 without a definition -- signal_yield, top_five_competition_ratio,
 deterministic_thesis_novelty_rate. The plan text is now available (Section
 3, Section 4, Section 16A) and gives exact formulas for Top-Five
-Competition Ratio and Thesis Novelty Rate, both now wired below. It does
-NOT give an exact, checkable definition of "complete evidence/explanation
-chain," and its Material Revision Rubric (Section 4) names seven auditable
-change classes that do not correspond 1:1 to this codebase's existing
-`OpportunityRevision.change_type` values -- both remain in
-`BLOCKED_METRICS`, for different reasons (no definition at all, vs. a
-definition that needs a confirmed mapping decision before it can be
-computed without guessing). "Signal-family yield" is named in the plan's
+Competition Ratio and Thesis Novelty Rate, both now wired below.
+
+V1a Final Proof-Readiness Closeout (Master Plan CR-2026-002): both of the
+remaining ambiguous definitions now have Chuck/Logan-approved,
+deterministic mappings and are implemented -- "complete evidence/
+explanation chain" (compute_thesis_evidence_completeness()) and the
+Material Revision Rubric's change_type -> auditable-class mapping
+(REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE, feeding
+meaningful_revision_content_rate()). Neither is in `BLOCKED_METRICS`
+anymore. "Signal-family yield" is named in the plan's
 measurement list but never given a formula anywhere (unlike Top-Five
 Competition Ratio and Thesis Novelty Rate, which Section 16A defines
 precisely) -- the raw distribution (signal_family_impression_counts) is
@@ -85,22 +87,15 @@ BLOCKED_METRICS = (
     # Ratio / Thesis Novelty Rate, which Section 16A defines exactly) --
     # only the raw distribution (signal_family_impression_counts) is real.
     "signal_family_yield_rate",
-    # complete_evidence_payload_rate is NO LONGER blocked -- V1a Final
-    # Proof-Readiness Closeout: Chuck/Logan approved a deterministic
-    # per-surfaced-thesis definition (see
-    # compute_thesis_evidence_completeness()), now implemented and wired.
-    # Master Plan Section 4's Material Revision Rubric names seven
-    # auditable classes (STATE_CHANGE, EVIDENCE_STRENGTH_CHANGE,
-    # TRAJECTORY_CHANGE, INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE,
-    # PERSONAL_RELEVANCE_CHANGE, FRESHNESS_DEGRADED_CHANGE) that do not
-    # correspond 1:1 to OpportunityRevision.change_type's existing 15
-    # values -- some mappings are obvious (personal_relevance_increased ->
-    # PERSONAL_RELEVANCE_CHANGE), others are genuinely ambiguous
-    # (confidence_increased -> EVIDENCE_STRENGTH_CHANGE or STATE_CHANGE?).
-    # The raw meaningful-revision count is real (real_meaningful_revision_count());
-    # the rubric-CLASS-based >=70% rate needs a confirmed mapping decision
-    # before it can be computed without guessing a classification policy.
-    "material_revision_rubric_classification_rate",
+    # complete_evidence_payload_rate and meaningful_revision_content_rate
+    # (the Material Revision Rubric's >=70% rate) are NO LONGER blocked --
+    # V1a Final Proof-Readiness Closeout: Chuck/Logan approved (Master
+    # Plan CR-2026-002) a deterministic per-surfaced-thesis completeness
+    # definition (compute_thesis_evidence_completeness()) and a
+    # deterministic change_type -> rubric-class mapping covering all 15
+    # real persisted values (REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE +
+    # EXCLUDED_FROM_REVISION_RATE_DENOMINATOR), both now implemented and
+    # wired -- see meaningful_revision_content_rate().
     # Master Plan Section 4 operational gates: time-sensitive scheduler
     # delay P95/P99, critical freshness P95/P99 ratio, a genuine historical
     # peak calls/minute, and coalescing success rate all require a
@@ -524,10 +519,17 @@ def collect_real_operational_signals(*, scheduler=None) -> RealOperationalSignal
     )
 
 
-def _query_persisted_revisions(start: date, end: date) -> list[tuple[str, str]]:
+def _query_persisted_revisions(start: date, end: date) -> list[tuple[str, str, str]]:
     """Shared read-only query against OpportunityRevisionStore's own
-    SQLite file -- returns (created_at, change_type) pairs in [start, end].
-    No change to revision_store.py itself."""
+    SQLite file -- returns (created_at, change_type, reason) triples in
+    [start, end]. No change to revision_store.py itself. `reason` is
+    included because it is this codebase's existing, already-real
+    user-legible "What Changed" explanation (see tracker.py's per-
+    change_type reason sentences) -- `meaningful_revision_content_rate()`
+    needs it to check the numerator's "user-legible explanation present"
+    requirement; callers that only need the count/classification ignore
+    it.
+    """
     import sqlite3
 
     from .config import revision_store_db_path
@@ -540,17 +542,17 @@ def _query_persisted_revisions(start: date, end: date) -> list[tuple[str, str]]:
     conn = sqlite3.connect(str(path))
     try:
         rows = conn.execute(
-            "SELECT created_at, change_type FROM opportunity_revisions"
+            "SELECT created_at, change_type, reason FROM opportunity_revisions"
         ).fetchall()
     finally:
         conn.close()
     matches = []
-    for created_at_text, change_type in rows:
+    for created_at_text, change_type, reason in rows:
         created_at = datetime.fromisoformat(created_at_text)
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
         if start <= created_at.date() <= end:
-            matches.append((created_at_text, change_type))
+            matches.append((created_at_text, change_type, reason))
     return matches
 
 
@@ -561,77 +563,142 @@ def real_meaningful_revision_count(start: date, end: date) -> int:
     -- no new instrumentation needed for the numerator, and no change to
     revision_store.py itself (a plain, read-only, schema-matching query
     against its file, not a private-attribute reach-in). This is the raw
-    count only -- see BLOCKED_METRICS for why the Material Revision
-    Rubric's >=70% rubric-CLASS rate is not computed from it.
+    count of ALL persisted revisions (including new_opportunity) -- see
+    meaningful_revision_content_rate() for the Material Revision Rubric's
+    >=70% rate, which excludes new_opportunity from its denominator.
     """
     return len(_query_persisted_revisions(start, end))
 
 
-# Material Revision Rubric mapping (V1a Proof-Instrumentation Closeout,
-# item 7): OpportunityRevision.change_type -> one of the Master Plan's
-# seven auditable classes (STATE_CHANGE, EVIDENCE_STRENGTH_CHANGE,
-# TRAJECTORY_CHANGE, INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE,
-# PERSONAL_RELEVANCE_CHANGE, FRESHNESS_DEGRADED_CHANGE).
-#
-# Only mappings with a direct, objective name correspondence are included
-# here -- per explicit instruction, "do not fabricate classifications."
-# `personal_relevance_increased/decreased` and the four `trajectory_*`
-# values map to PERSONAL_RELEVANCE_CHANGE / TRAJECTORY_CHANGE with no
-# judgment call involved (the change_type name already states the rubric
-# class). The remaining nine real change_type values
-# (new_opportunity, confidence_increased, confidence_decreased,
-# new_signal_appeared, convergence_formed, aged_to_cooling, aged_to_stale,
-# aged_to_expired, reactivated) each plausibly fit STATE_CHANGE or
-# EVIDENCE_STRENGTH_CHANGE, but deciding which is a real classification
-# policy call this session does not make -- see this session's own report
-# for the specific proposal Chuck/Logan can confirm or correct.
-# INVALIDATION_RISK_CHANGE, TIME_SENSITIVITY_CHANGE, and
-# FRESHNESS_DEGRADED_CHANGE have no current change_type representation at
-# all -- a genuinely missing primitive, not an unmapped existing one.
-REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE: dict[str, str] = {
-    "personal_relevance_increased": "PERSONAL_RELEVANCE_CHANGE",
-    "personal_relevance_decreased": "PERSONAL_RELEVANCE_CHANGE",
-    "trajectory_strengthening": "TRAJECTORY_CHANGE",
-    "trajectory_weakening": "TRAJECTORY_CHANGE",
-    "trajectory_reversing": "TRAJECTORY_CHANGE",
-    "trajectory_reaccelerated": "TRAJECTORY_CHANGE",
+class UnmappedRevisionChangeType(ValueError):
+    """Raised by meaningful_revision_content_rate()/classify_persisted_
+    revisions() when a persisted OpportunityRevision.change_type is
+    neither in REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE nor in
+    EXCLUDED_FROM_REVISION_RATE_DENOMINATOR -- i.e. a real, reachable
+    revision this session's approved mapping does not account for.
+    Deliberately fails closed (raises) rather than silently dropping the
+    row or guessing a classification: per explicit instruction, "no
+    silent dropping of unknown types." All 15 of this codebase's current
+    MeaningfulChangeType values are accounted for as of this closeout, so
+    this should never fire against real data today -- it exists to catch
+    a future change_type added to the Literal without a corresponding
+    rubric-mapping decision.
+    """
+
+
+# Material Revision Rubric mapping (V1a Final Proof-Readiness Closeout,
+# approved via Master Plan CR-2026-002): OpportunityRevision.change_type
+# -> the tuple of auditable classes it objectively maps to (almost always
+# exactly one; aged_to_expired maps to two -- see the multi-class note
+# below). No LLM classification, keyword heuristics, or fuzzy semantic
+# mapping -- every mapping here is either a direct name correspondence
+# (personal_relevance_* / trajectory_*) or an explicit Chuck/Logan policy
+# call recorded in CR-2026-002 (confidence_*/new_signal_appeared/
+# convergence_formed -> EVIDENCE_STRENGTH_CHANGE; aged_to_cooling ->
+# TIME_SENSITIVITY_CHANGE; aged_to_stale -> FRESHNESS_DEGRADED_CHANGE;
+# aged_to_expired -> STATE_CHANGE + FRESHNESS_DEGRADED_CHANGE; reactivated
+# -> STATE_CHANGE). `new_opportunity` is deliberately NOT a key here --
+# see EXCLUDED_FROM_REVISION_RATE_DENOMINATOR.
+REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE: dict[str, tuple[str, ...]] = {
+    "personal_relevance_increased": ("PERSONAL_RELEVANCE_CHANGE",),
+    "personal_relevance_decreased": ("PERSONAL_RELEVANCE_CHANGE",),
+    "trajectory_strengthening": ("TRAJECTORY_CHANGE",),
+    "trajectory_weakening": ("TRAJECTORY_CHANGE",),
+    "trajectory_reversing": ("TRAJECTORY_CHANGE",),
+    "trajectory_reaccelerated": ("TRAJECTORY_CHANGE",),
+    "confidence_increased": ("EVIDENCE_STRENGTH_CHANGE",),
+    "confidence_decreased": ("EVIDENCE_STRENGTH_CHANGE",),
+    "new_signal_appeared": ("EVIDENCE_STRENGTH_CHANGE",),
+    "convergence_formed": ("EVIDENCE_STRENGTH_CHANGE",),
+    "aged_to_cooling": ("TIME_SENSITIVITY_CHANGE",),
+    "aged_to_stale": ("FRESHNESS_DEGRADED_CHANGE",),
+    # Multi-class: a real deterministic state transition that objectively
+    # changes two classes at once. Still exactly one denominator event in
+    # meaningful_revision_content_rate() -- never double-counted.
+    "aged_to_expired": ("STATE_CHANGE", "FRESHNESS_DEGRADED_CHANGE"),
+    "reactivated": ("STATE_CHANGE",),
 }
 
-# The nine real, persisted change_type values with a plausible but
-# unconfirmed rubric mapping -- reported separately from
-# REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE's confident set, never silently
-# merged into it.
-UNMAPPED_REVISION_CHANGE_TYPES = (
-    "new_opportunity",
-    "confidence_increased",
-    "confidence_decreased",
-    "new_signal_appeared",
-    "convergence_formed",
-    "aged_to_cooling",
-    "aged_to_stale",
-    "aged_to_expired",
-    "reactivated",
-)
+# new_opportunity is an initial-creation event, not a revision of a
+# previously persisted opportunity (CR-2026-002, item 3) -- excluded
+# entirely from meaningful_revision_content_rate()'s denominator, never
+# forced into STATE_CHANGE and never counted as "unclassified".
+EXCLUDED_FROM_REVISION_RATE_DENOMINATOR = ("new_opportunity",)
 
 
 def classify_persisted_revisions(start: date, end: date) -> dict:
-    """Real, auditable evidence for Chuck/Logan's Material Revision Rubric
-    policy decision -- classifies every real persisted revision in
-    [start, end] using ONLY the confident name-correspondence mappings
-    above, and separately counts everything else as "unclassified" rather
-    than guessing. This is deliberately NOT the >=70% rubric rate itself
-    (that requires every revision classified, which this session cannot do
-    without a policy decision) -- it is real, current-state evidence to
-    inform that decision. `change_type == "none"` rows do not occur in
-    this store (only meaningful revisions are ever persisted), so no
-    "none" bucket exists here.
+    """Real, auditable rubric-class distribution over every real persisted
+    revision in [start, end] -- excludes new_opportunity (not a revision;
+    see EXCLUDED_FROM_REVISION_RATE_DENOMINATOR) and separately counts
+    anything genuinely unmapped as "unclassified" rather than guessing (in
+    practice always 0 today; see UnmappedRevisionChangeType). A
+    multi-class revision (aged_to_expired) increments every class it maps
+    to in `classified` -- this is a per-class distribution, not the
+    per-revision denominator meaningful_revision_content_rate() computes.
+    `change_type == "none"` rows do not occur in this store (only
+    meaningful revisions are ever persisted), so no "none" bucket exists
+    here.
     """
     counts: dict[str, int] = {}
     unclassified = 0
-    for _created_at, change_type in _query_persisted_revisions(start, end):
-        rubric_class = REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE.get(change_type)
-        if rubric_class is None:
+    for _created_at, change_type, _reason in _query_persisted_revisions(start, end):
+        if change_type in EXCLUDED_FROM_REVISION_RATE_DENOMINATOR:
+            continue
+        rubric_classes = REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE.get(change_type)
+        if rubric_classes is None:
             unclassified += 1
         else:
-            counts[rubric_class] = counts.get(rubric_class, 0) + 1
+            for rubric_class in rubric_classes:
+                counts[rubric_class] = counts.get(rubric_class, 0) + 1
     return {"classified": counts, "unclassified": unclassified}
+
+
+def meaningful_revision_content_rate(start: date, end: date) -> Optional[float]:
+    """Master Plan Section 4 Material Revision Rubric: `>=70% of persisted
+    material revisions should produce a user-legible change in one or
+    more of these classes.` (CR-2026-002 formula): eligible persisted
+    material revisions that produce at least one approved auditable
+    rubric-class change AND a user-legible What-Changed-equivalent
+    explanation, divided by eligible persisted material revisions.
+
+    - `new_opportunity` rows are excluded from both numerator and
+      denominator (CR-2026-002, item 3 -- an initial creation is not a
+      revision).
+    - A multi-class revision (aged_to_expired) still counts as exactly
+      ONE denominator event and, if its explanation is present, exactly
+      ONE numerator event -- never duplicated by how many rubric classes
+      it maps to.
+    - `reason` (this codebase's real, existing per-change_type sentence --
+      see tracker.py) is the user-legible explanation; present means
+      non-empty after stripping whitespace.
+    - Returns None when there are zero eligible revisions in the window --
+      an honest "no data," matching every other Optional rate function in
+      this module, never a fabricated 0.0 or 1.0.
+    - Raises UnmappedRevisionChangeType (fail closed) if any eligible
+      revision's change_type has no approved rubric mapping -- refuses to
+      silently drop or guess-classify it. Reprocessing/polling never
+      double-counts: OpportunityRevisionStore.append() is INSERT OR
+      IGNORE on the (entity_id, revision) primary key, so a retried write
+      for a revision already in the store contributes nothing extra to
+      this query.
+    """
+    eligible = [
+        (change_type, reason)
+        for _created_at, change_type, reason in _query_persisted_revisions(start, end)
+        if change_type not in EXCLUDED_FROM_REVISION_RATE_DENOMINATOR
+    ]
+    if not eligible:
+        return None
+    numerator = 0
+    for change_type, reason in eligible:
+        if change_type not in REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE:
+            raise UnmappedRevisionChangeType(
+                f"meaningful_revision_content_rate: change_type {change_type!r} "
+                "has no approved Material Revision Rubric mapping (see "
+                "REVISION_RUBRIC_CLASS_BY_CHANGE_TYPE) and is not excluded "
+                "from the denominator -- refusing to silently drop or "
+                "guess-classify it."
+            )
+        if reason.strip():
+            numerator += 1
+    return numerator / len(eligible)
