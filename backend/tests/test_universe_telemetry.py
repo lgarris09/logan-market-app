@@ -11,6 +11,7 @@ from backend.app.universe_telemetry import (
     BLOCKED_METRICS,
     collect_real_operational_signals,
     daily_telemetry_range,
+    distinct_qualified_entity_count,
     max_consecutive_zero_qualified_days,
     max_single_entity_impression_share,
     max_single_sector_impression_share,
@@ -48,7 +49,8 @@ def test_real_pipeline_run_records_a_daily_telemetry_row(monkeypatch, tmp_path):
     # A real, non-fabricated assertion: the demo fixture set produces at
     # least one qualifying opportunity, so this is real evidence, not a
     # trivially-true structural check.
-    assert row.qualified_opportunity_count >= 1
+    assert row.raw_qualified_observation_count >= 1
+    assert distinct_qualified_entity_count(row) >= 1
     assert row.diversity_selected_count >= 1
 
 
@@ -94,7 +96,14 @@ def test_repeated_observations_in_one_day_accumulate(monkeypatch, tmp_path):
     second = daily_telemetry_range(today, today)[0]
 
     assert second.observation_count == first.observation_count + 1
-    assert second.qualified_opportunity_count >= first.qualified_opportunity_count
+    assert (
+        second.raw_qualified_observation_count >= first.raw_qualified_observation_count
+    )
+    # The polling-frequency-immune count stays identical across repeated
+    # observations of the same real state -- the whole point of the fix.
+    assert distinct_qualified_entity_count(second) == distinct_qualified_entity_count(
+        first
+    )
 
 
 def test_missing_days_are_a_real_gap_not_zero_filled(monkeypatch, tmp_path):
@@ -261,22 +270,58 @@ def test_thesis_novelty_rate_is_none_with_no_observations_that_day(tmp_path):
 def test_max_consecutive_zero_qualified_days_counts_real_gaps(tmp_path):
     """A missing day (no persisted row at all) counts the same as a real
     zero-qualified day, per No-Opportunity Day's own Master Plan
-    definition -- both mean no evidence of qualified supply exists."""
+    definition -- both mean no evidence of qualified supply exists. Uses
+    entity_impression_counts (the polling-frequency-immune signal), not
+    the raw diagnostic-only count."""
     store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
     base = date(2026, 9, 1)
-    store.record(base, DailyObservationDelta(qualified_opportunity_count=5))
-    # base+1, base+2, base+3 intentionally never recorded -- a real gap.
     store.record(
-        base + timedelta(days=4), DailyObservationDelta(qualified_opportunity_count=0)
+        base, DailyObservationDelta(entity_impression_counts={"AAPL": 1, "TSLA": 1})
     )
+    # base+1, base+2, base+3 intentionally never recorded -- a real gap.
+    store.record(base + timedelta(days=4), DailyObservationDelta())  # zero entities
     store.record(
-        base + timedelta(days=5), DailyObservationDelta(qualified_opportunity_count=3)
+        base + timedelta(days=5),
+        DailyObservationDelta(entity_impression_counts={"MSFT": 1}),
     )
     rows = store.range(base, base + timedelta(days=5))
     store.close()
 
     # 3 missing days (2,3,4) + 1 explicit zero day (5) = 4 consecutive.
     assert max_consecutive_zero_qualified_days(rows) == 4
+
+
+def test_distinct_qualified_entity_count_is_immune_to_polling_frequency(tmp_path):
+    """V1a Proof-Instrumentation Closeout regression test: the same real
+    supply (3 distinct qualifying entities) observed once vs. 50 times in
+    one day must produce the identical day-level count -- polling
+    frequency must never inflate "qualified opportunities per market
+    day." """
+    entities = {"AAPL": 1, "TSLA": 1, "MSFT": 1}
+
+    store_a = UniverseDailyTelemetryStore(str(tmp_path / "once.db"))
+    day = date(2026, 9, 2)
+    store_a.record(day, DailyObservationDelta(entity_impression_counts=entities))
+    row_a = store_a.get(day)
+    store_a.close()
+
+    store_b = UniverseDailyTelemetryStore(str(tmp_path / "fifty_times.db"))
+    for _ in range(50):
+        store_b.record(day, DailyObservationDelta(entity_impression_counts=entities))
+    row_b = store_b.get(day)
+    store_b.close()
+
+    assert row_a is not None and row_b is not None
+    # The raw diagnostic field IS distorted by polling frequency (1 vs 50
+    # observations) -- proving the distortion is real, not merely assumed.
+    assert row_b.observation_count == 50
+    assert row_b.entity_impression_counts["AAPL"] == 50
+    # But the authoritative, polling-frequency-immune count is identical.
+    assert distinct_qualified_entity_count(row_a) == 3
+    assert distinct_qualified_entity_count(row_b) == 3
+    assert distinct_qualified_entity_count(row_a) == distinct_qualified_entity_count(
+        row_b
+    )
 
 
 def test_top_five_diversity_survival_rate(tmp_path):

@@ -22,10 +22,9 @@ from backend.app.universe_telemetry_store import (
 
 def _seed_days(tmp_path, days: list[date], *, qualified_count: int = 3):
     store = UniverseDailyTelemetryStore(str(tmp_path / "telemetry.db"))
+    entities = {f"ENTITY_{i}": 1 for i in range(qualified_count)}
     for day in days:
-        store.record(
-            day, DailyObservationDelta(qualified_opportunity_count=qualified_count)
-        )
+        store.record(day, DailyObservationDelta(entity_impression_counts=entities))
     store.close()
 
 
@@ -88,10 +87,15 @@ def test_no_qualifying_opportunity_is_distinct_from_unable_to_evaluate(
     _enable(monkeypatch, tmp_path)
     _seed_days(tmp_path, days, qualified_count=0)
 
-    from backend.app.universe_telemetry import daily_telemetry_range
+    from backend.app.universe_telemetry import (
+        daily_telemetry_range,
+        distinct_qualified_entity_count,
+    )
 
     raw_rows = daily_telemetry_range(days[-1], days[0])
-    assert all(row.qualified_opportunity_count == 0 for row in raw_rows)  # real fact
+    assert all(
+        distinct_qualified_entity_count(row) == 0 for row in raw_rows
+    )  # real fact
 
     result = build_expansion_review(as_of=as_of)
     # Still UNABLE_TO_EVALUATE, for the same field-mapping reason as

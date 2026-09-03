@@ -61,7 +61,17 @@ class DailyUniverseTelemetry(BaseModel):
     schema_version: str = "1.0"
     date: str  # ISO calendar date, UTC, e.g. "2026-09-02"
     observation_count: int = 0
-    qualified_opportunity_count: int = 0
+    # V1a Proof-Instrumentation Closeout: RENAMED from qualified_opportunity_count
+    # (kept as raw, explicitly diagnostic-only data -- SUMS across a day's
+    # observations, so it scales with polling frequency, not real supply).
+    # entity_impression_counts' own KEY SET (not its summed values) is the
+    # polling-frequency-immune source of truth for "how many distinct
+    # entities had a qualifying opportunity today" -- see
+    # universe_telemetry.distinct_qualified_entity_count(). Never use this
+    # raw field for a gate; it exists only so an operator can see how many
+    # times the pipeline actually ran that day (== observation_count for
+    # entity-qualification purposes, kept separate for clarity/audit).
+    raw_qualified_observation_count: int = 0
     distinct_thesis_keys: list[str] = Field(default_factory=list)
     entity_impression_counts: dict[str, int] = Field(default_factory=dict)
     sector_impression_counts: dict[str, int] = Field(default_factory=dict)
@@ -105,7 +115,17 @@ class DailyObservationDelta(BaseModel):
     already-computed real values. Never itself persisted directly; always
     merged into the day's accumulated `DailyUniverseTelemetry` row."""
 
-    qualified_opportunity_count: int = 0
+    # V1a Proof-Instrumentation Closeout: RENAMED from qualified_opportunity_count
+    # (kept as raw, explicitly diagnostic-only data -- SUMS across a day's
+    # observations, so it scales with polling frequency, not real supply).
+    # entity_impression_counts' own KEY SET (not its summed values) is the
+    # polling-frequency-immune source of truth for "how many distinct
+    # entities had a qualifying opportunity today" -- see
+    # universe_telemetry.distinct_qualified_entity_count(). Never use this
+    # raw field for a gate; it exists only so an operator can see how many
+    # times the pipeline actually ran that day (== observation_count for
+    # entity-qualification purposes, kept separate for clarity/audit).
+    raw_qualified_observation_count: int = 0
     distinct_thesis_keys: list[str] = Field(default_factory=list)
     entity_impression_counts: dict[str, int] = Field(default_factory=dict)
     sector_impression_counts: dict[str, int] = Field(default_factory=dict)
@@ -147,7 +167,7 @@ class UniverseDailyTelemetryStore:
             "CREATE TABLE IF NOT EXISTS universe_daily_telemetry ("
             "  date TEXT PRIMARY KEY,"
             "  observation_count INTEGER NOT NULL DEFAULT 0,"
-            "  qualified_opportunity_count INTEGER NOT NULL DEFAULT 0,"
+            "  raw_qualified_observation_count INTEGER NOT NULL DEFAULT 0,"
             "  distinct_thesis_keys TEXT NOT NULL DEFAULT '[]',"
             "  entity_impression_counts TEXT NOT NULL DEFAULT '{}',"
             "  sector_impression_counts TEXT NOT NULL DEFAULT '{}',"
@@ -169,7 +189,7 @@ class UniverseDailyTelemetryStore:
         return DailyUniverseTelemetry(
             date=row["date"],
             observation_count=row["observation_count"],
-            qualified_opportunity_count=row["qualified_opportunity_count"],
+            raw_qualified_observation_count=row["raw_qualified_observation_count"],
             distinct_thesis_keys=json.loads(row["distinct_thesis_keys"]),
             entity_impression_counts=json.loads(row["entity_impression_counts"]),
             sector_impression_counts=json.loads(row["sector_impression_counts"]),
@@ -214,7 +234,7 @@ class UniverseDailyTelemetryStore:
             merged = DailyUniverseTelemetry(
                 date=day.isoformat(),
                 observation_count=1,
-                qualified_opportunity_count=delta.qualified_opportunity_count,
+                raw_qualified_observation_count=delta.raw_qualified_observation_count,
                 distinct_thesis_keys=sorted(set(delta.distinct_thesis_keys)),
                 entity_impression_counts=dict(delta.entity_impression_counts),
                 sector_impression_counts=dict(delta.sector_impression_counts),
@@ -235,9 +255,9 @@ class UniverseDailyTelemetryStore:
             merged = DailyUniverseTelemetry(
                 date=day.isoformat(),
                 observation_count=existing.observation_count + 1,
-                qualified_opportunity_count=(
-                    existing.qualified_opportunity_count
-                    + delta.qualified_opportunity_count
+                raw_qualified_observation_count=(
+                    existing.raw_qualified_observation_count
+                    + delta.raw_qualified_observation_count
                 ),
                 distinct_thesis_keys=sorted(
                     set(existing.distinct_thesis_keys) | set(delta.distinct_thesis_keys)
@@ -287,7 +307,7 @@ class UniverseDailyTelemetryStore:
 
         self._conn.execute(
             "INSERT INTO universe_daily_telemetry ("
-            "  date, observation_count, qualified_opportunity_count,"
+            "  date, observation_count, raw_qualified_observation_count,"
             "  distinct_thesis_keys, entity_impression_counts,"
             "  sector_impression_counts, signal_family_impression_counts,"
             "  driver_impression_counts,"
@@ -299,7 +319,7 @@ class UniverseDailyTelemetryStore:
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(date) DO UPDATE SET "
             "  observation_count = excluded.observation_count,"
-            "  qualified_opportunity_count = excluded.qualified_opportunity_count,"
+            "  raw_qualified_observation_count = excluded.raw_qualified_observation_count,"
             "  distinct_thesis_keys = excluded.distinct_thesis_keys,"
             "  entity_impression_counts = excluded.entity_impression_counts,"
             "  sector_impression_counts = excluded.sector_impression_counts,"
@@ -316,7 +336,7 @@ class UniverseDailyTelemetryStore:
             (
                 merged.date,
                 merged.observation_count,
-                merged.qualified_opportunity_count,
+                merged.raw_qualified_observation_count,
                 json.dumps(merged.distinct_thesis_keys),
                 json.dumps(merged.entity_impression_counts),
                 json.dumps(merged.sector_impression_counts),

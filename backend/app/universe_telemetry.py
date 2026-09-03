@@ -154,11 +154,16 @@ def build_observation_delta(
 ) -> DailyObservationDelta:
     """Pure transformation from one real `_run_feed_pipeline()` call's
     already-computed values into one day's observation delta -- no I/O, no
-    provider calls, nothing invented. `qualified_opportunity_count` is
+    provider calls, nothing invented. `raw_qualified_observation_count` is
     `len(thesis_candidates)`: every thesis_candidates entry corresponds
     1:1 to a FeedItem this response actually delivered (an
     OBJECTIVELY_QUALIFIED opportunity, per contracts/universe.py's own
-    four-state taxonomy), never a raw pre-qualification count.
+    four-state taxonomy), never a raw pre-qualification count. This is
+    explicitly diagnostic-only (see universe_telemetry_store.py's own
+    field docstring) -- V1a Proof-Instrumentation Closeout's polling-
+    frequency fix means gate calculations must read
+    `distinct_qualified_entity_count()` below instead, which is immune to
+    how many times this function is called for the same real-world state.
     """
     entity_counts = Counter(c.metadata.primary_entity_id for c in thesis_candidates)
     sector_counts = Counter(c.metadata.sector or "UNKNOWN" for c in thesis_candidates)
@@ -179,7 +184,7 @@ def build_observation_delta(
     distinct_thesis_keys = {_thesis_key(c) for c in thesis_candidates}
 
     return DailyObservationDelta(
-        qualified_opportunity_count=len(thesis_candidates),
+        raw_qualified_observation_count=len(thesis_candidates),
         distinct_thesis_keys=sorted(distinct_thesis_keys),
         entity_impression_counts=dict(entity_counts),
         sector_impression_counts=dict(sector_counts),
@@ -293,6 +298,26 @@ def thesis_novelty_rate(
     return len(novel_keys) / len(target_keys)
 
 
+def distinct_qualified_entity_count(row: DailyUniverseTelemetry) -> int:
+    """V1a Proof-Instrumentation Closeout: the polling-frequency-immune
+    count of distinct entities with at least one qualifying opportunity
+    that day -- the authoritative source for the "qualified opportunities
+    per market day" / No-Opportunity Day gates, replacing the raw,
+    polling-frequency-sensitive `raw_qualified_observation_count`.
+
+    `entity_impression_counts`' VALUES sum across a day's observations
+    (inflated by repeated polling of the same real state), but its KEY SET
+    does not -- observing the same 5 qualifying entities once or 500 times
+    in one day yields the same 5-entity key set either way. This reuses
+    entity_id as the stable "opportunity identity" for day-level supply
+    counting, distinct from `distinct_thesis_keys`' (entity, driver)
+    identity used for thesis-level counting -- the Master Plan's own text
+    treats "qualified opportunities" and "distinct theses" as two separate
+    measurement bullets, so this session does not conflate them.
+    """
+    return len(row.entity_impression_counts)
+
+
 def max_consecutive_zero_qualified_days(rows: list[DailyUniverseTelemetry]) -> int:
     """Master Plan Section 4's operational gate input -- `rows` must be in
     ascending date order with no caller-side gap-filling; a missing date
@@ -303,7 +328,9 @@ def max_consecutive_zero_qualified_days(rows: list[DailyUniverseTelemetry]) -> i
     observed zero" from "STRATUS was not observed that day" -- both mean
     no evidence of qualified supply exists for that day. Days are compared
     by calendar continuity (not just list adjacency), so a real gap is
-    correctly counted as intervening zero-days.
+    correctly counted as intervening zero-days. Uses
+    `distinct_qualified_entity_count()` (polling-frequency-immune), never
+    the raw summed field.
     """
     if not rows:
         return 0
@@ -315,7 +342,7 @@ def max_consecutive_zero_qualified_days(rows: list[DailyUniverseTelemetry]) -> i
     cursor = start
     while cursor <= end:
         row = by_date.get(cursor.isoformat())
-        is_zero_day = row is None or row.qualified_opportunity_count == 0
+        is_zero_day = row is None or distinct_qualified_entity_count(row) == 0
         current = current + 1 if is_zero_day else 0
         longest = max(longest, current)
         cursor += timedelta(days=1)
