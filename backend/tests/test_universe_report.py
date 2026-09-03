@@ -85,9 +85,18 @@ def test_report_includes_universe_provider_exploration_and_diagnostics_sections(
     assert "Diagnostics" in report
 
 
-def test_report_never_fabricates_exploration_placement_history():
+def test_report_truthfully_reflects_exploration_wiring(monkeypatch):
+    """V1a ITERATE block, Phase 5 correctness fix: this report used to
+    claim Controlled Exploration was "not yet wired into the live per-user
+    feed-assembly path," which became false once commit 3d6f05f wired
+    apply_exploration_placement() into logan_feed.py. The report must say
+    it IS wired, and must never fabricate a nonzero placement count when
+    persistence is off / nothing has run today."""
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
     report = build_universe_report()
-    assert "not yet available" in report
+    assert "not yet wired" not in report
+    assert "live-wired into the per-user feed path" in report
+    assert "no real observations recorded yet today" in report
 
 
 def test_report_reflects_candidate_source_metadata():
@@ -121,6 +130,53 @@ def test_report_reflects_real_monitored_cohort_when_persistence_enabled(
     assert "monitored count: " in report
     assert "sector representation:" in report
     assert "historical admissions:" in report
+
+
+def test_report_shows_scheduler_disabled_and_no_job_state_by_default(monkeypatch):
+    monkeypatch.delenv("STRATUS_UNIVERSE_SCHEDULER_ENABLED", raising=False)
+    monkeypatch.delenv("STRATUS_UNIVERSE_MANAGER_ENABLED", raising=False)
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    report = build_universe_report()
+    assert "runtime invocation: disabled" in report
+    assert "live-feed consumption: disabled" in report
+    assert "reevaluation job state: unavailable" in report
+
+
+def test_report_shows_real_scheduler_job_state_when_persisted(monkeypatch, tmp_path):
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv("STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "sched.db"))
+    reset_universe_manager_state()
+
+    from logan_core.universe.candidate_source import load_candidate_snapshot as _lcs
+
+    snapshot = _lcs()
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {s.symbol: _profile(s.symbol) for s in snapshot.securities}
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+
+    from backend.app.universe_manager import run_scheduled_universe_reevaluation
+
+    run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+
+    report = build_universe_report()
+    assert "last_outcome='success'" in report
+
+
+def test_report_never_claims_a_completed_expansion_proof_without_real_data(
+    monkeypatch,
+):
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    report = build_universe_report()
+    assert "expansion-review status: INSUFFICIENT_OBSERVATION_WINDOW" in report
+    assert "0 of 14 required consecutive real calendar days" in report
 
 
 def test_route_returns_a_report_string():

@@ -27,8 +27,16 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .config import universe_manager_enabled, universe_scheduler_enabled
+from .expansion_review import build_expansion_review
 from .opportunity_quality_report import format_opportunity_quality_report
-from .universe_manager import get_membership_store
+from .universe_manager import (
+    REEVALUATION_MIN_INTERVAL_SECONDS,
+    UNIVERSE_REEVALUATION_JOB,
+    get_membership_store,
+    get_scheduler_state,
+)
+from .universe_telemetry import BLOCKED_METRICS, daily_telemetry_range
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -87,15 +95,104 @@ def _provider_section() -> list[str]:
 
 
 def _exploration_section() -> list[str]:
-    return [
+    """V1a ITERATE block, Phase 5 correctness fix: this section previously
+    said Controlled Exploration was "not yet wired into the live per-user
+    feed-assembly path," which became false the moment commit `3d6f05f`
+    wired `apply_exploration_placement()` into `logan_feed.py` -- flagged
+    as stale drift during this session's own deployment review, fixed
+    here. Reports today's real, durable aggregate counts (universe_
+    telemetry.py) when any exist; an honest zero-state, never fabricated,
+    when persistence is off or nothing has run yet today."""
+    today = datetime.now(timezone.utc).date()
+    rows = daily_telemetry_range(today, today)
+    lines = [
         "",
-        "Exploration",
-        "  placement history: not yet available -- exploration/placement.py "
-        "(Commit 4) is built and tested but not wired into the live "
-        "per-user feed-assembly path yet, so there is no real placement "
-        "history to report on. This is an honest zero-state, not a "
-        "fabricated count.",
+        "Exploration & Thesis Diversity",
+        "  wiring: Controlled Exploration (logan_core/exploration/) and "
+        "Thesis Diversity (logan_core/thesis/diversity.py) are both live-"
+        "wired into the per-user feed path (backend/app/logan_feed.py's "
+        "_run_feed_pipeline(), since commit 3d6f05f) -- every real feed "
+        "response already applies both, independent of "
+        "universe_manager_enabled().",
     ]
+    if not rows:
+        lines.append(
+            "  today's aggregate: no real observations recorded yet today "
+            "(durable telemetry persistence off, or no feed request served "
+            "yet today) -- an honest zero-state, not a fabricated count."
+        )
+        return lines
+    row = rows[0]
+    lines.append(
+        f"  today's aggregate ({row.observation_count} observation(s)): "
+        f"{row.diversity_selected_count} top-band selections, "
+        f"{row.diversity_suppressed_count} diversity suppressions, "
+        f"{row.exploration_eligible_count} exploration-eligible candidates, "
+        f"{row.exploration_placed_count} exploration placement(s)"
+    )
+    return lines
+
+
+def _scheduler_section() -> list[str]:
+    """V1a ITERATE block, Phase 5: real scheduler runtime + durable cadence
+    status -- never presents a disabled/never-run scheduler as if it were
+    actively maintaining the universe."""
+    lines = ["", "Scheduler"]
+    lines.append(
+        f"  runtime invocation: {'ENABLED' if universe_scheduler_enabled() else 'disabled'} "
+        "(STRATUS_UNIVERSE_SCHEDULER_ENABLED) -- whether main.py's background "
+        "task automatically calls the reevaluation cadence gate on a schedule"
+    )
+    lines.append(
+        f"  live-feed consumption: {'ENABLED' if universe_manager_enabled() else 'disabled'} "
+        "(STRATUS_UNIVERSE_MANAGER_ENABLED) -- whether live_stock_tickers() "
+        "actually reads from the monitored cohort this scheduler maintains"
+    )
+    state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    if state is None:
+        lines.append(
+            "  reevaluation job state: unavailable (durable persistence off, "
+            "or the job has never run) -- an honest zero-state, not a "
+            "fabricated success"
+        )
+        return lines
+    lines.append(
+        f"  reevaluation job state: last_outcome={state.last_outcome!r}, "
+        f"last_started_at={state.last_started_at}, "
+        f"last_completed_at={state.last_completed_at}, "
+        f"last_succeeded_at={state.last_succeeded_at} "
+        f"(cadence floor: {REEVALUATION_MIN_INTERVAL_SECONDS / 86400:.0f} days)"
+    )
+    return lines
+
+
+def _telemetry_section() -> list[str]:
+    """V1a ITERATE block, Phase 5: real telemetry coverage + the honest
+    expansion-review status -- distinguishes an insufficient observation
+    window from an inability to evaluate the gates, never presents either
+    as a completed, evidence-backed V1a proof."""
+    review = build_expansion_review()
+    lines = [
+        "",
+        "Telemetry & Expansion Review",
+        f"  observation window: {review.consecutive_days_observed} of "
+        f"{review.required_consecutive_days} required consecutive real "
+        "calendar days",
+        f"  expansion-review status: {review.status}",
+    ]
+    for note in review.notes:
+        lines.append(f"    {note}")
+    if review.status == "UNABLE_TO_EVALUATE":
+        lines.append(
+            f"    unconfirmed required fields ({len(review.unconfirmed_fields)}): "
+            + ", ".join(review.unconfirmed_fields)
+        )
+    lines.append(
+        "  blocked metrics (no definition found anywhere in this repository "
+        "-- see backend/app/universe_telemetry.py's BLOCKED_METRICS): "
+        + ", ".join(BLOCKED_METRICS)
+    )
+    return lines
 
 
 def _diagnostics_section() -> list[str]:
@@ -124,6 +221,8 @@ def build_universe_report(
     lines.extend(_universe_section())
     lines.extend(_provider_section())
     lines.extend(_exploration_section())
+    lines.extend(_scheduler_section())
+    lines.extend(_telemetry_section())
     lines.extend(_diagnostics_section())
 
     if include_supply:
