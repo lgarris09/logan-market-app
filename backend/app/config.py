@@ -407,6 +407,24 @@ def universe_membership_db_path() -> Path:
     return memory_store_db_path().parent / "universe_membership.db"
 
 
+def universe_scheduler_state_db_path() -> Path:
+    """Universe Manager V1a Scheduler Persistence + Cadence Closeout: the
+    durable SQLite file backing restart-safe reevaluation cadence
+    bookkeeping (see universe_scheduler_store.py) when
+    memory_persistence_enabled() is true. Deliberately a separate file from
+    universe_membership_db_path(), not just a separate table in the same
+    file -- the accepted 2026-08-31 design direction was a dedicated
+    scheduler/runtime-state table kept wholly independent of the Universe
+    Membership Ledger, and a distinct file makes that independence
+    unambiguous at the storage layer too. Overridable via
+    STRATUS_UNIVERSE_SCHEDULER_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_UNIVERSE_SCHEDULER_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "universe_scheduler_state.db"
+
+
 def universe_manager_enabled() -> bool:
     """Universe Manager V1a: whether `live_stock_tickers()` is sourced from
     the Universe Manager's current MONITORED cohort (via

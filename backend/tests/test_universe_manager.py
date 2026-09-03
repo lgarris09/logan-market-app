@@ -10,11 +10,15 @@ import pytest
 
 from backend.app.config import universe_manager_enabled
 from backend.app.universe_manager import (
+    UNIVERSE_REEVALUATION_JOB,
     evaluate_candidate_eligibility,
+    get_scheduler_state,
     monitored_tickers,
     reset_universe_manager_state,
+    run_scheduled_universe_reevaluation,
     run_universe_reevaluation,
 )
+from backend.app.universe_scheduler_store import UniverseSchedulerStateStore
 from backend.app.universe_store import UniverseMembershipStore
 from logan_core.contracts import CandidateSecurity, MembershipRecord
 from logan_core.receptors.providers import (
@@ -351,6 +355,246 @@ def test_full_reevaluation_paced_through_a_scheduler_never_bursts_the_ceiling(
     admitted_samples = [s for s in sched.wait_samples() if s.admitted]
     assert len(admitted_samples) == 4 * len(snapshot.securities)
     assert sched.current_calls_per_minute() <= 220
+
+
+# --- Scheduler Persistence + Cadence Closeout ---------------------------------
+
+
+def _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path):
+    monkeypatch.setenv("STRATUS_PERSIST_MEMORY", "true")
+    monkeypatch.setenv("STRATUS_UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv(
+        "STRATUS_UNIVERSE_SCHEDULER_DB_PATH", str(tmp_path / "universe_scheduler.db")
+    )
+    reset_universe_manager_state()
+
+
+def _healthy_fixture_providers():
+    from logan_core.universe.candidate_source import load_candidate_snapshot
+
+    snapshot = load_candidate_snapshot()
+    quotes = {s.symbol: _quote(s.symbol) for s in snapshot.securities}
+    profiles = {
+        s.symbol: _profile(s.symbol, average_volume=1_000_000.0)
+        for s in snapshot.securities
+    }
+    grades = {s.symbol: _grade(s.symbol) for s in snapshot.securities}
+    earnings_reports = {s.symbol: _earnings(s.symbol) for s in snapshot.securities}
+    market = FixtureMarketDataProvider(
+        quotes=quotes, grade_changes=grades, profiles=profiles
+    )
+    earnings = FixtureEarningsProvider(reports=earnings_reports)
+    return market, earnings
+
+
+def test_first_scheduled_run_executes_and_records_success(monkeypatch, tmp_path):
+    """Legitimate due reevaluation (no prior run on record) executes."""
+    _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
+    market, earnings = _healthy_fixture_providers()
+
+    outcome = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+
+    assert outcome.executed is True
+    assert outcome.skipped_reason is None
+    assert 25 <= len(outcome.rebalance.admitted) <= 35
+
+    state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
+    assert state.last_outcome == "success"
+    assert state.last_started_at is not None
+    assert state.last_completed_at is not None
+    assert state.last_succeeded_at is not None
+
+
+def test_too_early_second_run_is_skipped_not_executed(monkeypatch, tmp_path):
+    """Duplicate/too-early reevaluation is prevented as designed."""
+    _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
+    market, earnings = _healthy_fixture_providers()
+
+    first = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    assert first.executed is True
+
+    second = run_scheduled_universe_reevaluation(
+        market_data_provider=market,
+        earnings_provider=earnings,
+        now=NOW,  # zero elapsed time -- well below any real cadence floor
+    )
+    assert second.executed is False
+    assert second.rebalance is None
+    assert "minimum cadence" in second.skipped_reason
+
+
+def test_run_due_again_after_the_cadence_window_elapses(monkeypatch, tmp_path):
+    """A short, injected min_interval_seconds proves the gate reopens once
+    the cadence window has genuinely passed -- without waiting a real
+    month."""
+    _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
+    market, earnings = _healthy_fixture_providers()
+
+    first = run_scheduled_universe_reevaluation(
+        market_data_provider=market,
+        earnings_provider=earnings,
+        now=NOW,
+        min_interval_seconds=60.0,
+    )
+    assert first.executed is True
+
+    from datetime import timedelta
+
+    later = run_scheduled_universe_reevaluation(
+        market_data_provider=market,
+        earnings_provider=earnings,
+        now=NOW + timedelta(seconds=61),
+        min_interval_seconds=60.0,
+    )
+    assert later.executed is True
+
+
+def test_scheduled_run_failure_records_failure_outcome_and_still_raises(
+    monkeypatch, tmp_path
+):
+    """Failure/success state is recorded truthfully -- a failed run leaves
+    last_outcome='failure' and never fabricates last_succeeded_at."""
+    _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
+    market, earnings = _healthy_fixture_providers()
+
+    def _raising_cohort_selection(*args, **kwargs):
+        raise RuntimeError("simulated cohort-selection failure")
+
+    import backend.app.universe_manager as universe_manager_module
+
+    monkeypatch.setattr(
+        universe_manager_module, "select_monitored_cohort", _raising_cohort_selection
+    )
+
+    with pytest.raises(RuntimeError):
+        run_scheduled_universe_reevaluation(
+            market_data_provider=market, earnings_provider=earnings, now=NOW
+        )
+
+    state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
+    assert state.last_outcome == "failure"
+    assert state.last_started_at is not None
+    assert state.last_completed_at is not None
+    assert state.last_succeeded_at is None
+
+
+def test_scheduler_state_survives_a_simulated_restart(monkeypatch, tmp_path):
+    """Durable scheduler state survives restart -- reset_universe_manager_state()
+    simulates a process restart (releases the SQLite connection, forgets
+    in-process singletons) without touching the underlying file."""
+    _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
+    market, earnings = _healthy_fixture_providers()
+
+    run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    state_before = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+
+    reset_universe_manager_state()  # simulates a process restart
+
+    state_after = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state_after is not None
+    assert state_after.last_started_at == state_before.last_started_at
+    assert state_after.last_outcome == "success"
+
+    # And the restart-safe cadence gate itself still holds post-restart --
+    # this is the actual runtime blocker this closeout exists to fix (a
+    # naive in-memory-only "last run" would forget this on restart and
+    # fire again immediately).
+    again = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    assert again.executed is False
+
+
+def test_scheduler_state_is_none_when_persistence_disabled(monkeypatch):
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    reset_universe_manager_state()
+    assert get_scheduler_state(UNIVERSE_REEVALUATION_JOB) is None
+
+
+def test_scheduled_run_always_executes_when_persistence_disabled(monkeypatch):
+    """No durable state to gate against -- byte-identical to calling
+    run_universe_reevaluation() directly, every time."""
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    reset_universe_manager_state()
+    market, earnings = _healthy_fixture_providers()
+
+    first = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    second = run_scheduled_universe_reevaluation(
+        market_data_provider=market, earnings_provider=earnings, now=NOW
+    )
+    assert first.executed is True
+    assert second.executed is True
+
+
+# --- UniverseSchedulerStateStore ------------------------------------------------
+
+
+def test_scheduler_store_mark_started_then_completed_round_trips(tmp_path):
+    store = UniverseSchedulerStateStore(str(tmp_path / "sched.db"))
+    store.mark_started("universe_reevaluation", NOW)
+
+    running = store.get("universe_reevaluation")
+    assert running.last_outcome == "running"
+    assert running.last_started_at == NOW
+    assert running.last_completed_at is None
+
+    store.mark_completed("universe_reevaluation", NOW, outcome="success")
+    done = store.get("universe_reevaluation")
+    assert done.last_outcome == "success"
+    assert done.last_completed_at == NOW
+    assert done.last_succeeded_at == NOW
+    store.close()
+
+
+def test_scheduler_store_failure_never_fabricates_last_succeeded_at(tmp_path):
+    store = UniverseSchedulerStateStore(str(tmp_path / "sched.db"))
+    store.mark_started("universe_reevaluation", NOW)
+    store.mark_completed("universe_reevaluation", NOW, outcome="failure")
+
+    state = store.get("universe_reevaluation")
+    assert state.last_outcome == "failure"
+    assert state.last_succeeded_at is None
+    store.close()
+
+
+def test_scheduler_store_survives_a_simulated_restart(tmp_path):
+    db_path = str(tmp_path / "sched.db")
+    store = UniverseSchedulerStateStore(db_path)
+    store.mark_started("universe_reevaluation", NOW)
+    store.mark_completed("universe_reevaluation", NOW, outcome="success")
+    store.close()
+
+    reopened = UniverseSchedulerStateStore(db_path)
+    state = reopened.get("universe_reevaluation")
+    assert state is not None
+    assert state.last_outcome == "success"
+    reopened.close()
+
+
+def test_scheduler_store_all_jobs_is_inspectable_for_diagnostics(tmp_path):
+    store = UniverseSchedulerStateStore(str(tmp_path / "sched.db"))
+    store.mark_started("universe_reevaluation", NOW)
+    store.mark_started("some_other_job", NOW)
+
+    jobs = store.all_jobs()
+    assert [j.job_name for j in jobs] == ["some_other_job", "universe_reevaluation"]
+    store.close()
+
+
+def test_scheduler_store_get_returns_none_for_unknown_job(tmp_path):
+    store = UniverseSchedulerStateStore(str(tmp_path / "sched.db"))
+    assert store.get("never_run") is None
+    store.close()
 
 
 # --- UniverseMembershipStore ---------------------------------------------------

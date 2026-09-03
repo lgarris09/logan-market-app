@@ -17,11 +17,17 @@ to be wrapped by that scheduler once wired, not to self-pace.
 """
 
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Protocol, TypeVar
 
-from .config import memory_persistence_enabled, universe_membership_db_path
+from .config import (
+    memory_persistence_enabled,
+    universe_membership_db_path,
+    universe_scheduler_state_db_path,
+)
+from .universe_scheduler_store import UniverseSchedulerStateStore
 from .universe_store import UniverseMembershipStore
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -32,6 +38,7 @@ from logan_core.contracts import (  # noqa: E402
     CandidateSecurity,
     CohortRebalanceResult,
     EligibilityResult,
+    SchedulerJobState,
 )
 from logan_core.diagnostics import record_fault  # noqa: E402
 from logan_core.receptors.providers import (  # noqa: E402
@@ -69,6 +76,7 @@ class _MarketDataSource(Protocol):
 
 
 _store: Optional[UniverseMembershipStore] = None
+_scheduler_state_store: Optional[UniverseSchedulerStateStore] = None
 
 
 def _get_store() -> Optional[UniverseMembershipStore]:
@@ -87,15 +95,42 @@ def get_membership_store() -> Optional[UniverseMembershipStore]:
     return _get_store()
 
 
+def _get_scheduler_state_store() -> Optional[UniverseSchedulerStateStore]:
+    global _scheduler_state_store
+    if not memory_persistence_enabled():
+        return None
+    if _scheduler_state_store is None:
+        _scheduler_state_store = UniverseSchedulerStateStore(
+            universe_scheduler_state_db_path()
+        )
+    return _scheduler_state_store
+
+
+def get_scheduler_state(
+    job_name: str = "universe_reevaluation",
+) -> Optional[SchedulerJobState]:
+    """Public, read-only diagnostics accessor -- the current durable
+    execution state for `job_name` (default: the reevaluation job), or None
+    when persistence is disabled or the job has never run. Never triggers a
+    run itself."""
+    store = _get_scheduler_state_store()
+    if store is None:
+        return None
+    return store.get(job_name)
+
+
 def reset_universe_manager_state() -> None:
     """Test-only (and general-purpose "start over") hook, mirroring
-    reset_watch_state(). Releases the durable store's SQLite connection
-    (a no-op when persistence is disabled) without touching the underlying
-    file."""
-    global _store
+    reset_watch_state(). Releases both durable stores' SQLite connections
+    (a no-op when persistence is disabled) without touching either
+    underlying file."""
+    global _store, _scheduler_state_store
     if _store is not None:
         _store.close()
     _store = None
+    if _scheduler_state_store is not None:
+        _scheduler_state_store.close()
+    _scheduler_state_store = None
 
 
 def _paced_call(
@@ -310,6 +345,106 @@ def run_universe_reevaluation(
         raise
 
     return rebalance
+
+
+UNIVERSE_REEVALUATION_JOB = "universe_reevaluation"
+
+# Reevaluation is a deliberate, monthly-cadence action (see this module's
+# own top-level docstring and universe_report.py's) -- 30 days is the
+# durable-cadence floor a scheduled caller is gated against. Exposed as a
+# parameter default (not a hardcoded literal in the gating check) so a test
+# can inject a short interval without monkeypatching a module constant.
+REEVALUATION_MIN_INTERVAL_SECONDS = 30.0 * 24.0 * 3600.0
+
+
+@dataclass(frozen=True)
+class ScheduledReevaluationOutcome:
+    """What `run_scheduled_universe_reevaluation()` actually did -- a
+    caller (or test) can tell a legitimate skip (`executed=False`,
+    `skipped_reason` set, `rebalance=None`) apart from a real run
+    (`executed=True`, `rebalance` set) without inspecting durable state
+    directly."""
+
+    executed: bool
+    skipped_reason: Optional[str]
+    rebalance: Optional[CohortRebalanceResult]
+
+
+def run_scheduled_universe_reevaluation(
+    *,
+    market_data_provider: Optional[_MarketDataSource] = None,
+    earnings_provider: Optional[EarningsProvider] = None,
+    scheduler: Optional[ProviderScheduler] = None,
+    now: Optional[datetime] = None,
+    min_interval_seconds: float = REEVALUATION_MIN_INTERVAL_SECONDS,
+) -> ScheduledReevaluationOutcome:
+    """The restart-safe cadence wrapper around `run_universe_reevaluation()`
+    -- the real production entry point a background scheduler should call
+    instead of calling `run_universe_reevaluation()` directly (Universe
+    Manager V1a Scheduler Persistence + Cadence Closeout).
+
+    Durable bookkeeping (`UniverseSchedulerStateStore`) means a process
+    restart never forgets when reevaluation last started, so a restart
+    can't be mistaken for "never run" and trigger an immediate duplicate
+    run. Gating checks `last_started_at`, not `last_completed_at` -- a run
+    that crashed mid-flight still blocks an immediate retry until the full
+    cadence window elapses, rather than letting a crash loop repeatedly
+    burn the provider budget (`run_universe_reevaluation()` itself already
+    paces any single run's own calls via `scheduler`; this is the layer
+    above that, pacing *whether a run happens at all*).
+
+    When persistence is disabled there is no durable state to gate
+    against, so this always executes -- byte-identical to calling
+    `run_universe_reevaluation()` directly, matching every other Universe
+    Manager V1a capability's "persistence off = unchanged prior behavior"
+    posture.
+
+    Deliberately no Personal Learning input anywhere in this function --
+    cadence and provider priority stay fully user-agnostic, per the V1a
+    hard boundary (see logan_core/contracts/universe.py's module
+    docstring).
+    """
+    now = now or datetime.now(timezone.utc)
+    store = _get_scheduler_state_store()
+
+    if store is not None:
+        state = store.get(UNIVERSE_REEVALUATION_JOB)
+        if state is not None and state.last_started_at is not None:
+            elapsed = (now - state.last_started_at).total_seconds()
+            if elapsed < min_interval_seconds:
+                return ScheduledReevaluationOutcome(
+                    executed=False,
+                    skipped_reason=(
+                        f"reevaluation last started {elapsed:.0f}s ago, "
+                        f"below the {min_interval_seconds:.0f}s minimum cadence"
+                    ),
+                    rebalance=None,
+                )
+        store.mark_started(UNIVERSE_REEVALUATION_JOB, now)
+
+    try:
+        rebalance = run_universe_reevaluation(
+            market_data_provider=market_data_provider,
+            earnings_provider=earnings_provider,
+            scheduler=scheduler,
+            now=now,
+        )
+    except Exception:
+        if store is not None:
+            store.mark_completed(
+                UNIVERSE_REEVALUATION_JOB,
+                datetime.now(timezone.utc),
+                outcome="failure",
+            )
+        raise
+
+    if store is not None:
+        store.mark_completed(
+            UNIVERSE_REEVALUATION_JOB, datetime.now(timezone.utc), outcome="success"
+        )
+    return ScheduledReevaluationOutcome(
+        executed=True, skipped_reason=None, rebalance=rebalance
+    )
 
 
 def monitored_tickers() -> tuple[str, ...]:

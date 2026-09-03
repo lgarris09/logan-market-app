@@ -68,6 +68,7 @@ from .universe import (
     EligibilityResult,
     MarketCapBand,
     MembershipRecord,
+    SchedulerJobState,
     SignalFamilyCoverage,
     UniverseLifecycleState,
 )
@@ -160,6 +161,7 @@ __all__ = [
     "EligibilityResult",
     "MembershipRecord",
     "CohortRebalanceResult",
+    "SchedulerJobState",
     "MarketDriverTag",
     "ThesisMetadata",
     "MARKET_DRIVER_TAGS",

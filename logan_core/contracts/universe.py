@@ -155,3 +155,26 @@ class CohortRebalanceResult(BaseModel):
     @property
     def churn_count(self) -> int:
         return len(self.admitted) + len(self.removed)
+
+
+class SchedulerJobState(BaseModel):
+    """One durable row describing a scheduled job's restart-safe execution
+    state (Universe Manager V1a Scheduler Persistence + Cadence Closeout) --
+    deliberately separate from MembershipRecord above and stored in its own
+    table: this tracks *when reevaluation last ran*, never *what's
+    currently monitored*, keeping the membership ledger's own append-only-
+    history invariant untouched by scheduler bookkeeping.
+
+    `last_outcome=None` means the job has never run in this store's
+    lifetime. `last_started_at` is what restart-safe cadence gating checks
+    against (not `last_completed_at`) -- a run that crashed mid-flight
+    still blocks an immediate retry until the cadence window elapses,
+    rather than letting a crash loop hammer the provider budget.
+    """
+
+    schema_version: str = "1.0"
+    job_name: str
+    last_started_at: Optional[datetime] = None
+    last_completed_at: Optional[datetime] = None
+    last_succeeded_at: Optional[datetime] = None
+    last_outcome: Optional[Literal["running", "success", "failure"]] = None
