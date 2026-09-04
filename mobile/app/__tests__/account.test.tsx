@@ -95,8 +95,18 @@ describe("AccountScreen (signed in)", () => {
     await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeTruthy());
 
     expect(screen.getByText("Saved opportunities")).toBeTruthy();
-    expect(screen.getByText("Learned traits")).toBeTruthy();
     expect(screen.getAllByText("SOON").length).toBeGreaterThan(0);
+  });
+
+  it("lets Learned traits navigate to the real Learning Controls screen, not SOON", async () => {
+    // Consumer Learning Controls (STRATUS 3.6.12): this row used to be a
+    // `soon` stub -- now backed by a real screen (app/learning.tsx), so it
+    // must be a working, labeled navigation target like "About STRATUS"
+    // below, not one of the still-unimplemented SOON rows above.
+    render(<AccountScreen />);
+    await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeTruthy());
+
+    expect(screen.getByLabelText("Learned traits")).toBeTruthy();
   });
 
   it("still lets a working action (About STRATUS) navigate normally", async () => {

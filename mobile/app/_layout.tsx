@@ -32,10 +32,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
   return (
-    <ClerkProvider
-      publishableKey={CLERK_PUBLISHABLE_KEY as string}
-      tokenCache={clerkTokenCache}
-    >
+    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY as string} tokenCache={clerkTokenCache}>
       {children}
     </ClerkProvider>
   );
@@ -139,6 +136,9 @@ export default function RootLayout() {
           name="account"
           options={{ title: "Account", headerBackButtonDisplayMode: "minimal" }}
         />
+        {/* Consumer Learning Controls (STRATUS 3.6.12) -- reached from
+            account.tsx's PERSONALIZATION section. */}
+        <Stack.Screen name="learning" options={{ title: "What STRATUS Has Learned" }} />
         {/* Developer/Diagnostics only -- reachable only via app/index.tsx's
             single __DEV__-gated "Developer / Diagnostics" menu row. */}
         <Stack.Screen name="dev-diagnostics" options={{ title: "Developer / Diagnostics" }} />

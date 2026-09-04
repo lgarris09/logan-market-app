@@ -218,7 +218,7 @@ function SettingsRow({
           <Text style={styles.soonPillText}>SOON</Text>
         </View>
       ) : (
-        trailing ?? (onPress && <Ionicons name="chevron-forward" size={15} color={theme.muted} />)
+        (trailing ?? (onPress && <Ionicons name="chevron-forward" size={15} color={theme.muted} />))
       )}
     </TouchableOpacity>
   );
@@ -355,8 +355,8 @@ function PersonalizationSection() {
       <SettingsRow
         icon="sparkles-outline"
         label="Learned traits"
-        sublabel="STRATUS will explain what it's learned about your interests here"
-        soon
+        sublabel="See what STRATUS has noticed, and turn off anything that's wrong"
+        onPress={() => router.push("/learning")}
       />
       <SettingsRow icon="thumbs-down-outline" label="Corrections & not-interested history" soon />
     </SettingsSection>
@@ -384,7 +384,11 @@ function PrivacySection({ onDeleteAccount }: { onDeleteAccount: () => void }) {
 function HelpSection() {
   return (
     <SettingsSection title="HELP">
-      <SettingsRow icon="information-circle-outline" label="About STRATUS" onPress={() => router.push("/about")} />
+      <SettingsRow
+        icon="information-circle-outline"
+        label="About STRATUS"
+        onPress={() => router.push("/about")}
+      />
     </SettingsSection>
   );
 }
@@ -397,7 +401,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  content: { padding: spacing.xl, paddingTop: spacing.xxl, paddingBottom: spacing.xxl, gap: spacing.md },
+  content: {
+    padding: spacing.xl,
+    paddingTop: spacing.xxl,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+  },
   heading: {
     fontFamily: font.heading,
     fontSize: type.title,
@@ -460,7 +469,12 @@ const styles = StyleSheet.create({
   rowTextGroup: { flex: 1 },
   rowLabel: { fontFamily: font.bodyMedium, color: theme.text, fontSize: type.body },
   rowLabelDestructive: { color: theme.warning },
-  rowSublabel: { fontFamily: font.body, color: theme.muted, fontSize: type.micro + 1, marginTop: 2 },
+  rowSublabel: {
+    fontFamily: font.body,
+    color: theme.muted,
+    fontSize: type.micro + 1,
+    marginTop: 2,
+  },
   soonPill: {
     backgroundColor: theme.surfaceSoft,
     borderRadius: radius.pill,
