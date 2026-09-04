@@ -336,10 +336,14 @@ def test_opportunity_opened_is_promoted_to_returned_to_after_a_real_prior_view(
 
     monkeypatch.setattr(
         "backend.app.logan_feed.FmpEarningsProvider",
+        # 2026-09-04 incident response: pops the real caller's own `client=`
+        # (see logan_feed.py's LIVE_FEED_FMP_TIMEOUT_SECONDS) before
+        # forwarding, so it never collides with this mock's own transport --
+        # same fix as test_earnings_cache_persistence.py's _mock_fmp_provider.
         lambda **kwargs: FmpEarningsProvider(
             api_key="test-key-not-real",
             client=httpx.Client(transport=httpx.MockTransport(handler)),
-            **kwargs,
+            **{k: v for k, v in kwargs.items() if k != "client"},
         ),
     )
     reset_pipeline_state()

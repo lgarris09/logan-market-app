@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, cast
 from uuid import UUID, uuid4
 
+import httpx
 from pydantic import BaseModel
 
 # Same local-dev sys.path bridge as logan_demo.py -- see ADR-022. Repeated here
@@ -106,6 +107,28 @@ from .universe_telemetry import (  # noqa: E402
 )
 from .user_knowledge_store import UserKnowledgeStore  # noqa: E402
 from .watch import is_watched  # noqa: E402
+
+# 2026-09-04 incident response (STRATUS 3.6.12, Master Plan incident log):
+# FmpEarningsProvider/FmpMarketDataProvider default to httpx.Client(timeout=10.0)
+# when no client is injected (see logan_core/receptors/providers/fmp.py). A
+# real FMP-side TLS handshake stall on 2026-09-04 held live-feed worker
+# threads for up to that full 10s per failing call, repeatedly, across the
+# ~90 real-fetch-eligible calls one full 30-ticker live pass can make --
+# compounding into ~17 minutes of degraded/unavailable /health (a sync
+# route with zero FMP/DB dependency, starved only because it shares
+# FastAPI's worker thread pool with these blocking calls -- see this
+# module's own "FastAPI runs sync def routes in a worker thread pool"
+# comment above). Bounded to this LIVE-FEED path only, deliberately: the
+# separate monthly reevaluation path (universe_manager.py) already has its
+# own ProviderScheduler-based pacing/wait-budget and is left untouched here
+# (Master Plan decision: broader ProviderScheduler/circuit-breaker
+# integration for this path is a HOLD item pending explicit governance
+# review, not part of this narrow fix). Does not change which tickers are
+# fetched, retry behavior (there is none to change -- see
+# FmpResponseCache's negative-cache suppression, not a retry loop), or the
+# honest-absence/degraded behavior on failure -- only how long a single
+# stuck call can block before that same honest failure path runs.
+LIVE_FEED_FMP_TIMEOUT_SECONDS = 4.0
 
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
@@ -804,11 +827,12 @@ def _live_earnings_raw_signal(
         # when persistence isn't active, matching every other durable
         # store's gating in this file.
         provider = FmpEarningsProvider(
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS),
             on_successful_fetch=(
                 _earnings_cache_store.save
                 if _earnings_cache_store is not None
                 else None
-            )
+            ),
         )
     except FmpProviderError as exc:
         print(f"[live-stocks] {ticker}: provider unavailable, {fallback_note}: {exc}")
@@ -854,7 +878,9 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
     nothing extra, never a fabricated non-event.
     """
     try:
-        provider = FmpMarketDataProvider()
+        provider = FmpMarketDataProvider(
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+        )
     except FmpProviderError as exc:
         print(
             f"[live-stocks] {ticker}: market-data provider unavailable, "
@@ -899,7 +925,9 @@ def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | No
     replacement; None on any failure or non-qualifying result).
     """
     try:
-        provider = FmpMarketDataProvider()
+        provider = FmpMarketDataProvider(
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+        )
     except FmpProviderError as exc:
         print(
             f"[live-stocks] {ticker}: market-data provider unavailable, "
@@ -981,7 +1009,9 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
     build evidence from at all.
     """
     try:
-        provider = FmpMarketDataProvider()
+        provider = FmpMarketDataProvider(
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+        )
     except FmpProviderError as exc:
         print(
             f"[live-stocks] {ticker}: market-data provider unavailable, skipping evidence: {exc}"

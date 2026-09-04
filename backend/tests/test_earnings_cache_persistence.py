@@ -59,6 +59,13 @@ def _no_live_market_data_by_default(monkeypatch):
 def _mock_fmp_provider(handler, **kwargs) -> FmpEarningsProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
+    # 2026-09-04 incident response: logan_feed.py's real call sites now pass
+    # their own explicit `client=` (a bounded-timeout live client -- see
+    # LIVE_FEED_FMP_TIMEOUT_SECONDS), which would otherwise collide with
+    # this mock's own `client=` below when a caller forwards **kwargs
+    # straight through. This mock always wins -- a test's whole point is
+    # substituting a fake transport, never the real network client.
+    kwargs.pop("client", None)
     return FmpEarningsProvider(api_key="test-key-not-real", client=client, **kwargs)
 
 
