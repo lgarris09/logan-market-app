@@ -164,13 +164,43 @@ const MIN_GAP_FRACTION = 0.025;
 // (runs once per layout computation, not per frame).
 const RELAXATION_PASSES = 32;
 
+// V1a production-density pass: real device validation with the 30-stock
+// Universe Manager cohort surfaced a live field of 44 items (vs. the
+// handful this file's radius/size curve was tuned and reviewed against
+// during composition). The old curve (`t = 1 - (rank-1)/rankRange`) spreads
+// EVERY non-anchor item's size/closeness proportionally across the full
+// rank range -- with 44 items, rank ~20 (objectively a background/
+// monitored item) still lands at t=0.55, roughly mid-band, reading as
+// nearly as prominent as rank 10. That's dilution, not hierarchy: the curve
+// gets softer as the monitored universe grows, exactly backwards from what
+// "center = most important, periphery = simplified" requires.
+// COMPETITIVE_BAND_SIZE fixes how many non-anchor items ever meaningfully
+// compete for radius/size, independent of total item count N -- t is now
+// derived from an item's fixed rank POSITION within this band (0 = right
+// after the anchor), not its position within the full N-sized range.
+// Position >= this band floors to t=0 (sizeMin, RADIUS_MAX_FRACTION) same
+// as today's worst-ranked item always did -- adding more monitored-but-
+// unremarkable opportunities now adds more small, quiet background dots at
+// the outer edge, never more mid-sized competition for the center. At field
+// sizes this file was tuned against (<=9 items, i.e. <= this band's own
+// size + the anchor), every non-anchor item is inside the band and this is
+// numerically a near-no-op against the prior curve.
+const COMPETITIVE_BAND_SIZE = 8;
+
 // How many of the highest-priority vessels get a label at rest. The tier
 // distinction is kept for the "none" cutoff at feed sizes well beyond
 // what's been designed for -- it doesn't affect the collision math (the
 // label sits inside the glow circle, not beside/below it), only how much
 // text Vessel.tsx renders.
 const FULL_LABEL_COUNT = 3;
-const COMPACT_LABEL_COUNT = 24;
+// V1a production-density pass (real device, 44-item live field from the
+// 30-stock Universe Manager cohort): lowered from 24. Kept in lockstep with
+// COMPETITIVE_BAND_SIZE below -- the same items that meaningfully compete
+// for radius/size are the ones that earn a label; everything past the
+// competitive band reads as background/monitored in both sizing and label,
+// not sized-down-but-still-labeled. At field sizes this file was actually
+// tuned against (<=9 items), this is a no-op: every item still gets a label.
+const COMPACT_LABEL_COUNT = 9;
 
 function labelTierFor(index: number, n: number): LabelTier {
   if (index < Math.min(FULL_LABEL_COUNT, n)) return "full";
@@ -757,10 +787,6 @@ export function computeAtmosphereLayout(
   const sizeMin = SIZE_MIN_FRACTION * minDim;
   const sizeMax = SIZE_MAX_FRACTION * minDim;
 
-  // Normalize by rank position, not a raw score (ADR-029 -- the backend
-  // never sends one). Rank 1 (best) -> t=1; the lowest-ranked item -> t=0.
-  const maxRank = Math.max(...items.map((item) => item.rank));
-  const rankRange = maxRank - 1 || 1;
   const n = items.length;
 
   // Tier (full/compact/none label) is rank-position-based -- computed from
@@ -778,7 +804,15 @@ export function computeAtmosphereLayout(
   const anchorId = ranked[0]?.event_id ?? null;
 
   const points: ScatterPoint[] = canonical.map((item) => {
-    const t = 1 - (item.rank - 1) / rankRange;
+    // Normalize by rank position, not a raw score (ADR-029 -- the backend
+    // never sends one), and not by position within the full N-sized range
+    // (see COMPETITIVE_BAND_SIZE above) -- by position within a fixed-size
+    // competitive band instead. The anchor (rankPosition 0) always gets
+    // t=1; every other item's t is 1 at the front of the band, 0 at or past
+    // its end, regardless of how large N grows.
+    const nonAnchorPosition = rankPosition.get(item.event_id)! - 1;
+    const t =
+      item.event_id === anchorId ? 1 : Math.max(0, 1 - nonAnchorPosition / COMPETITIVE_BAND_SIZE);
     // Rank 1 owns the center: it targets a small, fixed core radius
     // instead of the standard rank-to-radius curve, so the field always
     // has an unmistakable focal point rather than rank 1 merely being

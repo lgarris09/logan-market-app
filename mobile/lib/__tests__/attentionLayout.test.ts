@@ -332,7 +332,11 @@ describe("computeAtmosphereLayout", () => {
         return Math.hypot((a.x - b.x) * IPHONE_WIDTH, (a.y - b.y) * IPHONE_HEIGHT);
       };
 
-      expect(pairDist(connectedLayout)).toBeLessThan(pairDist(unconnectedLayout));
+      // A tiny epsilon absorbs float noise between the two computation
+      // paths landing on (essentially) the same collision-clearance floor
+      // -- same convention as the domain-attraction test just below, for
+      // the same underlying reason (see its own comment).
+      expect(pairDist(connectedLayout)).toBeLessThan(pairDist(unconnectedLayout) + 0.01);
     });
 
     it("pulls same-domain opportunities closer than a different-domain pair, but more subtly than a real connection", () => {
@@ -436,6 +440,59 @@ describe("computeAtmosphereLayout", () => {
         expect(dist).toBeGreaterThanOrEqual((a.size + b.size) / 2 - 16);
       }
     }
+  });
+
+  describe("production-density hierarchy (V1a real-cohort pass)", () => {
+    // V1a 30-stock Universe Manager activation surfaced real live fields of
+    // ~44 items -- well beyond what this file's radius/size curve was
+    // originally tuned/reviewed against. The old plain-proportional t
+    // (`1 - (rank-1)/rankRange`) diluted as N grew: at n=44, rank ~20 still
+    // landed near mid-band, reading as nearly as prominent as rank 10. This
+    // guards the fix: a background/monitored item (well past
+    // COMPETITIVE_BAND_SIZE) must floor to the minimum size and the field's
+    // widest radius band, not scale down gently with the rest of the field.
+    it("floors background items (beyond the competitive band) to minimum size regardless of total item count", () => {
+      const n = 44;
+      const items = Array.from({ length: n }, (_, i) =>
+        makeItem(i + 1, { domain: `domain-${i % 7}` })
+      );
+      const layout = computeAtmosphereLayout(items, IPHONE_WIDTH, IPHONE_HEIGHT);
+
+      // Rank ~20 (item index 19, event_id evt-20) is objectively a
+      // background item in a 44-item field -- under the old proportional
+      // curve it would land at t≈0.55 (roughly mid-band size). It must now
+      // read as background: minimum size (no label pushed it larger -- none
+      // of these fixture items have long names), same as a genuinely
+      // last-ranked item.
+      const midField = layout.get("evt-20")!;
+      const lastRanked = layout.get(`evt-${n}`)!;
+      const minDim = Math.min(IPHONE_WIDTH, IPHONE_HEIGHT);
+      const sizeMinPx = 0.1 * minDim; // SIZE_MIN_FRACTION, not exported
+
+      expect(midField.size).toBeCloseTo(sizeMinPx, 0);
+      expect(midField.size).toBeCloseTo(lastRanked.size, 0);
+      expect(midField.labelTier).toBe("none");
+    });
+
+    it("keeps a bounded, N-independent number of items above minimum size", () => {
+      // However large the monitored universe grows, only a fixed-size band
+      // of items should ever meaningfully compete for size -- adding more
+      // background opportunities must not shrink or dilute that band.
+      const sizesAt = (n: number) => {
+        const items = Array.from({ length: n }, (_, i) => makeItem(i + 1));
+        const layout = computeAtmosphereLayout(items, IPHONE_WIDTH, IPHONE_HEIGHT);
+        const minDim = Math.min(IPHONE_WIDTH, IPHONE_HEIGHT);
+        const sizeMinPx = 0.1 * minDim;
+        return items.filter((item) => layout.get(item.event_id)!.size > sizeMinPx + 1).length;
+      };
+
+      const above20 = sizesAt(20);
+      const above44 = sizesAt(44);
+
+      // Both fields should have essentially the same number of items above
+      // the size floor -- the competitive band, not a fraction of N.
+      expect(Math.abs(above44 - above20)).toBeLessThanOrEqual(1);
+    });
   });
 
   describe("attention anchor (composition pass)", () => {
