@@ -294,6 +294,7 @@ class FmpResponseCache:
         fetch: Callable[[], object],
         stale_grace_seconds: float = 0.0,
         jitter_seconds: float = 0.0,
+        fetch_gate: Optional[Callable[[str, Callable[[], object]], object]] = None,
     ) -> object:
         """`jitter_seconds` (Operational Beta Hardening Block 6, default 0.0
         -- byte-identical behavior for every pre-existing caller unless it
@@ -304,6 +305,26 @@ class FmpResponseCache:
         window instead of in one synchronized instant, which would otherwise
         turn a smoothed cold start into a synchronized refetch burst one TTL
         period later.
+
+        `fetch_gate` (STRATUS 3.6.12 live-path integration fix, default None
+        -- byte-identical behavior for every pre-existing caller unless it
+        explicitly opts in): called as `fetch_gate(endpoint, real_fetch)`
+        instead of `real_fetch()` directly, ONLY at the one genuine real-
+        outbound-call boundary below -- never on a cache hit (returned
+        above, before this parameter is ever consulted), never on a
+        coalesced caller (same), and never on a suppressed negative-cache
+        retry (raises above, also before this parameter is consulted). This
+        is the exact "protect actual provider I/O, not local cache reads"
+        boundary a caller wanting admission control (e.g. a ProviderScheduler)
+        must hook -- wrapping a provider method's *whole* call (including its
+        internal cache lookup) from outside would charge admission capacity
+        for a cache hit too, which is exactly the bug this parameter exists
+        to make structurally impossible. A `fetch_gate` that denies
+        admission is expected to raise (e.g. ProviderSchedulerSaturatedError,
+        never an FmpProviderError subclass) -- that propagates through
+        untouched, never recorded in this cache's own negative-cache/
+        failure/real-call bookkeeping below, since no real call was ever
+        attempted.
         """
         key = (endpoint, entity_id)
         effective_ttl = ttl_seconds + jitter_seconds * _stable_jitter_fraction(key)
@@ -409,14 +430,29 @@ class FmpResponseCache:
             # this line) -- exactly the boundary the historical
             # peak-calls/minute measurement needs, not an inference from
             # scheduler jobs, queue depth, or symbols processed.
-            if _call_observer is not None:
-                try:
-                    _call_observer(endpoint)
-                except Exception:  # noqa: BLE001 -- an observer must never
-                    # block or break the real call it's observing.
-                    pass
+            #
+            # STRATUS 3.6.12: _call_observer is folded into this same
+            # closure (rather than fired unconditionally above, as before)
+            # so a `fetch_gate` that denies admission below can never let
+            # the observer record a call that was never actually attempted
+            # -- byte-identical timing for the fetch_gate=None case (every
+            # pre-existing caller), since _observed_fetch() still runs the
+            # observer immediately before the real fetch() either way.
+            def _observed_fetch() -> object:
+                if _call_observer is not None:
+                    try:
+                        _call_observer(endpoint)
+                    except Exception:  # noqa: BLE001 -- an observer must
+                        # never block or break the real call it's observing.
+                        pass
+                return fetch()
+
             try:
-                value = fetch()
+                value = (
+                    fetch_gate(endpoint, _observed_fetch)
+                    if fetch_gate is not None
+                    else _observed_fetch()
+                )
             except FmpProviderError as exc:
                 self._bump(self._failures_count, key)
                 status_code = getattr(exc, "status_code", None)
@@ -685,6 +721,7 @@ class FmpEarningsProvider:
         on_successful_fetch: Optional[
             Callable[[str, EarningsReport, datetime], None]
         ] = None,
+        fetch_gate: Optional[Callable[[str, Callable[[], object]], object]] = None,
     ) -> None:
         # API key comes only from environment configuration (explicit
         # `api_key` param is for tests to inject a fake one -- never a
@@ -719,6 +756,13 @@ class FmpEarningsProvider:
         # below, and every existing caller/test that doesn't pass it gets
         # byte-for-byte unchanged behavior.
         self._on_successful_fetch = on_successful_fetch
+        # STRATUS 3.6.12 live-path integration fix: stored once, forwarded
+        # to every get_or_fetch() call this instance makes -- see that
+        # method's own docstring for the exact "cache reads are free, only
+        # a real outbound attempt is gated" contract. None (every pre-
+        # existing caller/test) is byte-identical to before this parameter
+        # existed.
+        self._fetch_gate = fetch_gate
 
     def fetch_latest_earnings(self, entity_id: str) -> Optional[EarningsReport]:
         return self._cache.get_or_fetch(
@@ -727,6 +771,7 @@ class FmpEarningsProvider:
             EARNINGS_CACHE_TTL_SECONDS,
             lambda: self._fetch_and_observe(entity_id),
             stale_grace_seconds=EARNINGS_STALE_GRACE_SECONDS,
+            fetch_gate=self._fetch_gate,
         )  # type: ignore[return-value]
 
     def _fetch_and_observe(self, entity_id: str) -> Optional[EarningsReport]:
@@ -871,6 +916,7 @@ class FmpMarketDataProvider:
         base_url: str = FMP_BASE_URL,
         client: Optional[httpx.Client] = None,
         cache: Optional[FmpResponseCache] = None,
+        fetch_gate: Optional[Callable[[str, Callable[[], object]], object]] = None,
     ) -> None:
         resolved_key = (
             api_key if api_key is not None else os.environ.get(FMP_API_KEY_ENV_VAR)
@@ -886,6 +932,9 @@ class FmpMarketDataProvider:
         self._client = client or httpx.Client(timeout=10.0)
         # See FmpEarningsProvider.__init__'s identical comment above.
         self._cache = cache if cache is not None else _shared_fmp_cache
+        # STRATUS 3.6.12 live-path integration fix: see FmpEarningsProvider's
+        # identical comment above.
+        self._fetch_gate = fetch_gate
 
     def fetch_quote(self, entity_id: str) -> Optional[Quote]:
         return self._cache.get_or_fetch(
@@ -893,6 +942,7 @@ class FmpMarketDataProvider:
             entity_id,
             QUOTE_CACHE_TTL_SECONDS,
             lambda: self._fetch_quote_uncached(entity_id),
+            fetch_gate=self._fetch_gate,
         )  # type: ignore[return-value]
 
     def fetch_benchmark_quote(self, entity_id: str) -> Optional[Quote]:
@@ -915,6 +965,7 @@ class FmpMarketDataProvider:
             entity_id,
             BENCHMARK_QUOTE_CACHE_TTL_SECONDS,
             lambda: self._fetch_quote_uncached(entity_id),
+            fetch_gate=self._fetch_gate,
         )  # type: ignore[return-value]
 
     def _fetch_quote_uncached(self, entity_id: str) -> Optional[Quote]:
@@ -995,6 +1046,7 @@ class FmpMarketDataProvider:
             entity_id,
             GRADE_CACHE_TTL_SECONDS,
             lambda: self._fetch_latest_grade_change_uncached(entity_id),
+            fetch_gate=self._fetch_gate,
         )  # type: ignore[return-value]
 
     def _fetch_latest_grade_change_uncached(
@@ -1091,6 +1143,7 @@ class FmpMarketDataProvider:
             entity_id,
             PROFILE_CACHE_TTL_SECONDS,
             lambda: self._fetch_company_profile_uncached(entity_id),
+            fetch_gate=self._fetch_gate,
         )  # type: ignore[return-value]
 
     def _fetch_company_profile_uncached(

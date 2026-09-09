@@ -157,6 +157,29 @@ LIVE_FEED_FMP_TIMEOUT_SECONDS = 4.0
 LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS = 5.0
 LIVE_FEED_SWEEP_DEADLINE_SECONDS = 20.0
 
+# STRATUS 3.6.12 follow-up fix (2026-09-09, same-day production correlation
+# against a fresh-device timeout report): the first cut of mitigation #1
+# above wrapped each *provider method* call (e.g. `provider.fetch_quote(...)`)
+# in `_paced_live_call()` -- exactly universe_manager.py's own established
+# `_paced_call()` pattern. That pattern is harmless for the reevaluation
+# path (one-shot batch, ~400 calls, once a month); it is actively wrong for
+# this repeatedly-polled live-feed path, since a provider method's own cache
+# lookup happens *inside* that call -- wrapping the whole method charges the
+# scheduler's rate budget for a cache hit exactly the same as a real network
+# attempt. Confirmed live: 1458 quote cache hits vs. 30 real calls in one
+# 26-minute window, all counted against the same 132/min ceiling, produced
+# continuous DATA-306 admission-control saturation and repeated sweep-
+# deadline trips with FMP itself recording zero real failures the entire
+# time. Fixed at the correct boundary instead: `FmpResponseCache.get_or_
+# fetch()`'s new `fetch_gate` parameter (logan_core/receptors/providers/
+# fmp.py) is only ever consulted at that method's one genuine real-outbound-
+# call site -- never on a cache hit, a coalesced caller, or a suppressed
+# negative-cache retry. `_paced_live_call` below is passed as `fetch_gate`
+# at each of the four provider-construction call sites in this file (its
+# `(endpoint, fetch) -> result` shape already matches exactly), so a call
+# only ever reaches the dedicated scheduler when a real FMP request is
+# actually about to happen.
+
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
 # Previously, `_run_feed_pipeline()` built a brand-new `Orchestrator()` on
@@ -643,15 +666,23 @@ _T = TypeVar("_T")
 
 
 def _paced_live_call(endpoint: str, fetch: Callable[[], _T]) -> _T:
-    """Wraps one real live-feed provider call through the dedicated live-
-    path scheduler's admission control + circuit breaker -- mirrors
-    universe_manager.py's own `_paced_call()` helper exactly (same `gate()`
-    contract), against the separate scheduler above. Raises
+    """Gates one real live-feed *provider I/O attempt* through the dedicated
+    live-path scheduler's admission control + circuit breaker, against the
+    separate scheduler above. Passed as `fetch_gate` when constructing each
+    FmpEarningsProvider/FmpMarketDataProvider below -- NOT wrapped around a
+    provider method call from the outside (that was this fix's own first,
+    incorrect draft; see the module-level comment above
+    LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS for the full incident this
+    corrects). `FmpResponseCache.get_or_fetch()` only ever invokes its
+    `fetch_gate` at the one point a real outbound FMP request is actually
+    about to happen -- never on a cache hit, a coalesced caller, or a
+    suppressed negative-cache retry -- so `fetch` here always represents a
+    genuine network attempt, never a local cache read. Raises
     ProviderSchedulerSaturatedError (never FmpProviderError) when the
     endpoint-family circuit is open or no capacity is admitted within
-    LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS -- every call site below catches
-    both exception types identically, exactly the same honest-absence
-    handling this file already gives a raised FmpProviderError.
+    LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS -- every live-feed call site in
+    this file catches both exception types identically, exactly the same
+    honest-absence handling already given to a raised FmpProviderError.
     """
     return _get_live_provider_scheduler().gate(
         endpoint, fetch, max_wait_seconds=LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS
@@ -924,15 +955,14 @@ def _live_earnings_raw_signal(
                 if _earnings_cache_store is not None
                 else None
             ),
+            fetch_gate=_paced_live_call,
         )
     except FmpProviderError as exc:
         print(f"[live-stocks] {ticker}: provider unavailable, {fallback_note}: {exc}")
         return None, True
 
     try:
-        report = _paced_live_call(
-            "earnings", lambda: provider.fetch_latest_earnings(ticker)
-        )
+        report = provider.fetch_latest_earnings(ticker)
     except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(f"[live-stocks] {ticker}: FMP fetch failed, {fallback_note}: {exc}")
         return None, True
@@ -972,7 +1002,8 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
     """
     try:
         provider = FmpMarketDataProvider(
-            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS),
+            fetch_gate=_paced_live_call,
         )
     except FmpProviderError as exc:
         print(
@@ -982,7 +1013,7 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
         return None
 
     try:
-        quote = _paced_live_call("quote", lambda: provider.fetch_quote(ticker))
+        quote = provider.fetch_quote(ticker)
     except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP quote fetch failed, skipping price move: {exc}"
@@ -1019,7 +1050,8 @@ def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | No
     """
     try:
         provider = FmpMarketDataProvider(
-            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS),
+            fetch_gate=_paced_live_call,
         )
     except FmpProviderError as exc:
         print(
@@ -1029,9 +1061,7 @@ def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | No
         return None
 
     try:
-        grade = _paced_live_call(
-            "analyst_grade", lambda: provider.fetch_latest_grade_change(ticker)
-        )
+        grade = provider.fetch_latest_grade_change(ticker)
     except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP grades fetch failed, skipping analyst grade: {exc}"
@@ -1105,7 +1135,8 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
     """
     try:
         provider = FmpMarketDataProvider(
-            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS)
+            client=httpx.Client(timeout=LIVE_FEED_FMP_TIMEOUT_SECONDS),
+            fetch_gate=_paced_live_call,
         )
     except FmpProviderError as exc:
         print(
@@ -1114,7 +1145,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
         return None
 
     try:
-        quote = _paced_live_call("quote", lambda: provider.fetch_quote(ticker))
+        quote = provider.fetch_quote(ticker)
     except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP quote fetch failed, skipping evidence: {exc}"
@@ -1126,9 +1157,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
 
     market_change_pct: Optional[float] = None
     try:
-        market_quote = _paced_live_call(
-            "quote", lambda: provider.fetch_benchmark_quote(MARKET_BENCHMARK_SYMBOL)
-        )
+        market_quote = provider.fetch_benchmark_quote(MARKET_BENCHMARK_SYMBOL)
         if market_quote is not None:
             market_change_pct = market_quote.change_pct
     except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
@@ -1138,9 +1167,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
     average_volume: Optional[float] = None
     beta: Optional[float] = None
     try:
-        profile = _paced_live_call(
-            "profile", lambda: provider.fetch_company_profile(ticker)
-        )
+        profile = provider.fetch_company_profile(ticker)
         if profile is not None:
             sector = profile.sector
             average_volume = profile.average_volume
@@ -1152,9 +1179,7 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
     sector_change_pct: Optional[float] = None
     if sector_benchmark_symbol is not None:
         try:
-            sector_quote = _paced_live_call(
-                "quote", lambda: provider.fetch_benchmark_quote(sector_benchmark_symbol)
-            )
+            sector_quote = provider.fetch_benchmark_quote(sector_benchmark_symbol)
             if sector_quote is not None:
                 sector_change_pct = sector_quote.change_pct
         except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
