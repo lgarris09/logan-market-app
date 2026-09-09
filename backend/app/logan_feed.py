@@ -1,8 +1,9 @@
 import sys
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, cast
+from typing import Callable, Optional, TypeVar, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -63,6 +64,8 @@ from logan_core.receptors.providers import (  # noqa: E402
     FmpEarningsProvider,
     FmpMarketDataProvider,
     FmpProviderError,
+    ProviderScheduler,
+    ProviderSchedulerSaturatedError,
     classify_freshness,
     seed_earnings_from_durable_observation,
     signal_family_contract,
@@ -130,6 +133,30 @@ from .watch import is_watched  # noqa: E402
 # stuck call can block before that same honest failure path runs.
 LIVE_FEED_FMP_TIMEOUT_SECONDS = 4.0
 
+# STRATUS 3.6.12 reliability correction (approved 2026-09-09, INC-2026-09-09-A
+# -- a second, same-symptom incident on 2026-09-09 proved the timeout bound
+# above insufficient by itself: a degraded FMP can still stall a whole
+# sweep's worth of sequential blocked calls, not just one). Two additive
+# mitigations, both Category B (change live fetch behavior only, never gate
+# definitions -- see the approved proposal's proof-window classification):
+#
+# 1. LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS bounds how long one call waits for
+#    admission from the dedicated live-path ProviderScheduler below (see
+#    _get_live_provider_scheduler()) before giving up -- short, since this
+#    runs inside a synchronous user-facing request, not a background batch
+#    job (contrast universe_manager.DEFAULT_SCHEDULER_MAX_WAIT_SECONDS=90.0,
+#    tuned for a multi-minute batch reevaluation).
+# 2. LIVE_FEED_SWEEP_DEADLINE_SECONDS bounds the *whole* live-ticker sweep's
+#    wall-clock time (see _live_sweep_deadline_exceeded()): once exceeded,
+#    remaining tickers/provider calls this poll are honestly treated as
+#    unavailable (never fabricated), the same as any other fetch failure --
+#    it only ever stops *starting* new work, never interrupts a call already
+#    in flight, so a single ticker's own up-to-~3x4s worst case (earnings +
+#    price + grade all individually stalling) can still complete once
+#    started.
+LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS = 5.0
+LIVE_FEED_SWEEP_DEADLINE_SECONDS = 20.0
+
 # --- Process-lifetime pipeline state (notification/identity fix) ---
 #
 # Previously, `_run_feed_pipeline()` built a brand-new `Orchestrator()` on
@@ -190,6 +217,26 @@ _earnings_cache_store: EarningsCacheStore | None = None
 _revision_store: OpportunityRevisionStore | None = None
 _user_knowledge_store: UserKnowledgeStore | None = None
 _user_knowledge_cache: dict[tuple[str, str], UserOpportunityKnowledge] = {}
+# STRATUS 3.6.12 reliability correction: a dedicated ProviderScheduler
+# instance for this live-feed path only -- deliberately its own instance,
+# never shared with universe_manager.py's reevaluation-path scheduler or its
+# scheduler-scoped proof-gate telemetry (scheduled_fetch_failure_rate,
+# time_sensitive_delay_p95/p99, coalescing_success_rate). Reuses that same
+# tested rate-ceiling/circuit-breaker machinery without touching the 14-day
+# proof's confirmed gate population -- redefining what feeds those gates
+# remains an explicit HOLD, separate from this change. Reset alongside
+# _orchestrator in reset_pipeline_state() so one test's simulated failures
+# never leak circuit-breaker state into another test.
+#
+# Deliberately its own lock, never _state_lock: _run_feed_pipeline() holds
+# _state_lock for its entire per-entity result loop (see the "one lock for
+# the whole request's pipeline run" comment below), which is exactly where
+# _fetch_market_evidence() -> _paced_live_call() -> this singleton's lazy
+# accessor gets called -- reusing _state_lock there would be a same-thread
+# non-reentrant re-acquisition (a real, confirmed self-deadlock caught by a
+# hang in this module's own test suite, not a hypothetical).
+_live_provider_scheduler: ProviderScheduler | None = None
+_live_provider_scheduler_lock = threading.Lock()
 # user_ids whose very first `/v1/opportunities` request has already been
 # processed -- lets that first response stay notification-silent (nothing is
 # "new" relative to a user who's never seen anything yet) without treating
@@ -578,6 +625,50 @@ def _get_orchestrator() -> Orchestrator:
         return _orchestrator
 
 
+def _get_live_provider_scheduler() -> ProviderScheduler:
+    """STRATUS 3.6.12: lazy process-lifetime singleton, same construction
+    discipline as _get_orchestrator() above -- a dedicated instance, never
+    the one (if any) universe_manager.py's reevaluation path uses. Guarded
+    by its own dedicated lock, not _state_lock -- see
+    _live_provider_scheduler_lock's own comment for why sharing _state_lock
+    here would self-deadlock."""
+    global _live_provider_scheduler
+    with _live_provider_scheduler_lock:
+        if _live_provider_scheduler is None:
+            _live_provider_scheduler = ProviderScheduler()
+        return _live_provider_scheduler
+
+
+_T = TypeVar("_T")
+
+
+def _paced_live_call(endpoint: str, fetch: Callable[[], _T]) -> _T:
+    """Wraps one real live-feed provider call through the dedicated live-
+    path scheduler's admission control + circuit breaker -- mirrors
+    universe_manager.py's own `_paced_call()` helper exactly (same `gate()`
+    contract), against the separate scheduler above. Raises
+    ProviderSchedulerSaturatedError (never FmpProviderError) when the
+    endpoint-family circuit is open or no capacity is admitted within
+    LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS -- every call site below catches
+    both exception types identically, exactly the same honest-absence
+    handling this file already gives a raised FmpProviderError.
+    """
+    return _get_live_provider_scheduler().gate(
+        endpoint, fetch, max_wait_seconds=LIVE_FEED_SCHEDULER_MAX_WAIT_SECONDS
+    )
+
+
+def _live_sweep_deadline_exceeded(started_at: float) -> bool:
+    """STRATUS 3.6.12: True once LIVE_FEED_SWEEP_DEADLINE_SECONDS has
+    elapsed since `started_at` (a `time.monotonic()` reading taken at the
+    top of one live-ticker sweep) -- callers use this to stop *starting*
+    new ticker/provider work for the rest of that poll, never to interrupt
+    a call already in flight. `time.monotonic()` (not the business-logic
+    `now: datetime` threaded through this file's signal functions) since
+    this measures real wall-clock elapsed time, not an as-of timestamp."""
+    return time.monotonic() - started_at > LIVE_FEED_SWEEP_DEADLINE_SECONDS
+
+
 def _get_user_model(
     orchestrator: Orchestrator, user_id: str, now: datetime
 ) -> UserModel:
@@ -839,8 +930,10 @@ def _live_earnings_raw_signal(
         return None, True
 
     try:
-        report = provider.fetch_latest_earnings(ticker)
-    except FmpProviderError as exc:
+        report = _paced_live_call(
+            "earnings", lambda: provider.fetch_latest_earnings(ticker)
+        )
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(f"[live-stocks] {ticker}: FMP fetch failed, {fallback_note}: {exc}")
         return None, True
 
@@ -889,8 +982,8 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
         return None
 
     try:
-        quote = provider.fetch_quote(ticker)
-    except FmpProviderError as exc:
+        quote = _paced_live_call("quote", lambda: provider.fetch_quote(ticker))
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP quote fetch failed, skipping price move: {exc}"
         )
@@ -936,8 +1029,10 @@ def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | No
         return None
 
     try:
-        grade = provider.fetch_latest_grade_change(ticker)
-    except FmpProviderError as exc:
+        grade = _paced_live_call(
+            "analyst_grade", lambda: provider.fetch_latest_grade_change(ticker)
+        )
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP grades fetch failed, skipping analyst grade: {exc}"
         )
@@ -1019,8 +1114,8 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
         return None
 
     try:
-        quote = provider.fetch_quote(ticker)
-    except FmpProviderError as exc:
+        quote = _paced_live_call("quote", lambda: provider.fetch_quote(ticker))
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(
             f"[live-stocks] {ticker}: FMP quote fetch failed, skipping evidence: {exc}"
         )
@@ -1031,32 +1126,38 @@ def _fetch_market_evidence(ticker: str, now: datetime) -> MarketEvidenceInput | 
 
     market_change_pct: Optional[float] = None
     try:
-        market_quote = provider.fetch_benchmark_quote(MARKET_BENCHMARK_SYMBOL)
+        market_quote = _paced_live_call(
+            "quote", lambda: provider.fetch_benchmark_quote(MARKET_BENCHMARK_SYMBOL)
+        )
         if market_quote is not None:
             market_change_pct = market_quote.change_pct
-    except FmpProviderError as exc:
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(f"[live-stocks] {ticker}: market benchmark fetch failed: {exc}")
 
     sector: Optional[str] = None
     average_volume: Optional[float] = None
     beta: Optional[float] = None
     try:
-        profile = provider.fetch_company_profile(ticker)
+        profile = _paced_live_call(
+            "profile", lambda: provider.fetch_company_profile(ticker)
+        )
         if profile is not None:
             sector = profile.sector
             average_volume = profile.average_volume
             beta = profile.beta
-    except FmpProviderError as exc:
+    except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
         print(f"[live-stocks] {ticker}: profile fetch failed: {exc}")
 
     sector_benchmark_symbol = _SECTOR_BENCHMARK_SYMBOLS.get(sector) if sector else None
     sector_change_pct: Optional[float] = None
     if sector_benchmark_symbol is not None:
         try:
-            sector_quote = provider.fetch_benchmark_quote(sector_benchmark_symbol)
+            sector_quote = _paced_live_call(
+                "quote", lambda: provider.fetch_benchmark_quote(sector_benchmark_symbol)
+            )
             if sector_quote is not None:
                 sector_change_pct = sector_quote.change_pct
-        except FmpProviderError as exc:
+        except (FmpProviderError, ProviderSchedulerSaturatedError) as exc:
             print(f"[live-stocks] {ticker}: sector benchmark fetch failed: {exc}")
 
     return MarketEvidenceInput(
@@ -1082,6 +1183,7 @@ def reset_pipeline_state() -> None:
     """
     global _orchestrator, _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
     global _revision_store, _user_knowledge_store, _user_knowledge_cache
+    global _live_provider_scheduler
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -1106,6 +1208,7 @@ def reset_pipeline_state() -> None:
         _revision_store = None
         _user_knowledge_store = None
         _user_knowledge_cache = {}
+        _live_provider_scheduler = None
         _baseline_established.clear()
         _user_models.clear()
         _opportunity_context_caches.clear()
@@ -1683,7 +1786,24 @@ def _run_feed_pipeline(
     # above) so a notification decision for one entity is never suppressed
     # by a *different* entity's provider failure this same poll.
     ticker_provider_failed: dict[str, bool] = {}
+    # STRATUS 3.6.12 reliability correction: one wall-clock budget for this
+    # whole live-ticker sweep (see LIVE_FEED_SWEEP_DEADLINE_SECONDS/
+    # _live_sweep_deadline_exceeded()'s own docstrings) -- also reused below
+    # for the market-evidence enrichment pass over live_substituted, so one
+    # poll's live-data phase has a single bounded budget end to end.
+    _live_sweep_started_at = time.monotonic()
     for ticker in live_tickers:
+        if _live_sweep_deadline_exceeded(_live_sweep_started_at):
+            print(
+                f"[live-stocks] {ticker}: live sweep deadline "
+                f"({LIVE_FEED_SWEEP_DEADLINE_SECONDS:.0f}s) exceeded, skipping for "
+                "this poll -- honestly unavailable/not refreshed, never "
+                "fabricated; the next normal poll may retry"
+            )
+            ticker_provider_failed[ticker] = True
+            provider_degraded = True
+            continue
+
         signals_this_ticker: list[RawSignal] = []
 
         live_earnings_signal, earnings_provider_failed = _live_earnings_raw_signal(
@@ -1768,9 +1888,15 @@ def _run_feed_pipeline(
             # fully simulated, never blended" rule. A fetch failure (any
             # FMP hiccup) degrades to no evidence this poll, never a
             # fabricated one -- see _fetch_market_evidence's own docstring.
+            # STRATUS 3.6.12: also honestly skipped once this poll's shared
+            # live-sweep deadline has already been exceeded (same budget as
+            # the raw-signal sweep above) -- degrades to the same safe
+            # `None` this ternary already used for a non-live-substituted
+            # entity, never a fabricated substitute.
             market_evidence = (
                 _fetch_market_evidence(entity_id, now)
                 if entity_id in live_substituted
+                and not _live_sweep_deadline_exceeded(_live_sweep_started_at)
                 else None
             )
 

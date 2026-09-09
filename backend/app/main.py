@@ -299,7 +299,21 @@ memory_engine = MemoryEngine(legacy_memory_db_path())
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+async def health() -> dict[str, str]:
+    """STRATUS 3.6.12 reliability correction (Category A -- no proof-
+    semantic impact): deliberately a true `async def`, not a sync `def`.
+    This route has zero I/O, zero DB dependency, and zero provider
+    dependency -- a plain literal response. A sync `def` route is dispatched
+    by Starlette through the same shared blocking-threadpool bridge that
+    /v1/opportunities' live-feed FMP calls also run through (see
+    logan_feed.py's LIVE_FEED_FMP_TIMEOUT_SECONDS/LIVE_FEED_SWEEP_DEADLINE_
+    SECONDS comments); an `async def` handler instead runs directly on the
+    event loop, so this route is structurally incapable of being starved by
+    blocking provider I/O, not just less likely to be. Root-caused after
+    two real incidents (2026-09-04, 2026-09-09 / INC-2026-09-09-A) where
+    `/health` intermittently failed during genuine FMP degradation despite
+    having no dependency on FMP at all.
+    """
     return {"status": "online", "service": "logan-intelligence-api", "version": "1.0.0"}
 
 
