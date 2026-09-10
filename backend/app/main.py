@@ -31,6 +31,7 @@ from .logan_feed import (
     append_ask_turn,
     get_ask_history,
     get_ask_session_event,
+    get_notification_ledger_store,
     get_opportunity_context,
     mark_notifications_reviewed,
     record_interaction,
@@ -67,6 +68,7 @@ from .models import (
     WatchRequest,
     WatchResponse,
 )
+from .notification_ledger_report import format_notification_ledger_report
 from .notifications import (
     NOTIFICATION_POLL_INTERVAL_SECONDS,
     dispatch_eligible_notifications,
@@ -509,6 +511,34 @@ def fmp_budget_route() -> dict[str, str]:
     is nothing here a caller could use against another user's account.
     """
     return {"report": fmp_budget_snapshot().format_report()}
+
+
+@app.get("/v1/dev/notification-ledger")
+def notification_ledger_report_route() -> dict[str, str]:
+    """STRATUS 3.6.12 -- Notification Candidate + Decision Ledger V1: an
+    aggregate, process-wide report (candidates evaluated, sends,
+    suppressions and their real reasons, Watch vs non-Watch, signal-family/
+    interruption breakdowns, shadow would-earn-interruption breakdown) --
+    same unauthenticated, process-wide-operational-data posture as
+    /v1/dev/fmp-budget and /v1/dev/opportunity-quality. Deliberately never
+    a per-user listing (see notification_ledger_report.py's own docstring)
+    -- this proves aggregate policy behavior, not "what did user X see."
+    Honest, explicit message (not an empty/misleading report) when the
+    ledger isn't active for this process at all (persistence disabled, or
+    no live tickers configured -- the same two gates every sibling store
+    shares).
+    """
+    store = get_notification_ledger_store()
+    if store is None:
+        return {
+            "report": (
+                "Notification Ledger inactive for this process -- requires "
+                "both memory_persistence_enabled() and a configured live "
+                "ticker universe (STRATUS_LIVE_STOCK_TICKERS or Universe "
+                "Manager). No candidates/decisions to report."
+            )
+        }
+    return {"report": format_notification_ledger_report(store)}
 
 
 @app.get("/v1/briefing", response_model=BriefingResponse)

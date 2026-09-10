@@ -171,6 +171,7 @@ class PrioritizationEngine:
             changed_since_view=changed_since_view,
             is_new_for_user=is_new_for_user,
             prioritized_at=now,
+            domain_fatigued=domain_fatigued,
             decision_trace=[
                 DecisionTraceEntry(
                     layer="prioritization",

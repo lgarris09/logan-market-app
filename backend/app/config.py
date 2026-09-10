@@ -348,6 +348,20 @@ def account_store_db_path() -> Path:
     return memory_store_db_path().parent / "accounts.db"
 
 
+def notification_ledger_store_db_path() -> Path:
+    """STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): the
+    durable SQLite file backing shadow-mode notification decision
+    provenance (see notification_ledger_store.py) when
+    memory_persistence_enabled() is true -- same pattern as every other
+    Sprint 3.6.9+ store. Defaults to a sibling `notification_ledger.db`;
+    overridable via STRATUS_NOTIFICATION_LEDGER_DB_PATH for test isolation.
+    """
+    override = os.environ.get("STRATUS_NOTIFICATION_LEDGER_DB_PATH", "").strip()
+    if override:
+        return Path(override)
+    return memory_store_db_path().parent / "notification_ledger.db"
+
+
 def clerk_issuer_url() -> str | None:
     """V2.3A: the Clerk Frontend API URL that also serves as this project's
     JWT issuer (e.g. https://your-instance.clerk.accounts.dev, or a custom
