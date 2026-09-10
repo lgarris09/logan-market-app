@@ -3568,3 +3568,106 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   Competition Ratio, deterministic Thesis Novelty Rate, complete evidence payload rate) have no confirmed
   real-data mapping and are explicitly listed as blocked (`universe_telemetry.BLOCKED_METRICS`,
   `expansion_review.UNCONFIRMED_REQUIRED_FIELDS`) rather than guessed at.
+
+---
+
+## ADR-071: Notification Candidate + Decision Ledger V1 (shadow-mode Earned Interruption foundation)
+
+- Date: 2026-09-10
+- Status: Accepted — **instrumentation/decision-provenance only; does not change any real notification
+  behavior, threshold, or policy**. Note on numbering: ADRs 71 and later were not recorded for several
+  intervening blocks (Operational Beta Hardening Blocks 1-8, Universe Manager V1a Commits 1-6, Attention
+  Field/Consumer Learning Controls, the two STRATUS 3.6.12 reliability corrections) — this entry does not
+  claim those are ADR-070's direct successor in time, only in sequence number; backfilling the gap is a
+  separate, future documentation task, not attempted here.
+- Context: an overnight autonomous block (explicitly authorized: implement/test/document/commit without
+  stopping for routine decisions, no deploy/push/merge) asked for a durable, user-scoped record of every
+  notification *candidate* STRATUS evaluates and the real SEND/SUPPRESS decision + reason for each — so a
+  question like "why has STRATUS only ever sent Logan one push notification" is answerable from data, not
+  anecdote, before any future Earned Interruption policy is built. The core instruction was explicit that
+  this must never become a second, competing notification-policy: no new composite score, no invented
+  production thresholds, additive/shadow-only where "richer" dimensions are evaluated.
+- Decision:
+  1. **Reuse over invention.** Before designing anything, found that Operational Beta Hardening Block 8
+     had already built exactly the "richer future notification dimensions" input this block needed:
+     `EarnedNotificationInputs` (`logan_core/contracts/policy.py`) + `build_earned_notification_inputs()`
+     (`backend/app/earned_notification_inputs.py`), computed from real pipeline fields
+     (`EvidenceTrust.trust_score`, `Dimensions.urgency`, `PersonalRelevanceResult`) but never wired into
+     any decision. The ledger embeds this contract wholesale rather than re-deriving credible-evidence/
+     time-sensitivity proxies of its own.
+  2. **Two small, additive contract fields**, both values already computed internally but never exposed:
+     `PolicyResult.watch_route` (`logan_core/contracts/policy.py`, populated by
+     `PolicyEngine.evaluate()`) and `PrioritizedItem.domain_fatigued` (`logan_core/contracts/
+     prioritization.py`, populated by `PrioritizationEngine.prioritize()`). Both default to their honest
+     off-state for any pre-existing direct construction — byte-identical for every existing caller/test
+     (confirmed: full logan_core suite unchanged). `in_cooldown` needed no new field at all — it's already
+     exactly `cooldown_until is not None and not changed_since_view`, both pre-existing fields.
+  3. **Real decision model, never invented policy**
+     (`logan_core/opportunity_lifecycle/notification_ledger.py::determine_ledger_outcome()`): reuses
+     `notification_gate.decide_notification()`'s own verdict/reason whenever production actually reaches
+     it (`interruption == "alert"`); for every other case, derives the suppression reason directly from
+     the exact booleans that already decided `interruption != "alert"` in
+     `PrioritizationEngine.prioritize()` (`policy_suppressed`, `view_cooldown_active`,
+     `interruption_budget_exhausted`, `insufficient_personal_relevance_or_urgency`) — never a second,
+     independent evaluation of any threshold.
+  4. **Shadow evaluation** (`evaluate_shadow()`): the five Earned-Interruption dimensions (material delta,
+     credible evidence, personal relevance, time sensitivity, interruption budget), recorded
+     independently, never collapsed into one score. Three dimensions mirror a real existing gate exactly
+     (material_delta, personal_relevance via `watch_route`, interruption_budget via
+     `domain_fatigued`/`in_cooldown`). The two with no current production gate (credible_evidence,
+     time_sensitivity) reuse `EarnedNotificationInputs`' own fields, thresholded against PolicyEngine's
+     *existing* `EXCEPTIONAL_CONFIDENCE_FLOOR`/`PERSONAL_INFERRED_URGENCY_FLOOR` constants (imported
+     directly, never a new number), explicitly labeled provisional in each dimension's own `basis` string.
+     `would_earn_interruption` is a transparent three-valued combination (any UNFAVORABLE wins regardless
+     of other dimensions' NOT_EVALUATED status; NOT_EVALUATED only when nothing is UNFAVORABLE but
+     something couldn't be evaluated; FAVORABLE only when all five are). Written to the ledger only —
+     proven structurally unreachable from any send/suppress path (nothing in `notifications.py` or
+     `logan_feed.py`'s dispatch-adjacent code ever reads a `ShadowEvaluation`), and proven behaviorally
+     (`test_shadow_evaluation_never_changes_real_dispatch_count`: breaking candidate construction entirely
+     still dispatches the identical count).
+  5. **Scope boundary, explicit and documented, not silent**: a candidate is recorded only for entities
+     with active lifecycle tracking this poll (`PipelineResult.lifecycle_delta is not None`) — the
+     identical set `decide_notification()` already evaluates in production. A demo/simulated entity, or a
+     live ticker with zero signal firing at all this poll ("ticker honestly absent"), has no real revision
+     concept to evaluate a decision against and is correctly recorded as *nothing*, never a fabricated
+     `no_material_delta` for an entity that was never actually observed.
+  6. **Persistence** (`backend/app/notification_ledger_store.py`, gated behind
+     `memory_persistence_enabled()`, same SQLite-sibling-file convention as every other Sprint 3.6.9+
+     store): `notification_candidates` is current-state (`INSERT OR REPLACE` keyed on a deterministic
+     `candidate_id_for(user_id, event_id, thesis_revision)` — a uuid5, never uuid4, so re-polling an
+     unchanged revision is provably idempotent). `notification_decisions` is append-only, but only ever
+     appends on a genuine transition — a new `(outcome, reason)` for the same `(user_id, event_id,
+     thesis_revision)` key differing from the most recently recorded one; an identical re-evaluation
+     (a retry, a duplicate poll) is a proven no-op (`test_identical_redecision_is_a_noop_not_a_duplicate`).
+     A real transition (e.g. `cooldown_suppressed` → `SEND` once a cooldown lifts) is proven to still
+     create a new row (`test_genuine_transition_creates_a_new_row`). Bounded retention (a row-count cap or
+     time-window prune) is explicitly documented as *not implemented* in this pass — flagged in the
+     store's own module docstring as a required follow-up before this ledger reaches more than a handful
+     of users, not silently deferred.
+  7. **Developer report** (`backend/app/notification_ledger_report.py`,
+     `GET /v1/dev/notification-ledger`): aggregate counts only (candidates/sends/suppressions/reasons/
+     Watch-vs-not/signal-family/interruption/shadow breakdowns) — same unauthenticated, process-wide-
+     operational-data posture as every sibling `/v1/dev/*` route, deliberately never a per-user listing
+     (`test_report_never_lists_per_user_rows` asserts no `user_id` value ever appears in the formatted
+     text), matching the explicit "do not expose private cross-user data" instruction.
+  8. **Historical duplicate-account read-only investigation** (requested alongside this block, performed
+     via read-only SQL against the production volume, no writes): the two Aug-28 accounts flagged in the
+     prior device-validation session (`43be9391...` created 00:17:02, `fbf98b82...` created 00:37:49, 20
+     minutes apart) are confirmed to be two genuinely distinct Clerk external subjects
+     (`user_3IWNAIUBKm3J5A98J4U8beAP20t` vs `user_3IWPghD5ly0MbyjPXefiNihG6J4`) sharing the identical
+     physical Expo push token — the same physical device, two separate sign-in events that each took the
+     `_provision_or_lookup_account()`/`link_account()` "first link" path instead of the second resolving
+     back to the first. `43be9391` is the actively-used identity (68 MemoryStore records, a real Watch on
+     CAT, ongoing activity); `fbf98b82` is confirmed fully dormant (zero MemoryStore records, zero
+     Watches, its only footprint is the accounts-table row and one shared push-token registration). No
+     merge/delete performed — that remains a separate, explicitly governed identity/data decision per the
+     standing instruction.
+- Consequences: STRATUS can now answer "what could we have notified this user about, what did we decide,
+  and why" from durable data for every lifecycle-tracked entity, without having changed a single existing
+  notification threshold, gate, or the actual dispatch path in `notifications.py`. Real production
+  behavior is unaffected (confirmed: full backend — 715+45 — and logan_core — 663 — suites pass unchanged
+  beyond the new tests themselves; Ruff/Black/mypy clean on every touched file). This ADR does **not**
+  activate anything — the Watch-first Earned Notification Pilot, any bounded-retention pruning
+  implementation, and the dormant-account merge/delete decision all remain explicitly separate, future,
+  governed choices. Not deployed and not pushed as part of this block, per its own explicit instruction —
+  local commit only, pending Logan/Chuck review.

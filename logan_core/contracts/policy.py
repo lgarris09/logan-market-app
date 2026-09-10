@@ -18,6 +18,16 @@ class PolicyResult(BaseModel):
     policy_rules_applied: list[str] = Field(default_factory=list)
     evaluated_at: datetime
     decision_trace: list = Field(default_factory=list)
+    # STRATUS 3.6.12 (Notification Ledger V1): PolicyEngine.evaluate()
+    # already computes this locally (_watch_route()) but, before this
+    # field existed, only ever exposed it embedded in one decision_trace
+    # rule string -- additive, defaults to "none" for any pre-existing
+    # direct construction that doesn't supply it (there is no real
+    # decision here to preserve byte-for-byte; "none" is also the correct,
+    # honest value whenever communication_mode != "alert"). Lets a reader
+    # (e.g. the notification ledger) distinguish the Personal vs
+    # Exceptional Watch route without parsing a formatted string.
+    watch_route: Literal["personal", "exceptional", "none"] = "none"
 
     @model_validator(mode="after")
     def _suppressed_when_not_permitted(self):

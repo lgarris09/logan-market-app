@@ -37,6 +37,19 @@ from .lifecycle import (
 )
 from .memory import CORRECTION_TYPE_SUPPRESS_ENTITY, MemoryRecord, RecordType
 from .mental_model import MentalModel, MentalModelDelta
+from .notification_ledger import (
+    EvidenceCredibilitySnapshot,
+    LedgerDecision,
+    LedgerOutcome,
+    LedgerSendReason,
+    LedgerSuppressionReason,
+    NotificationCandidate,
+    PrioritizationSnapshot,
+    RevisionSnapshot,
+    ShadowDimensionState,
+    ShadowEvaluation,
+    WatchDecisionSnapshot,
+)
 from .opportunity import AttentionRecommendation, Dimensions
 from .personal_relevance import PersonalRelevanceResult
 from .policy import EarnedNotificationInputs, LifecycleDeltaSummary, PolicyResult
@@ -168,4 +181,15 @@ __all__ = [
     "UNWIRED_MARKET_DRIVER_TAGS",
     "ExplorationOpportunityCostTrace",
     "ExplorationPlacementResult",
+    "NotificationCandidate",
+    "WatchDecisionSnapshot",
+    "PrioritizationSnapshot",
+    "RevisionSnapshot",
+    "EvidenceCredibilitySnapshot",
+    "ShadowDimensionState",
+    "ShadowEvaluation",
+    "LedgerDecision",
+    "LedgerOutcome",
+    "LedgerSendReason",
+    "LedgerSuppressionReason",
 ]

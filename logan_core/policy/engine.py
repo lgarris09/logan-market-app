@@ -191,6 +191,7 @@ class PolicyEngine:
             required_disclaimers=required_disclaimers,
             policy_rules_applied=policy_rules_applied,
             evaluated_at=now,
+            watch_route=watch_route,
             decision_trace=[
                 DecisionTraceEntry(
                     layer="policy",

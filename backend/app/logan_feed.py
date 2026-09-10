@@ -46,6 +46,8 @@ from logan_core.opportunity_lifecycle import (  # noqa: E402
     OpportunityLifecycleTracker,
     SinceLastLookedSummary,
     UserOpportunityKnowledge,
+    build_ledger_decision,
+    build_notification_candidate,
     compute_since_last_looked,
     compute_user_sync_delta,
     decide_notification,
@@ -94,12 +96,18 @@ from .config import (  # noqa: E402
     live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
+    notification_ledger_store_db_path,
     revision_store_db_path,
     user_knowledge_store_db_path,
 )
+from .earned_notification_inputs import build_earned_notification_inputs  # noqa: E402
 from .earnings_cache_store import EarningsCacheStore  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
+from .notification_ledger_store import (  # noqa: E402
+    NotificationLedgerStore,
+    candidate_id_for,
+)
 from .revision_store import OpportunityRevisionStore  # noqa: E402
 from .universe_operational_observations import (  # noqa: E402
     record_freshness_ratio_observation,
@@ -240,6 +248,12 @@ _earnings_cache_store: EarningsCacheStore | None = None
 _revision_store: OpportunityRevisionStore | None = None
 _user_knowledge_store: UserKnowledgeStore | None = None
 _user_knowledge_cache: dict[tuple[str, str], UserOpportunityKnowledge] = {}
+# STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): same
+# construction/gating discipline as _revision_store/_user_knowledge_store
+# immediately above -- None unless memory_persistence_enabled(). Shadow-
+# mode only: see notification_ledger_store.py's own docstring for the full
+# scope. Never read by any send/suppress decision anywhere in this file.
+_notification_ledger_store: NotificationLedgerStore | None = None
 # STRATUS 3.6.12 reliability correction: a dedicated ProviderScheduler
 # instance for this live-feed path only -- deliberately its own instance,
 # never shared with universe_manager.py's reevaluation-path scheduler or its
@@ -556,12 +570,14 @@ def _get_orchestrator() -> Orchestrator:
             # -- see lifecycle_store.py.
             global _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
             global _revision_store, _user_knowledge_store, _user_knowledge_cache
+            global _notification_ledger_store
             _lifecycle_tracker = None
             _lifecycle_store = None
             _earnings_cache_store = None
             _revision_store = None
             _user_knowledge_store = None
             _user_knowledge_cache = {}
+            _notification_ledger_store = None
             if live_stock_tickers():
                 _lifecycle_tracker = OpportunityLifecycleTracker()
                 if memory_persistence_enabled():
@@ -583,6 +599,15 @@ def _get_orchestrator() -> Orchestrator:
                         _user_knowledge_cache[
                             (knowledge.user_id, knowledge.entity_id)
                         ] = knowledge
+                    # STRATUS 3.6.12 (Notification Candidate + Decision
+                    # Ledger V1): gated identically -- a notification
+                    # candidate is meaningless without an active lifecycle
+                    # tracker to evaluate a decision against. Shadow-mode
+                    # only; see notification_ledger_store.py's own
+                    # docstring.
+                    _notification_ledger_store = NotificationLedgerStore(
+                        notification_ledger_store_db_path()
+                    )
                     # V2.3A.1 field reliability work: durable last-successful-
                     # earnings-observation store, gated identically to
                     # _lifecycle_store above (its own docstring has the full
@@ -646,6 +671,15 @@ def _get_orchestrator() -> Orchestrator:
             )
             _orchestrator = Orchestrator(deps=deps)
         return _orchestrator
+
+
+def get_notification_ledger_store() -> Optional[NotificationLedgerStore]:
+    """STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): a
+    public read accessor for the developer report route
+    (notification_ledger_report.py / GET /v1/dev/notification-ledger) --
+    None whenever persistence or lifecycle tracking isn't active for this
+    process, exactly mirroring every other store's same gating."""
+    return _notification_ledger_store
 
 
 def _get_live_provider_scheduler() -> ProviderScheduler:
@@ -1208,7 +1242,7 @@ def reset_pipeline_state() -> None:
     """
     global _orchestrator, _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
     global _revision_store, _user_knowledge_store, _user_knowledge_cache
-    global _live_provider_scheduler
+    global _live_provider_scheduler, _notification_ledger_store
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -1226,6 +1260,8 @@ def reset_pipeline_state() -> None:
             _revision_store.close()
         if _user_knowledge_store is not None:
             _user_knowledge_store.close()
+        if _notification_ledger_store is not None:
+            _notification_ledger_store.close()
         _orchestrator = None
         _lifecycle_tracker = None
         _lifecycle_store = None
@@ -1234,6 +1270,7 @@ def reset_pipeline_state() -> None:
         _user_knowledge_store = None
         _user_knowledge_cache = {}
         _live_provider_scheduler = None
+        _notification_ledger_store = None
         _baseline_established.clear()
         _user_models.clear()
         _opportunity_context_caches.clear()
@@ -1264,6 +1301,8 @@ def purge_user(user_id: str) -> None:
             _user_knowledge_store.delete_user(user_id)
         for key in [k for k in _user_knowledge_cache if k[0] == user_id]:
             del _user_knowledge_cache[key]
+        if _notification_ledger_store is not None:
+            _notification_ledger_store.delete_user(user_id)
         _baseline_established.discard(user_id)
         _user_models.pop(user_id, None)
         _opportunity_context_caches.pop(user_id, None)
@@ -2416,6 +2455,93 @@ def _run_feed_pipeline(
             freshness_states=[item.freshness_state for item in items],
             thesis_completeness=thesis_completeness,
         )
+
+        # STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): pure
+        # observation of this poll's own already-computed decision-time
+        # facts -- mirrors record_pipeline_observation()'s own "recorded
+        # after everything above is finished, never influences items/
+        # alert_event_ids, a recording failure can never affect this
+        # response" discipline exactly. Scoped to lifecycle-tracked entities
+        # only (r.lifecycle_delta is not None) -- the identical set
+        # decide_notification() already evaluates in production above; a
+        # demo/simulated entity has no real revision concept to record a
+        # notification decision against. Shadow-mode: written to
+        # notification_ledger_store.py only, never read by any send/
+        # suppress path anywhere in this codebase.
+        if _notification_ledger_store is not None:
+            decision_by_entity_id = {d.entity_id: d for d in notification_decisions}
+            for entity_id, r in results:
+                if r.lifecycle_delta is None:
+                    continue
+                try:
+                    item = item_by_event_id[r.event.event_id]
+                    in_cooldown = (
+                        r.prioritized_item.cooldown_until is not None
+                        and not r.prioritized_item.changed_since_view
+                    )
+                    ledger_candidate = build_notification_candidate(
+                        candidate_id=candidate_id_for(
+                            user_id,
+                            r.event.event_id,
+                            r.lifecycle_delta.new_revision,
+                        ),
+                        event_id=r.event.event_id,
+                        user_id=user_id,
+                        entity_id=entity_id,
+                        ticker=item.ticker,
+                        signal_family=item.signal_type,
+                        now=now,
+                        source_captured_at=(
+                            r.normalized_signals[0].captured_at
+                            if r.normalized_signals
+                            else None
+                        ),
+                        is_watched=is_watched(user_id, entity_id),
+                        watch_route=r.policy_result.watch_route,
+                        communication_mode=r.policy_result.communication_mode,
+                        personal_relevance=(
+                            r.recommendation.dimensions.personal_relevance
+                        ),
+                        connection_strength=(
+                            r.recommendation.dimensions.connection_strength
+                        ),
+                        visibility=r.prioritized_item.visibility,
+                        interruption=r.prioritized_item.interruption,
+                        in_cooldown=in_cooldown,
+                        domain_fatigued=r.prioritized_item.domain_fatigued,
+                        thesis_revision=r.lifecycle_delta.new_revision,
+                        is_notification_worthy=(
+                            r.lifecycle_delta.is_notification_worthy
+                        ),
+                        change_type=r.lifecycle_delta.change_type,
+                        knowledge=_get_user_knowledge(user_id, entity_id),
+                        confidence_score=r.confidence.confidence_score,
+                        classification=r.confidence.classification,
+                        provider_degraded=ticker_provider_failed.get(entity_id, False),
+                        freshness_state=item.freshness_state,
+                        market_evidence=item.evidence,
+                        earned_notification_inputs=(
+                            build_earned_notification_inputs(r)
+                        ),
+                    )
+                    ledger_decision = build_ledger_decision(
+                        decision_id=uuid4(),
+                        candidate=ledger_candidate,
+                        policy_permitted=r.policy_result.permitted,
+                        now=now,
+                        material_delta_decision=decision_by_entity_id.get(entity_id),
+                    )
+                    _notification_ledger_store.save_candidate(ledger_candidate)
+                    _notification_ledger_store.save_decision(
+                        ledger_decision,
+                        thesis_revision=r.lifecycle_delta.new_revision,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- shadow
+                    # instrumentation must never affect the real response.
+                    print(
+                        f"[notification-ledger] recording failed for "
+                        f"{user_id}/{entity_id}, skipping: {exc}"
+                    )
 
     return items, now, alert_event_ids, provider_degraded
 
