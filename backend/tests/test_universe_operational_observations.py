@@ -25,8 +25,10 @@ from backend.app.universe_operational_observation_store import (
     UniverseOperationalObservationStore,
 )
 from backend.app.universe_operational_observations import (
+    PROOF_EPOCH_FLOOR_DATE,
     build_operational_gate_evidence,
     historical_peak_calls_per_minute,
+    maybe_purge_operational_observations,
     observation_coverage,
     record_freshness_ratio_observation,
     record_reevaluation_provider_observations,
@@ -162,6 +164,163 @@ def test_purge_older_than_removes_only_stale_rows(tmp_path):
     assert len(remaining) == 1
     assert remaining[0].occurred_at.date() == NOW.date()
     store.close()
+
+
+def test_purge_state_marker_round_trips_and_is_restart_safe(tmp_path):
+    """STRATUS reliability correction: the durable last-purged-at marker
+    must survive a fresh store instance pointed at the same db file --
+    the exact restart-safety property the periodic purge loop depends on
+    (see main.py's `_operational_observation_purge_loop()`)."""
+    path = str(tmp_path / "obs.db")
+    store = UniverseOperationalObservationStore(path)
+    assert store.get_last_purged_at() is None
+    store.record_purge_completed(NOW)
+    store.close()
+
+    reopened = UniverseOperationalObservationStore(path)
+    assert reopened.get_last_purged_at() == NOW
+    reopened.close()
+
+
+# --- periodic purge wiring (STRATUS reliability correction, 2026-10-04) -------
+#
+# The OOM root-cause audit found `_maybe_purge()`/`purge_older_than()` fully
+# implemented but with zero callers anywhere in the application -- these
+# tests cover the new periodic caller (`maybe_purge_operational_observations()`)
+# and its safety properties: deterministic/restart-safe gating, and the
+# explicit floor that must never delete proof-window data.
+
+
+def test_purge_runs_on_first_call_when_persistence_enabled(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATUS_OPERATIONAL_OBSERVATION_RETENTION_DAYS", "1")
+    store = UniverseOperationalObservationStore(
+        str(tmp_path / "obs.db")
+    )  # same path _enable() configured
+    old_row_time = NOW - timedelta(days=400)
+    store.record_fault_mirror(
+        FaultMirrorObservation(
+            occurred_at=old_row_time, code="DATA-300", correlation_id="old-1"
+        )
+    )
+    assert store.get_last_purged_at() is None
+    store.close()
+
+    maybe_purge_operational_observations(NOW)
+
+    reopened = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    assert reopened.get_last_purged_at() == NOW
+    remaining = reopened.fault_mirrors_in_range(
+        NOW - timedelta(days=500), NOW + timedelta(days=1)
+    )
+    assert old_row_time not in {r.occurred_at for r in remaining}
+    reopened.close()
+
+
+def test_purge_is_a_no_op_before_the_minimum_interval_has_elapsed(
+    monkeypatch, tmp_path
+):
+    """Deterministic/restart-safe gating: a second check shortly after the
+    first must not re-purge (and, more importantly for production, must
+    not re-scan the tables on every periodic check -- this is a cheap
+    read of a single row until it's actually due)."""
+    _enable(monkeypatch, tmp_path)
+    maybe_purge_operational_observations(NOW)
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    first_purged_at = store.get_last_purged_at()
+    store.close()
+    assert first_purged_at == NOW
+
+    maybe_purge_operational_observations(NOW + timedelta(hours=2))
+
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    assert store.get_last_purged_at() == first_purged_at  # unchanged
+    store.close()
+
+
+def test_purge_runs_again_once_the_minimum_interval_has_elapsed(monkeypatch, tmp_path):
+    _enable(monkeypatch, tmp_path)
+    maybe_purge_operational_observations(NOW)
+
+    later = NOW + timedelta(hours=21)
+    maybe_purge_operational_observations(later)
+
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    assert store.get_last_purged_at() == later
+    store.close()
+
+
+def test_purge_never_removes_rows_on_or_after_the_proof_epoch_floor(
+    monkeypatch, tmp_path
+):
+    """The core safety requirement: even with a deliberately aggressive
+    retention window that would otherwise delete everything older than a
+    single day, a row dated on/after PROOF_EPOCH_FLOOR_DATE must survive
+    -- the floor, not the configured retention_days, is the binding
+    constraint for as long as `now` stays within 45 days of the floor."""
+    _enable(monkeypatch, tmp_path)
+    monkeypatch.setenv("STRATUS_OPERATIONAL_OBSERVATION_RETENTION_DAYS", "1")
+    store = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+
+    proof_epoch_row_time = datetime.combine(
+        PROOF_EPOCH_FLOOR_DATE, datetime.min.time(), tzinfo=timezone.utc
+    ) + timedelta(hours=1)
+    pre_epoch_row_time = proof_epoch_row_time - timedelta(days=10)
+    store.record_fault_mirror(
+        FaultMirrorObservation(
+            occurred_at=proof_epoch_row_time,
+            code="DATA-300",
+            correlation_id="proof-epoch-row",
+        )
+    )
+    store.record_fault_mirror(
+        FaultMirrorObservation(
+            occurred_at=pre_epoch_row_time,
+            code="DATA-300",
+            correlation_id="pre-epoch-row",
+        )
+    )
+    store.close()
+
+    # `now` is comfortably within the current 45-day default floor margin
+    # (2026-10-04, the day of the incident this fix addresses) -- the
+    # aggressive 1-day retention override would, on its own, delete BOTH
+    # rows; the floor must still protect the proof-epoch one.
+    maybe_purge_operational_observations(datetime(2026, 10, 4, 12, tzinfo=timezone.utc))
+
+    reopened = UniverseOperationalObservationStore(str(tmp_path / "obs.db"))
+    remaining_ids = {
+        r.correlation_id
+        for r in reopened.fault_mirrors_in_range(
+            proof_epoch_row_time - timedelta(days=20),
+            proof_epoch_row_time + timedelta(days=1),
+        )
+    }
+    reopened.close()
+    assert "proof-epoch-row" in remaining_ids
+    assert "pre-epoch-row" not in remaining_ids
+
+
+def test_purge_is_a_no_op_when_persistence_disabled(monkeypatch):
+    monkeypatch.delenv("STRATUS_PERSIST_MEMORY", raising=False)
+    reset_operational_observation_state()
+    # Must not raise, and must not construct a store at all.
+    maybe_purge_operational_observations(NOW)
+
+
+def test_purge_never_raises_even_on_an_internal_failure(monkeypatch, tmp_path):
+    """`maybe_purge_operational_observations()` is called from a bare
+    background loop (main.py) -- a purge failure must never propagate and
+    kill that loop."""
+    _enable(monkeypatch, tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated purge failure")
+
+    monkeypatch.setattr(
+        UniverseOperationalObservationStore, "get_last_purged_at", _boom
+    )
+    maybe_purge_operational_observations(NOW)  # must not raise
 
 
 # --- recording API -------------------------------------------------------------

@@ -43,6 +43,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -226,6 +227,21 @@ class UniverseOperationalObservationStore:
             "  occurred_at TEXT NOT NULL,"
             "  provider TEXT NOT NULL,"
             "  endpoint TEXT NOT NULL"
+            ")"
+        )
+        # STRATUS reliability correction (OOM root-cause fix, 2026-10-04):
+        # durable marker for the last time purge_older_than() actually ran
+        # -- a single-row table (id always 1, INSERT OR REPLACE), restart-
+        # safe by construction, colocated with the data it governs rather
+        # than a separate store/file. Lets the periodic purge caller (see
+        # backend/app/universe_operational_observations.py's _maybe_purge())
+        # enforce a real minimum interval between purges without needing any
+        # in-memory/process-lifetime state -- a fresh process immediately
+        # knows, from this table alone, whether a purge is actually due.
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS purge_state ("
+            "  id INTEGER PRIMARY KEY CHECK (id = 1),"
+            "  last_purged_at TEXT"
             ")"
         )
         self._conn.commit()
@@ -500,6 +516,28 @@ class UniverseOperationalObservationStore:
             self._conn.execute(
                 f"DELETE FROM {table} WHERE occurred_at < ?", (cutoff_text,)
             )
+        self._conn.commit()
+
+    def get_last_purged_at(self) -> Optional[datetime]:
+        """STRATUS reliability correction: the durable `purge_state` marker
+        -- None until the first purge this store has ever run."""
+        row = self._conn.execute(
+            "SELECT last_purged_at FROM purge_state WHERE id = 1"
+        ).fetchone()
+        if row is None or row["last_purged_at"] is None:
+            return None
+        return datetime.fromisoformat(row["last_purged_at"])
+
+    def record_purge_completed(self, at: datetime) -> None:
+        """Durably records `at` as the last time `purge_older_than()` ran
+        -- a separate call from `purge_older_than()` itself (not bundled
+        into it) so a test can exercise retention deletion without also
+        having to reason about the restart-safety marker, and vice versa."""
+        self._conn.execute(
+            "INSERT INTO purge_state (id, last_purged_at) VALUES (1, ?) "
+            "ON CONFLICT (id) DO UPDATE SET last_purged_at = excluded.last_purged_at",
+            (at.isoformat(),),
+        )
         self._conn.commit()
 
     def clear(self) -> None:
