@@ -15,6 +15,50 @@ from logan_core.contracts import (
 
 DEDUP_WINDOW = timedelta(hours=1)
 
+# STRATUS reliability correction (OOM root-cause fix, 2026-10-04 production
+# incident): the smallest, deterministic fixed-size recent-history policy
+# that bounds `EnrichedEvent.signal_ids`/`decision_trace` growth for a
+# single, continuously-corroborated dedup_key. Confirmed root cause: the
+# live stock feed polls every ~60s (notification poller + mobile foreground
+# poll, independently, both hitting this same shared WorldModel instance),
+# and a ticker's earnings/quote report can stay "current" -- and therefore
+# continuously corroborating within DEDUP_WINDOW -- for days to a full
+# quarter. Before this fix, every corroborating poll unconditionally
+# appended one entry to both lists with no upper bound, which measured as
+# literal, unbounded process-lifetime growth in production (confirmed via
+# live Fly SSH inspection: ~2.7M durable freshness-observation rows
+# recorded at this same per-poll rate over one month).
+#
+# 50 is chosen, not tuned: at the historically observed and currently
+# duplicated poll rate (roughly 1-3 full pipeline runs/minute across the
+# notification poller and the mobile app's own foreground poll), 50 entries
+# comfortably spans several minutes to tens of minutes of the MOST RECENT
+# real corroboration history for one (entity, signal_type) -- enough for any
+# debugging/audit use of decision_trace/signal_ids -- while keeping the
+# worst-case memory for this structure negligible regardless of how many
+# hours/days a signal stays continuously current (at most ~90 concurrently
+# tracked dedup_keys in the current 30-ticker x 3-signal-family universe,
+# each capped at 50 small entries). This never touches `supporting`, which
+# EvidenceTrustEngine's corroboration/confidence math reads directly --
+# `supporting`'s own existing duplicate-detection semantics (see process()
+# below) are completely unchanged by this bound.
+MAX_RECENT_EVENT_HISTORY = 50
+
+
+def _bounded_history(history: list) -> list:
+    """Deterministic fixed-size recent-history policy: keeps only the
+    newest `MAX_RECENT_EVENT_HISTORY` entries (oldest dropped first),
+    mirroring this codebase's existing bounded-history precedent
+    (logan_core/diagnostics/fault_codes.py's `_MAX_RECENT_OCCURRENCES` ring
+    buffer; backend/app/logan_feed.py's `_trim_ask_history`). Applied only
+    to pure provenance/audit-trail fields (`signal_ids`, `decision_trace`)
+    -- never to `supporting`, which confidence math reads directly and
+    which this fix does not touch."""
+    if len(history) <= MAX_RECENT_EVENT_HISTORY:
+        return history
+    return history[-MAX_RECENT_EVENT_HISTORY:]
+
+
 # V1 downstream-effect mapping — a small static relationship graph that lets the
 # ripple concept (one event affecting related entities) show up even before real
 # causal-link inference exists. Extension point per Layer 3 spec. Deliberately
@@ -53,11 +97,27 @@ class WorldModel:
 
     def __init__(self) -> None:
         self._entity_graph: dict[str, Entity] = {}
-        # Sliding window per (entity_id, signal_type): last signal's captured_at and
-        # the event it belongs to. A fixed calendar-aligned bucket would let two
-        # signals a few minutes apart land in different buckets purely by landing on
-        # opposite sides of an hour boundary -- this tracks recency directly instead.
-        self._recent: dict[tuple[str, str], tuple[datetime, UUID]] = {}
+        # Sliding window per (entity_id, signal_type): the last signal's own
+        # captured_at, the real processing/observation time this dedup_key was
+        # last touched, and the event it belongs to.
+        #
+        # STRATUS reliability correction (OOM root-cause fix): the window
+        # check below now requires BOTH the provider-timestamp gap AND the
+        # real processing-time gap to stay within DEDUP_WINDOW. Before this
+        # fix, only the provider-timestamp gap was checked -- for a provider
+        # report whose own captured_at never advances between polls (the
+        # live case: FMP returns the identical earnings/quote report on
+        # every ~60s poll), that gap is always exactly zero, so the window
+        # never aged out no matter how much real wall-clock time had
+        # actually passed; an unchanged report stayed "within the window"
+        # permanently. Adding the processing-time axis means a genuinely
+        # long real gap (the ticker stops being observed for longer than
+        # DEDUP_WINDOW, e.g. an outage or a long process restart gap) is
+        # correctly treated as outside the window again, while continuous,
+        # real-time polling of the same unchanged report -- the correct,
+        # intended, steady-state behavior -- is completely unaffected: both
+        # axes stay well within DEDUP_WINDOW on every normal ~60s poll.
+        self._recent: dict[tuple[str, str], tuple[datetime, datetime, UUID]] = {}
         self._prior_values: dict[tuple[str, str], object] = {}
         self._events: dict[UUID, EnrichedEvent] = {}
         # Sprint 3.6.6E: (source_id, value) of the most recently absorbed signal per
@@ -84,8 +144,21 @@ class WorldModel:
             self._entity_graph[entity_id] = entity
         return entity
 
+    def get_event(self, event_id: UUID) -> Optional[EnrichedEvent]:
+        """Read-only lookup into this instance's own event history, by
+        event_id. Added alongside the OOM reliability correction so a
+        dedup-window rollover (see process()) is verifiably additive --
+        the prior event this entity/signal_type was tracking must still be
+        retrievable, never silently dropped. Returns None for an event_id
+        this WorldModel instance has never produced."""
+        return self._events.get(event_id)
+
     def process(
-        self, signal: NormalizedSignal, trigger_event: Optional[TriggerEvent] = None
+        self,
+        signal: NormalizedSignal,
+        trigger_event: Optional[TriggerEvent] = None,
+        *,
+        observed_at: Optional[datetime] = None,
     ) -> EnrichedEvent:
         """V3.1.4 BATCH-2 note on `EnrichedEvent.contradicting`: reserved, not
         populated. A deterministic contradiction rule needs to compare two
@@ -99,7 +172,23 @@ class WorldModel:
         prohibit. `contradicting` stays reserved on the contract; the
         downstream `ReasoningEngine` branch that reads it is documented as
         currently unreachable for the same reason, not silently dead.
+
+        `observed_at` (STRATUS reliability correction): the real processing/
+        observation time this call is happening at, used only for the
+        dedup-window-aging check in `_recent` (see `__init__`'s own comment)
+        -- never used for `EnrichedEvent.occurred_at` (still `signal.
+        captured_at`, the real factual provider timestamp, completely
+        unchanged) or for `change_delta`/`summary`/any user-visible thesis
+        field. Defaults to `datetime.now(timezone.utc)` when omitted, so
+        every existing production caller (the orchestrator never passes
+        this) gets real wall-clock processing time automatically, with
+        byte-identical behavior to before this fix in the steady-state,
+        continuous-polling case. Tests pass it explicitly to simulate a
+        real elapsed-time gap without needing to actually sleep.
         """
+        if observed_at is None:
+            observed_at = datetime.now(timezone.utc)
+
         entity = self._get_or_create_entity(
             signal.entity_id, signal.entity_type, signal.domain
         )
@@ -110,8 +199,14 @@ class WorldModel:
         dedup_key = (signal.entity_id, signal.signal_type)
         recent = self._recent.get(dedup_key)
         prior_event_id: UUID | None = None
-        if recent is not None and (signal.captured_at - recent[0]) <= DEDUP_WINDOW:
-            prior_event_id = recent[1]
+        if recent is not None:
+            prior_captured_at, prior_observed_at, recent_event_id = recent
+            within_captured_window = (
+                signal.captured_at - prior_captured_at
+            ) <= DEDUP_WINDOW
+            within_observed_window = (observed_at - prior_observed_at) <= DEDUP_WINDOW
+            if within_captured_window and within_observed_window:
+                prior_event_id = recent_event_id
 
         if prior_event_id is None:
             # First time this entity+signal_type has been seen in this time window —
@@ -200,17 +295,20 @@ class WorldModel:
             # same observation were inflating confidence purely from being
             # polled repeatedly, never from anything genuinely new. `signal_ids`
             # still grows either way, preserving the honest provenance record
-            # that this poll happened. A different source, or the same source
-            # reporting genuinely different content (e.g. a corrected report --
-            # see test_corrected_earnings_replaces_prior_trigger_for_same_code),
-            # is real corroboration and still grows `supporting` as before.
+            # that this poll happened -- bounded by _bounded_history() below
+            # (STRATUS reliability correction), same as `decision_trace`. A
+            # different source, or the same source reporting genuinely
+            # different content (e.g. a corrected report -- see
+            # test_corrected_earnings_replaces_prior_trigger_for_same_code),
+            # is real corroboration and still grows `supporting` as before
+            # (never bounded -- confidence math reads it directly).
             last_source_id, last_value = self._last_observed.get(
                 dedup_key, (None, None)
             )
             is_duplicate_observation = (
                 signal.source_id == last_source_id and signal.value == last_value
             )
-            new_signal_ids = existing.signal_ids + [signal.signal_id]
+            new_signal_ids = _bounded_history(existing.signal_ids + [signal.signal_id])
             if is_duplicate_observation:
                 new_supporting = existing.supporting
                 trace_rule = (
@@ -233,18 +331,20 @@ class WorldModel:
                     "supporting": new_supporting,
                     "enriched_at": datetime.now(timezone.utc),
                     "trigger_events": merged_triggers,
-                    "decision_trace": existing.decision_trace
-                    + [
-                        DecisionTraceEntry(
-                            layer="world_model",
-                            rule=trace_rule,
-                            timestamp=datetime.now(timezone.utc),
-                        )
-                    ],
+                    "decision_trace": _bounded_history(
+                        existing.decision_trace
+                        + [
+                            DecisionTraceEntry(
+                                layer="world_model",
+                                rule=trace_rule,
+                                timestamp=datetime.now(timezone.utc),
+                            )
+                        ]
+                    ),
                 }
             )
 
-        self._recent[dedup_key] = (signal.captured_at, event.event_id)
+        self._recent[dedup_key] = (signal.captured_at, observed_at, event.event_id)
         self._last_observed[dedup_key] = (signal.source_id, signal.value)
         self._events[event.event_id] = event
         return event

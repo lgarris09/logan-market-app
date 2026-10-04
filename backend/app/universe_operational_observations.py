@@ -118,12 +118,91 @@ def reset_operational_observation_state() -> None:
     set_call_observer(_call_observer_callback)
 
 
+# STRATUS reliability correction (OOM root-cause fix, 2026-10-04): this
+# purge path is now wired to a real periodic caller (see main.py's
+# `_operational_observation_purge_loop()`) for the first time -- it was
+# previously fully implemented but had zero callers anywhere in the
+# application, which is exactly why this store's tables had grown to
+# ~2.7M rows / ~200MB with a `freelist_count` of 0 (confirmed via live,
+# read-only Fly SSH inspection) after a month with no deletions ever
+# happening.
+#
+# PROOF_EPOCH_FLOOR_DATE: the 14-day V1a proof epoch's documented start
+# date (universe_daily_telemetry's own earliest real row, confirmed via
+# the same read-only inspection: 2026-09-04). This purge path must never
+# delete a row dated on or after this floor, regardless of the configured
+# rolling `operational_observation_retention_days()` window -- the
+# expansion-review evaluator (expansion_review.py) is not yet wired to
+# actually call build_operational_gate_evidence() against these tables,
+# so there is currently no way for this module alone to know whether the
+# proof has been formally evaluated. Purging proof-epoch data before a
+# human explicitly resolves the proof (passed, reset, or abandoned) would
+# be irreversible. Raise, or remove, this floor only as part of that
+# explicit decision -- never silently, and never just because the
+# configured retention window alone would now allow it.
+PROOF_EPOCH_FLOOR_DATE = date(2026, 9, 4)
+
+# A real purge (a DELETE scan across seven tables, one of which has grown
+# into the millions of rows) is deliberately not run on every check -- the
+# periodic caller checks far more often than it actually needs to purge,
+# specifically so a short-lived process (the exact OOM-cycle scenario this
+# fix addresses) still reliably gets a chance to purge shortly after every
+# restart. 20 hours (not 24) leaves real margin below "once a day" so
+# ordinary restart/check-interval jitter can never cause a day to be
+# silently skipped.
+_MIN_HOURS_BETWEEN_PURGES = 20.0
+
+
+def _safe_purge_cutoff(now: datetime) -> date:
+    """The actual cutoff passed to `purge_older_than()`: the EARLIER
+    (further back in calendar time) of the configured rolling retention
+    window and `PROOF_EPOCH_FLOOR_DATE` -- so a row is only ever eligible
+    for deletion when it is BOTH older than the configured retention
+    window AND strictly before the proof epoch's own start. Until
+    `now - retention_days` genuinely advances past PROOF_EPOCH_FLOOR_DATE
+    (45 days past 2026-09-04 at the current default retention, i.e.
+    2026-10-19), the floor is the binding constraint and nothing from the
+    proof epoch is touched, regardless of the configured retention_days
+    value."""
+    rolling_cutoff = now.date() - timedelta(
+        days=operational_observation_retention_days()
+    )
+    return min(rolling_cutoff, PROOF_EPOCH_FLOOR_DATE)
+
+
 def _maybe_purge(now: datetime) -> None:
+    """Deterministic and restart-safe: gated on a durable `last_purged_at`
+    marker (survives a process restart, unlike any in-memory alternative),
+    never on real-time sleep scheduling -- this is precisely the anti-
+    pattern already confirmed to starve the Universe Scheduler (a 24-hour
+    sleep-before-first-check that a ~4-hour-lived process never survives
+    long enough to reach). The periodic caller is expected to invoke this
+    far more often than a purge is actually due; this function is what
+    decides whether a purge should actually happen on any given call."""
     store = _get_store()
     if store is None:
         return
-    cutoff = now.date() - timedelta(days=operational_observation_retention_days())
+    last_purged_at = store.get_last_purged_at()
+    if last_purged_at is not None:
+        elapsed_hours = (now - last_purged_at).total_seconds() / 3600.0
+        if elapsed_hours < _MIN_HOURS_BETWEEN_PURGES:
+            return
+    cutoff = _safe_purge_cutoff(now)
     store.purge_older_than(cutoff)
+    store.record_purge_completed(now)
+
+
+def maybe_purge_operational_observations(now: Optional[datetime] = None) -> None:
+    """Public entry point for the periodic purge loop (see main.py's
+    `_operational_observation_purge_loop()`) and for tests -- a thin
+    wrapper so the loop/tests don't need to import the private `_maybe_
+    purge` name. Never raises: a purge failure must not be allowed to
+    break whatever real work triggered this call (consistent with every
+    other `record_*`/background-maintenance function in this module)."""
+    try:
+        _maybe_purge(now if now is not None else datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[operational-observation] purge failed, will retry later: {exc}")
 
 
 def record_reevaluation_provider_observations(

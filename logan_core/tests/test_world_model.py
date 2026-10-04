@@ -9,7 +9,7 @@ from logan_core.receptors import (
 )
 from logan_core.receptors.providers import EarningsReport
 from logan_core.trigger_detection import StocksTriggerEvaluator
-from logan_core.world_model import WorldModel
+from logan_core.world_model import DEDUP_WINDOW, MAX_RECENT_EVENT_HISTORY, WorldModel
 
 
 def test_corroborating_signal_dedupes_into_same_event(now):
@@ -282,3 +282,164 @@ def test_repeated_identical_fmp_evidence_does_not_inflate_confidence(now):
         assert repeated_trust.trust_score == first_trust.trust_score
         assert repeated_trust.corroboration == first_trust.corroboration
         assert repeated_trust.corroboration == 0
+
+
+# --- STRATUS reliability correction (2026-10-04 OOM root-cause fix) ------
+#
+# Confirmed production root cause: the live stock feed runs the full
+# pipeline roughly 1-3 times/minute, continuously, forever (the 60s
+# notification poller and the mobile app's own foreground poll both call
+# it independently against the same shared WorldModel). Every poll that
+# corroborates into an already-known event used to append, unconditionally
+# and without bound, to that event's `signal_ids`/`decision_trace` -- and
+# the dedup window that decides "is this corroboration" never actually
+# aged out for an unchanged provider report, because it compared the
+# signal's own (frozen) `captured_at` against itself. These tests cover
+# the two fixes together: bounded growth, and real-time-based dedup aging.
+
+
+def test_signal_ids_and_decision_trace_remain_bounded_under_heavy_repeated_polling(
+    now,
+):
+    """Reproduces the confirmed OOM root cause at scale: thousands of
+    corroborating polls of one unchanged signal must not grow
+    `signal_ids`/`decision_trace` without bound."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    event = world_model.process(normalizer.normalize(_nvda_raw(now)), observed_at=now)
+    for i in range(1, 3000):
+        event = world_model.process(
+            normalizer.normalize(_nvda_raw(now + timedelta(seconds=i))),
+            observed_at=now + timedelta(seconds=i),
+        )
+
+    assert len(event.signal_ids) <= MAX_RECENT_EVENT_HISTORY
+    assert len(event.decision_trace) <= MAX_RECENT_EVENT_HISTORY
+    # `supporting` semantics are completely untouched by the bound: these
+    # are all identical-content duplicate polls, so it must stay exactly
+    # as empty as it is today, regardless of the new cap.
+    assert event.supporting == []
+    assert event.is_new is False
+    # The event identity itself is unaffected by bounding provenance --
+    # this is still one continuously-corroborated event throughout.
+    assert event.event_id == world_model.get_event(event.event_id).event_id
+
+
+def test_genuine_corroboration_still_recorded_after_bound_is_exceeded(now):
+    """The fixed-size history bound trims provenance bookkeeping only --
+    genuinely new corroborating evidence arriving after the bound has
+    already been exceeded must still be recognized and still raise
+    `supporting`, exactly as before this fix."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    total_duplicate_polls = MAX_RECENT_EVENT_HISTORY + 20
+
+    event = world_model.process(normalizer.normalize(_nvda_raw(now)), observed_at=now)
+    for i in range(1, total_duplicate_polls):
+        event = world_model.process(
+            normalizer.normalize(_nvda_raw(now + timedelta(seconds=i))),
+            observed_at=now + timedelta(seconds=i),
+        )
+    assert event.supporting == []
+    assert len(event.signal_ids) <= MAX_RECENT_EVENT_HISTORY
+
+    # A genuinely different source, still well within DEDUP_WINDOW of the
+    # last touch -- real corroboration, not a duplicate.
+    next_t = total_duplicate_polls
+    different_source = normalizer.normalize(
+        _nvda_raw(now + timedelta(seconds=next_t), source_id="bloomberg_terminal")
+    )
+    event = world_model.process(
+        different_source, observed_at=now + timedelta(seconds=next_t)
+    )
+
+    assert different_source.signal_id in event.supporting
+    assert "corroboration" in event.decision_trace[-1].rule
+    assert len(event.signal_ids) <= MAX_RECENT_EVENT_HISTORY
+    assert len(event.decision_trace) <= MAX_RECENT_EVENT_HISTORY
+
+
+def test_dedup_ages_out_by_processing_time_even_when_provider_timestamp_is_frozen(
+    now,
+):
+    """The actual bug: a provider report whose own captured_at never
+    advances between polls (the live case -- FMP keeps returning the
+    identical earnings report every ~60s) must not stay inside the dedup
+    window forever purely because `signal.captured_at - recent[0]` always
+    evaluated to zero. Two touches of the SAME unchanged captured_at,
+    separated by more than DEDUP_WINDOW of real processing time, must now
+    correctly age out into a new event."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    raw = earnings_report_to_raw_signal(_earnings_report(now))
+    first_event = world_model.process(normalizer.normalize(raw), observed_at=now)
+
+    # Same unchanged report (captured_at == now, exactly as before) but
+    # processed more than DEDUP_WINDOW of real wall-clock time later.
+    same_raw = earnings_report_to_raw_signal(_earnings_report(now))
+    second_event = world_model.process(
+        normalizer.normalize(same_raw),
+        observed_at=now + DEDUP_WINDOW + timedelta(minutes=1),
+    )
+
+    assert second_event.is_new is True
+    assert second_event.event_id != first_event.event_id
+    # Genuinely new events/signals are still retained -- a dedup rollover
+    # is additive, never destructive: the original event must still be
+    # retrievable by its own event_id.
+    retained = world_model.get_event(first_event.event_id)
+    assert retained is not None
+    assert retained.event_id == first_event.event_id
+    assert retained.is_new is True
+
+
+def test_dedup_still_merges_within_processing_time_window_when_provider_timestamp_is_frozen(
+    now,
+):
+    """Companion regression: continuous real-time polling of the same
+    unchanged report -- the correct, intended, steady-state production
+    behavior -- must keep merging into the same event exactly as before.
+    This fix must never make STRATUS invent a new opportunity every poll."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    raw = earnings_report_to_raw_signal(_earnings_report(now))
+    first_event = world_model.process(normalizer.normalize(raw), observed_at=now)
+
+    same_raw = earnings_report_to_raw_signal(_earnings_report(now))
+    second_event = world_model.process(
+        normalizer.normalize(same_raw), observed_at=now + timedelta(minutes=1)
+    )
+
+    assert second_event.is_new is False
+    assert second_event.event_id == first_event.event_id
+
+
+def test_dedup_aging_is_unaffected_when_observed_at_is_omitted(now):
+    """Every existing/production caller never passes `observed_at` (the
+    orchestrator calls `world_model.process(n, trigger_event=t)` with no
+    third argument) -- confirms the default (real `datetime.now(timezone.
+    utc)`) still correctly merges two calls made moments apart in real
+    time, with no explicit observed_at needed."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+
+    n1 = normalizer.normalize(tesla_ai_partnership_signal(now))
+    n2 = normalizer.normalize(tesla_ai_partnership_corroboration(now))
+
+    first_event = world_model.process(n1)
+    second_event = world_model.process(n2)
+
+    assert second_event.is_new is False
+    assert second_event.event_id == first_event.event_id
+
+
+def test_get_event_returns_none_for_unknown_event_id(now):
+    """The new read-only accessor is a plain, total lookup -- never raises
+    for an event_id this instance never produced."""
+    from uuid import uuid4
+
+    world_model = WorldModel()
+    assert world_model.get_event(uuid4()) is None

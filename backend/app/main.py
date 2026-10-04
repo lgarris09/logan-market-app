@@ -85,6 +85,7 @@ from .telemetry_models import (
     TelemetryEventResponse,
 )
 from .universe_manager import run_production_scheduled_reevaluation
+from .universe_operational_observations import maybe_purge_operational_observations
 from .universe_report import build_universe_report
 from .user_context import (
     AccountLinkConflictError,
@@ -201,6 +202,42 @@ async def _universe_reevaluation_poll_loop() -> None:
             print(f"[universe] scheduler poller error, will retry next cycle: {exc}")
 
 
+# STRATUS reliability correction (OOM root-cause fix, 2026-10-04): how
+# often this process *checks* whether an operational-observation purge is
+# due -- deliberately short (1 hour), and deliberately NOT mirroring
+# `_universe_reevaluation_poll_loop()`'s sleep-then-check shape, for the
+# same reason that loop was confirmed to never fire: a 24-hour sleep
+# before the first check never survives a process whose actual lifetime
+# turns out to be shorter than that (the confirmed OOM-cycle scenario this
+# whole fix addresses). `_operational_observation_purge_loop()` below
+# checks immediately on every start, before its first sleep, so even a
+# short-lived process reliably gets a chance to purge. Whether a purge
+# actually *runs* on any given check is governed by the durable
+# `last_purged_at` marker inside `maybe_purge_operational_observations()`
+# itself (see universe_operational_observations.py), not by this interval
+# -- this constant only bounds how promptly a genuinely overdue purge is
+# noticed, exactly mirroring `UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS`'s
+# own role for that loop.
+OPERATIONAL_OBSERVATION_PURGE_CHECK_INTERVAL_SECONDS = 3600.0
+
+
+async def _operational_observation_purge_loop() -> None:
+    """Check-then-sleep (not sleep-then-check): runs its first check
+    immediately on startup, then sleeps between checks. Never touches
+    pipeline execution, confidence, qualification, or notification
+    behavior -- this purely retires old rows from the operational-
+    observation event log (see universe_operational_observations.py's own
+    documented, fail-safe cutoff logic), independent of and unrelated to
+    the notification poller's or Universe Scheduler's own cadence, both of
+    which remain completely unchanged by this loop's existence."""
+    while True:
+        try:
+            await asyncio.to_thread(maybe_purge_operational_observations)
+        except Exception as exc:  # noqa: BLE001 -- see lifespan docstring below
+            print(f"[operational-observation] purge-loop error, will retry: {exc}")
+        await asyncio.sleep(OPERATIONAL_OBSERVATION_PURGE_CHECK_INTERVAL_SECONDS)
+
+
 # Module-level handle, not a local in `_lifespan()` -- lets a second
 # `_lifespan()` entry within the same process (e.g. a test opening a second
 # `TestClient` context before the first's shutdown ran) detect and skip
@@ -246,6 +283,16 @@ async def _lifespan(_app: Optional[FastAPI]) -> AsyncIterator[None]:
     # on, the active CORS policy) without requiring a code change to check.
     print(startup_config_summary())
     task = asyncio.create_task(_notification_poll_loop())
+    # STRATUS reliability correction (OOM root-cause fix): unconditional,
+    # like `task` above, not module-level-guarded like
+    # `_universe_scheduler_task` below -- `maybe_purge_operational_
+    # observations()` is already internally idempotent (gated on a durable
+    # `last_purged_at` marker, see universe_operational_observations.py),
+    # so a nested `_lifespan()` entry creating a second instance of this
+    # loop is harmless (at most a redundant cheap check), unlike the
+    # Universe Scheduler's real, budgeted FMP calls, which that guard
+    # exists specifically to never double.
+    purge_task = asyncio.create_task(_operational_observation_purge_loop())
 
     global _universe_scheduler_task
     # `started_universe_task_here` (not just "is _universe_scheduler_task
@@ -267,6 +314,7 @@ async def _lifespan(_app: Optional[FastAPI]) -> AsyncIterator[None]:
     yield
 
     task.cancel()
+    purge_task.cancel()
     if started_universe_task_here and _universe_scheduler_task is not None:
         _universe_scheduler_task.cancel()
         _universe_scheduler_task = None
