@@ -545,6 +545,26 @@ class FmpResponseCache:
             age_seconds=age_seconds,
         )
 
+    def last_successful_fetch_age_seconds(
+        self, endpoint: str, entity_id: str
+    ) -> Optional[float]:
+        """Read-only: seconds since this (endpoint, entity_id) was last
+        successfully fetched from the provider, or None when this cache has
+        no entry for it at all. This is the age the freshness contract
+        (freshness.py) is defined against -- "observed within its refresh
+        cadence" -- as opposed to the age of the market event the fetched
+        data describes. An entry served from stale grace during a provider
+        failure keeps its original fetch time, so its age keeps growing
+        past the TTL exactly as the contract's STALE_WITHIN_GRACE /
+        UNAVAILABLE states expect; an entry recovered from durable storage
+        (seed_stale_entry) carries its real wall-clock age. Never fetches,
+        never mutates, never counts as a cache hit.
+        """
+        entry = self._entries.get((endpoint, entity_id))
+        if entry is None:
+            return None
+        return max(self._clock() - entry.cached_at, 0.0)
+
     def seed_stale_entry(
         self, endpoint: str, entity_id: str, value: object, age_seconds: float
     ) -> None:
@@ -603,6 +623,15 @@ def reset_fmp_cache() -> None:
     convention for process-lifetime state.
     """
     _shared_fmp_cache.clear()
+
+
+def fmp_last_successful_fetch_age_seconds(
+    endpoint: str, entity_id: str
+) -> Optional[float]:
+    """The shared, process-wide cache's answer to "how long ago did STRATUS
+    last successfully fetch this" -- see
+    FmpResponseCache.last_successful_fetch_age_seconds(). Read-only."""
+    return _shared_fmp_cache.last_successful_fetch_age_seconds(endpoint, entity_id)
 
 
 def fmp_budget_snapshot() -> FmpBudgetSnapshot:

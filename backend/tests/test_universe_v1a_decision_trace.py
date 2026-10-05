@@ -226,20 +226,17 @@ def test_v1a_decision_trace_end_to_end(monkeypatch):
     by_ticker = {item.entity_id: item for item in feed.items}
 
     # 1. Candidate source -> eligibility -> membership -> observation/
-    # freshness: a genuinely stale/unavailable input never gets a live/
-    # current-attention treatment. XOM's earnings report is 5 days old and
-    # this ticker's provider-failure tracker is untouched (a real fetch
-    # succeeded, just for old data) -- UNAVAILABLE only fires via the
-    # explicit failure branch, so an aged-but-successfully-fetched report
-    # must classify as a graceful staleness state, never FRESH.
-    assert by_ticker["XOM"].freshness_state in {
-        "STALE_WITHIN_GRACE",
-        "UNAVAILABLE",
-    }
-    assert by_ticker["XOM"].freshness_state != "FRESH"
-    # Quote-driven signals (full Unix-epoch precision, fetched "now") reach
-    # genuine FRESH -- proving freshness is a real age computation, not a
-    # blanket label.
+    # freshness. ADR-075 (2026-10-05) changed what this assertion means:
+    # freshness is the age of STRATUS's latest successful fetch, not the
+    # age of the market event. XOM's earnings report is 5 days old, but it
+    # was fetched successfully on this poll, so it is FRESH -- this used to
+    # assert the opposite ("an aged-but-successfully-fetched report must
+    # never be FRESH"), which is exactly the event-age reading that marked
+    # 99.8% of production classifications UNAVAILABLE. A stale or failed
+    # *fetch* is what must never read FRESH; see
+    # test_freshness_fetch_age.py.
+    assert by_ticker["XOM"].freshness_state == "FRESH"
+    # Quote-driven signals fetched "now" are FRESH on the same basis.
     assert by_ticker["GOOGL"].freshness_state == "FRESH"
     assert by_ticker["META"].freshness_state == "FRESH"
 
