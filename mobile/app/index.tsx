@@ -103,11 +103,13 @@ type FeedState =
 // process-lifetime/in-memory on the server, not durable across a backend
 // restart, but a genuine "is this new to this user" signal rather than the
 // earlier client-side event_id-diffing workaround. Just enough shown here
-// to say what changed: name and confidence, nothing fabricated.
+// to say what changed: name and evidence strength, nothing fabricated. The
+// label only, never a percentage -- confidence_score is an internal
+// evidence measure, not a probability (ADR-076).
 type OpportunityNotification = {
   eventId: string;
   name: string;
-  confidencePct: number;
+  evidenceLabel: string;
 };
 
 const NOTIFICATION_POLL_INTERVAL_MS = 60000;
@@ -317,7 +319,7 @@ export default function AttentionFieldScreen() {
       .map((item) => ({
         eventId: item.event_id,
         name: item.ticker ?? item.display_name,
-        confidencePct: Math.round(item.confidence_score * 100),
+        evidenceLabel: `${item.confidence_label} evidence`,
       }));
   }, [state, locallyReviewedIds]);
 
@@ -715,13 +717,13 @@ export default function AttentionFieldScreen() {
                 style={styles.notifRow}
                 onPress={() => openNotificationCard(n.eventId)}
                 accessibilityRole="button"
-                accessibilityLabel={`${n.name}, ${n.confidencePct} percent confidence`}
+                accessibilityLabel={`${n.name}, ${n.evidenceLabel}`}
                 accessibilityHint="Opens this opportunity's card"
               >
                 <Text style={styles.notifRowName} numberOfLines={1}>
                   {n.name}
                 </Text>
-                <Text style={styles.notifRowPct}>{n.confidencePct}%</Text>
+                <Text style={styles.notifRowPct}>{n.evidenceLabel}</Text>
               </Pressable>
             ))}
           </Pressable>

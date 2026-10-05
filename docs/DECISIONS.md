@@ -3653,3 +3653,24 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      self-corroboration will record one `confidence_decreased` revision. Nothing about the underlying
      evidence weakened; this is a correction. How to present that one-time step needs a decision before
      deploy.
+
+## ADR-077: Confidence is presented as evidence strength, never as a percentage
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05) — implemented and tested locally on
+  `feat/evidence-strength-presentation`; **not pushed, not deployed**; the mobile part needs a new build.
+- Context: `confidence_score` is an internal measure of how well supported an observation is. Shown as
+  "60%" it reads as a likelihood, which it is not. The main card stopped showing it on 2026-08-29, but a
+  percentage or raw score still reached users in four places: the notification list row and its
+  accessibility label, two legacy/demo cards, revision explanations ("Confidence strengthened from 0.59 to
+  0.62"), and the Ask STRATUS model context (which passed the raw score to the LLM).
+- Decision: No user-facing surface shows the score as a number. The label is shown as evidence strength
+  ("Moderate evidence"). Revision explanations say the evidence strengthened or weakened, without numbers.
+  The Ask STRATUS context carries the label and classification only, with an explicit instruction never to
+  express it as a percentage or probability. `confidence_score` itself is unchanged and stays on the data
+  contract for ranking, lifecycle and audit.
+- Consequences: Nothing about scoring, ranking or qualification changes. The Low / Moderate / High labels
+  are kept for now with their existing thresholds; "High" is unreachable for single-provider evidence
+  today, so the thresholds should be re-examined when the magnitude-aware trigger contribution is decided.
+  Not changed, and noted for cleanup: `mobile/components/ConfidenceRing.tsx` still renders a percentage but
+  is imported nowhere, and `mobile/lib/attentionLayout.ts` still sizes a label from a percentage string
+  that is no longer displayed.

@@ -28,7 +28,7 @@ export function OpportunityCard({ item }: { item: DeliveredItem }) {
           {surfaceLabels[item.surface] ?? item.surface.toUpperCase()}
         </Text>
         <Text style={styles.confidence}>
-          {item.confidence_label} · {Math.round(item.confidence_score * 100)}%
+          {item.confidence_label} evidence
         </Text>
       </View>
 
