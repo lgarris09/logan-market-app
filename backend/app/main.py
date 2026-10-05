@@ -82,7 +82,10 @@ from .telemetry_models import (
     TelemetryEventRequest,
     TelemetryEventResponse,
 )
-from .universe_manager import run_production_scheduled_reevaluation
+from .universe_manager import (
+    run_production_scheduled_reevaluation,
+    seconds_until_reevaluation_due,
+)
 from .universe_operational_observations import maybe_purge_operational_observations
 from .universe_report import build_universe_report
 from .user_context import (
@@ -174,19 +177,69 @@ async def _notification_poll_loop() -> None:
 # opens, never how often FMP is actually called.
 UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS = 24.0 * 3600.0
 
+# Universe Scheduler restart-safety block (ADR-072): the shortest this loop
+# will ever wait between two consecutive checks. Only matters when the
+# durable state says "due now" but the previous check did not manage to
+# claim/record a start (e.g. the state store itself is erroring) -- without
+# a floor that would be a hot loop. Never applies to the very first check
+# after startup, so an already-overdue reevaluation still runs immediately.
+UNIVERSE_REEVALUATION_MIN_RECHECK_SECONDS = 60.0
+
+
+def _universe_reevaluation_wait_seconds() -> float:
+    """How long the scheduler loop should sleep before its next check:
+    the *remaining* time until the durable due point (see
+    `universe_manager.seconds_until_reevaluation_due()`), capped at
+    `UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS` -- so a restart never
+    resets the clock (the due point comes from durable state, not from
+    when this process started), and a wake-up is never further away than
+    the pre-existing daily check. With persistence disabled there is no
+    durable due point; the loop keeps its original fixed daily interval.
+    Reading the state must never kill the loop -- on any error, fall back
+    to the daily interval.
+    """
+    try:
+        remaining = seconds_until_reevaluation_due()
+    except Exception as exc:  # noqa: BLE001 -- see lifespan docstring below
+        print(f"[universe] scheduler due-time read failed, using daily check: {exc}")
+        remaining = None
+    if remaining is None:
+        return UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS
+    return min(remaining, UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS)
+
 
 async def _universe_reevaluation_poll_loop() -> None:
-    """Mirrors `_notification_poll_loop()`'s exact shape (sleep-then-check,
-    offload the sync/blocking call via `asyncio.to_thread`, never let one
-    bad cycle kill future cycles) -- calls
-    `run_production_scheduled_reevaluation()`, which itself calls
+    """Offloads the sync/blocking call via `asyncio.to_thread` and never
+    lets one bad cycle kill future cycles, like `_notification_poll_loop()`
+    -- calls `run_production_scheduled_reevaluation()`, which itself calls
     `universe_manager.run_scheduled_universe_reevaluation()` (never the
     un-gated `run_universe_reevaluation()` directly), so this loop can never
     bypass the durable cadence gate. Deliberately has no Personal Learning
     input anywhere in this call chain.
+
+    Universe Scheduler restart-safety block (ADR-072): this loop used to
+    sleep a fixed 24 hours *before its first check*, so any process that
+    lived less than 24 hours (the 2026-10 OOM cycle: ~4 hours) never
+    checked at all and every restart reset the clock. It now sleeps only
+    the remaining time until the durable due point
+    (`_universe_reevaluation_wait_seconds()`): zero when already overdue at
+    startup, the remainder when not. Whether a reevaluation actually *runs*
+    is still decided solely by the gated wrapper -- an early or duplicate
+    wake-up is a cheap, recorded skip, never a second run.
     """
+    first_check = True
     while True:
-        await asyncio.sleep(UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS)
+        wait_seconds = await asyncio.to_thread(_universe_reevaluation_wait_seconds)
+        if not first_check:
+            wait_seconds = max(
+                wait_seconds,
+                min(
+                    UNIVERSE_REEVALUATION_MIN_RECHECK_SECONDS,
+                    UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS,
+                ),
+            )
+        first_check = False
+        await asyncio.sleep(wait_seconds)
         try:
             outcome = await asyncio.to_thread(run_production_scheduled_reevaluation)
             if outcome.executed:
@@ -203,8 +256,9 @@ async def _universe_reevaluation_poll_loop() -> None:
 # STRATUS reliability correction (OOM root-cause fix, 2026-10-04): how
 # often this process *checks* whether an operational-observation purge is
 # due -- deliberately short (1 hour), and deliberately NOT mirroring
-# `_universe_reevaluation_poll_loop()`'s sleep-then-check shape, for the
-# same reason that loop was confirmed to never fire: a 24-hour sleep
+# `_universe_reevaluation_poll_loop()`'s original sleep-then-check shape
+# (since corrected, see ADR-072), for the same reason that loop was
+# confirmed to never fire: a 24-hour sleep
 # before the first check never survives a process whose actual lifetime
 # turns out to be shorter than that (the confirmed OOM-cycle scenario this
 # whole fix addresses). `_operational_observation_purge_loop()` below

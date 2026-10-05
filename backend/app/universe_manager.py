@@ -18,7 +18,7 @@ to be wrapped by that scheduler once wired, not to self-pace.
 
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional, Protocol, TypeVar
 
@@ -398,6 +398,81 @@ REEVALUATION_MIN_INTERVAL_SECONDS = 30.0 * 24.0 * 3600.0
 STALE_RUNNING_TIMEOUT_SECONDS = 3600.0
 
 
+# Universe Scheduler restart-safety block (ADR-072): how soon a run that
+# *completed with a failure* may be attempted again. Before this block a
+# failed run consumed the entire 30-day REEVALUATION_MIN_INTERVAL_SECONDS
+# window exactly like a success -- one transient provider outage on the
+# due day silently cost a whole month. 24 hours is deliberately the same
+# value as main.py's UNIVERSE_REEVALUATION_POLL_INTERVAL_SECONDS (the
+# pre-existing "how often is the gate even looked at" bound), so a
+# persistent failure costs at most one bounded run per day -- never a
+# crash/restart loop, since the bound is measured from the durable
+# last_started_at, not from process start. A *successful* run's cadence is
+# completely unchanged (still REEVALUATION_MIN_INTERVAL_SECONDS).
+FAILED_RUN_RETRY_SECONDS = 24.0 * 3600.0
+
+
+def _reevaluation_due_at(
+    state: Optional[SchedulerJobState],
+    *,
+    min_interval_seconds: float,
+    stale_running_timeout_seconds: float,
+    failed_run_retry_seconds: float,
+) -> Optional[datetime]:
+    """The single source of truth for *when the next reevaluation is due*,
+    derived purely from durable state -- never from process start time, so
+    a restart can neither reset nor advance it. Returns None when nothing
+    has ever started (due immediately); a caller is due when
+    `now >= due_at` (the exact boundary counts as due).
+
+    - last run succeeded: last_started_at + min_interval_seconds
+    - last run failed:    last_started_at + failed_run_retry_seconds
+    - still "running" (a crash/restart mid-run never reached
+      mark_completed()): last_started_at + stale_running_timeout_seconds
+
+    The two shorter bounds are capped at `min_interval_seconds`, so neither
+    can ever make a run due *later* than the ordinary cadence would.
+    """
+    if state is None or state.last_started_at is None:
+        return None
+    if state.last_outcome == "running":
+        wait = min(stale_running_timeout_seconds, min_interval_seconds)
+    elif state.last_outcome == "failure":
+        wait = min(failed_run_retry_seconds, min_interval_seconds)
+    else:
+        wait = min_interval_seconds
+    return state.last_started_at + timedelta(seconds=wait)
+
+
+def seconds_until_reevaluation_due(
+    *,
+    now: Optional[datetime] = None,
+    min_interval_seconds: float = REEVALUATION_MIN_INTERVAL_SECONDS,
+    stale_running_timeout_seconds: float = STALE_RUNNING_TIMEOUT_SECONDS,
+    failed_run_retry_seconds: float = FAILED_RUN_RETRY_SECONDS,
+) -> Optional[float]:
+    """Read-only: how long until `run_scheduled_universe_reevaluation()`
+    would actually execute, from durable state alone -- 0.0 when already
+    due (including "never run"), and None when persistence is disabled
+    (there is no durable due time to compute; the runtime loop keeps its
+    prior fixed-interval behavior in that case). Never triggers a run and
+    never writes anything.
+    """
+    store = _get_scheduler_state_store()
+    if store is None:
+        return None
+    due_at = _reevaluation_due_at(
+        store.get(UNIVERSE_REEVALUATION_JOB),
+        min_interval_seconds=min_interval_seconds,
+        stale_running_timeout_seconds=stale_running_timeout_seconds,
+        failed_run_retry_seconds=failed_run_retry_seconds,
+    )
+    if due_at is None:
+        return 0.0
+    now = now or datetime.now(timezone.utc)
+    return max(0.0, (due_at - now).total_seconds())
+
+
 @dataclass(frozen=True)
 class ScheduledReevaluationOutcome:
     """What `run_scheduled_universe_reevaluation()` actually did -- a
@@ -419,6 +494,7 @@ def run_scheduled_universe_reevaluation(
     now: Optional[datetime] = None,
     min_interval_seconds: float = REEVALUATION_MIN_INTERVAL_SECONDS,
     stale_running_timeout_seconds: float = STALE_RUNNING_TIMEOUT_SECONDS,
+    failed_run_retry_seconds: float = FAILED_RUN_RETRY_SECONDS,
 ) -> ScheduledReevaluationOutcome:
     """The restart-safe cadence wrapper around `run_universe_reevaluation()`
     -- the real production entry point a background scheduler should call
@@ -449,6 +525,17 @@ def run_scheduled_universe_reevaluation(
     loop retries at most once every `stale_running_timeout_seconds`, never
     immediately and never unboundedly.
 
+    Universe Scheduler restart-safety block (ADR-072): a completed run
+    whose `last_outcome` is "failure" is due again
+    `failed_run_retry_seconds` after its own `last_started_at`, instead of
+    consuming the whole `min_interval_seconds` window -- see
+    FAILED_RUN_RETRY_SECONDS. A successful run's cadence is unchanged. The
+    due decision itself lives in `_reevaluation_due_at()` (shared with
+    `seconds_until_reevaluation_due()`, so the gate and the runtime loop's
+    sleep can never disagree), and "decide, then mark started" is one
+    atomic step via `UniverseSchedulerStateStore.claim_start()`, so two
+    callers seeing the same due state can never both execute.
+
     When persistence is disabled there is no durable state to gate
     against, so this always executes -- byte-identical to calling
     `run_universe_reevaluation()` directly, matching every other Universe
@@ -464,23 +551,37 @@ def run_scheduled_universe_reevaluation(
     store = _get_scheduler_state_store()
 
     if store is not None:
-        state = store.get(UNIVERSE_REEVALUATION_JOB)
-        if state is not None and state.last_started_at is not None:
-            elapsed = (now - state.last_started_at).total_seconds()
-            is_stale_running_recovery = (
-                state.last_outcome == "running"
-                and elapsed >= stale_running_timeout_seconds
+        started_at = now
+
+        def _is_due(state: Optional[SchedulerJobState]) -> bool:
+            due_at = _reevaluation_due_at(
+                state,
+                min_interval_seconds=min_interval_seconds,
+                stale_running_timeout_seconds=stale_running_timeout_seconds,
+                failed_run_retry_seconds=failed_run_retry_seconds,
             )
-            if elapsed < min_interval_seconds and not is_stale_running_recovery:
-                return ScheduledReevaluationOutcome(
-                    executed=False,
-                    skipped_reason=(
-                        f"reevaluation last started {elapsed:.0f}s ago, "
-                        f"below the {min_interval_seconds:.0f}s minimum cadence"
-                    ),
-                    rebalance=None,
-                )
-        store.mark_started(UNIVERSE_REEVALUATION_JOB, now)
+            return due_at is None or started_at >= due_at
+
+        # Decide-and-mark-started is one atomic step (see claim_start()):
+        # two callers seeing the same due state can never both run.
+        claimed, state = store.claim_start(
+            UNIVERSE_REEVALUATION_JOB, started_at, is_due=_is_due
+        )
+        if not claimed:
+            last_started_at = state.last_started_at if state is not None else None
+            elapsed = (
+                (now - last_started_at).total_seconds()
+                if last_started_at is not None
+                else 0.0
+            )
+            return ScheduledReevaluationOutcome(
+                executed=False,
+                skipped_reason=(
+                    f"reevaluation last started {elapsed:.0f}s ago, "
+                    f"below the {min_interval_seconds:.0f}s minimum cadence"
+                ),
+                rebalance=None,
+            )
 
     try:
         rebalance = run_universe_reevaluation(

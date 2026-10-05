@@ -3569,6 +3569,59 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   real-data mapping and are explicitly listed as blocked (`universe_telemetry.BLOCKED_METRICS`,
   `expansion_review.UNCONFIRMED_REQUIRED_FIELDS`) rather than guessed at.
 
+## ADR-072: Universe Scheduler restart-safety — due time derived from durable state, not process start
+- Date: 2026-10-05
+- Status: Proposed — implemented and tested locally on `fix/universe-scheduler-restart-safety` (based on
+  deployed commit `6ef1ecb`); **not pushed, not deployed**, pending Logan/Chuck review. Numbered 072 because
+  ADR-071 (Notification Candidate + Decision Ledger V1) already exists on the unmerged
+  `feat/sprint-3.6.7-stock-signal-expansion` branch; this branch does not contain it.
+- Context: ADR-070 gave the Universe Scheduler a durable, restart-safe cadence *gate*
+  (`run_scheduled_universe_reevaluation()` over `universe_scheduler_state`), but the runtime loop that
+  calls it (`main.py`'s `_universe_reevaluation_poll_loop()`) slept a fixed 24 hours **before its first
+  check**. Any process that lived less than 24 hours never checked the gate at all, and every restart
+  reset that 24-hour clock. During the 2026-10 production OOM cycle (a restart roughly every 4 hours) this
+  meant no reevaluation ran after 2026-09-04 even though the 30-day cadence floor opened on 2026-10-04.
+  The gate was restart-safe; the thing deciding *when to look at the gate* was not. Two smaller gaps
+  surfaced while fixing it: a run that completed with a failure consumed the whole 30-day window exactly
+  like a success (one transient provider outage on the due day cost a month), and "check the state, then
+  mark started" was two separate steps, so two callers seeing the same due state could in principle both
+  run.
+- Decision:
+  1. **Durable due-time semantics.** One pure function, `universe_manager._reevaluation_due_at()`, is the
+     single source of truth for when the next reevaluation is due, computed only from the durable row:
+     never started → due immediately; last run succeeded → `last_started_at` + 30 days (unchanged); last
+     run failed → `last_started_at` + 24 hours (`FAILED_RUN_RETRY_SECONDS`, new); row still `running` →
+     `last_started_at` + 1 hour (ADR-070's stale-running bound, unchanged). The exact boundary counts as
+     due. Both the gate and the loop's sleep read this same function, so they cannot disagree.
+  2. **Restart behavior.** The loop now sleeps only the *remaining* time until that durable due point
+     (capped at the pre-existing 24-hour check interval), then calls the same gated wrapper as before.
+     Overdue at startup → the first check is immediate and the reevaluation runs once. Not due → the
+     process sleeps the remainder. A deploy just before the due time waits the remainder; a deploy just
+     after runs it at startup. A restart can neither reset nor advance the due point, because nothing
+     about it depends on when the process started.
+  3. **Duplicate prevention.** `UniverseSchedulerStateStore.claim_start()` makes "is it due? then mark it
+     started" one atomic step (`BEGIN IMMEDIATE` plus an in-process lock). Only one of several callers,
+     threads, or connections seeing the same due state can claim it; the rest get an ordinary recorded
+     skip. The existing one-task-per-process guard in `_lifespan()` is unchanged.
+  4. **Failure and recovery.** A failed run records `last_outcome="failure"`, never moves
+     `last_succeeded_at`, and is retried no sooner than 24 hours after it started — measured from the
+     durable timestamp, so a restart loop cannot turn it into repeated runs. A process killed mid-run is
+     retried after the unchanged 1-hour stale-running bound. After a successful recovery the ordinary
+     30-day cadence applies again.
+  5. **Not built:** no generalized job scheduler, no schema change, no new table, no new configuration
+     flag. With persistence disabled there is no durable due point and the loop keeps its original fixed
+     daily interval.
+- Consequences: Reevaluation no longer depends on a process surviving 24 hours. The one deliberate
+  behavior change beyond the loop itself is the failed-run retry (24 hours instead of 30 days), which
+  means a persistently failing reevaluation costs at most one bounded provider run per day rather than
+  one per month. Universe semantics are untouched: candidate source, cohort size and policy, eligibility,
+  selection, diversity, and the 30-day successful-run cadence are all unchanged, and a gated run is tested
+  to admit exactly what an un-gated run admits from the same inputs. Operational note for whoever deploys
+  this: production's last successful reevaluation was 2026-09-04, so it is already overdue — the first
+  start on this code will run a real reevaluation immediately (roughly 400 paced provider calls, and
+  possibly cohort admissions/removals under the existing policy). That is the intended behavior, but it
+  should be a known, watched event, not a surprise.
+
 ## ADR-074: Bound the in-memory Operational History and MentalModel history (residual memory growth)
 - Date: 2026-10-05
 - Status: Proposed — implemented and tested locally on `fix/residual-memory-retention` (based on deployed

@@ -11,8 +11,10 @@ execution state -- ever matters here), not append-only history.
 """
 
 import sqlite3
+import threading
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from logan_core.contracts import SchedulerJobState
 
@@ -28,6 +30,9 @@ class UniverseSchedulerStateStore:
             str(path), check_same_thread=False
         )
         self._conn.row_factory = sqlite3.Row
+        # Serializes claim_start() across threads sharing this one
+        # connection (check_same_thread=False above) -- see claim_start().
+        self._claim_lock = threading.Lock()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -82,29 +87,72 @@ class UniverseSchedulerStateStore:
         )
         self._conn.commit()
 
+    def claim_start(
+        self,
+        job_name: str,
+        started_at: datetime,
+        *,
+        is_due: Callable[[Optional[SchedulerJobState]], bool],
+    ) -> tuple[bool, Optional[SchedulerJobState]]:
+        """Atomic check-and-claim (Universe Scheduler restart-safety block,
+        ADR-072): reads `job_name`'s current row, asks `is_due(state)`, and
+        only if it answers True records the start (exactly `mark_started()`'s
+        own write) -- all inside one `BEGIN IMMEDIATE` transaction, so two
+        callers seeing the same due state can never both claim it. The
+        in-process lock covers threads sharing this connection; the
+        IMMEDIATE write lock covers a second connection/process on the same
+        file. Returns `(claimed, state_seen_before_the_claim)`. The due
+        decision itself stays with the caller (universe_manager.py) -- this
+        store only makes "decide, then mark started" one indivisible step.
+        No schema change.
+        """
+        with self._claim_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                state = self.get(job_name)
+                claimed = is_due(state)
+                if claimed:
+                    self._conn.execute(
+                        "INSERT INTO universe_scheduler_state "
+                        "(job_name, last_started_at, last_outcome) "
+                        "VALUES (?, ?, 'running') "
+                        "ON CONFLICT(job_name) DO UPDATE SET "
+                        "  last_started_at = excluded.last_started_at, "
+                        "  last_outcome = excluded.last_outcome",
+                        (job_name, started_at.isoformat()),
+                    )
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+        return claimed, state
+
     def mark_completed(self, job_name: str, completed_at, *, outcome: str) -> None:
         """Records how one attempt ended. `outcome` is `"success"` or
         `"failure"` -- `last_succeeded_at` is only ever advanced on
         `"success"`, so a failed run never fabricates a successful
-        timestamp."""
-        if outcome == "success":
-            self._conn.execute(
-                "UPDATE universe_scheduler_state SET last_completed_at = ?, "
-                "last_outcome = ?, last_succeeded_at = ? WHERE job_name = ?",
-                (
-                    completed_at.isoformat(),
-                    outcome,
-                    completed_at.isoformat(),
-                    job_name,
-                ),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE universe_scheduler_state SET last_completed_at = ?, "
-                "last_outcome = ? WHERE job_name = ?",
-                (completed_at.isoformat(), outcome, job_name),
-            )
-        self._conn.commit()
+        timestamp. Takes the same lock as claim_start(), so a completion
+        written from one thread can never commit another thread's
+        in-flight claim transaction on this shared connection."""
+        with self._claim_lock:
+            if outcome == "success":
+                self._conn.execute(
+                    "UPDATE universe_scheduler_state SET last_completed_at = ?, "
+                    "last_outcome = ?, last_succeeded_at = ? WHERE job_name = ?",
+                    (
+                        completed_at.isoformat(),
+                        outcome,
+                        completed_at.isoformat(),
+                        job_name,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE universe_scheduler_state SET last_completed_at = ?, "
+                    "last_outcome = ? WHERE job_name = ?",
+                    (completed_at.isoformat(), outcome, job_name),
+                )
+            self._conn.commit()
 
     def clear(self) -> None:
         self._conn.execute("DELETE FROM universe_scheduler_state")
