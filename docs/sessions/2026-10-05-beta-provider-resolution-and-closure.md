@@ -225,3 +225,25 @@ Proposed scope for Beta 1, from 8-K item types, each a deterministic trigger wit
 Post-beta: matched EPS via an add-on dataset; revenue-surprise trigger; materiality bands in the product;
 evidence-label recalibration; signal diversity; magnitude of any kind for EPS; provider migration;
 Notification Decision Ledger; Universe expansion; other domains.
+
+## 12. Corrections after red-team review (same day)
+
+The governing statement is Master Plan REV4, Section 2A. Where the sections above differ, these govern:
+
+- **Company news / catalysts are conditional, not required.** They are included before Beta 1 only through
+  a narrow, trustworthy, attributable, deterministic source path that does not materially extend the
+  critical path. In Section 10 the catalysts row is therefore not a beta blocker, and Section 11's
+  "Company news / catalysts category" entry is not a blocker. The 8-K path described there remains the
+  candidate narrow path; it needs the SEC item numbers, so whether it is "narrow enough" is a decision.
+- **EPS does not hold beta.** The provider investigation is time-boxed; if no source passes, EPS-surprise
+  qualification is disabled for Beta 1 and the rest proceeds.
+- **Estimate snapshots** proceed only if there is a source whose estimate definition is worth preserving.
+  Capturing the current provider's ambiguous consensus earlier does not solve comparability, so the
+  Section 5 table is not to be built for the current provider's numbers alone.
+- **Revenue materiality** only if comparability is proven; no magnitude scale for catalysts.
+- **Self-corroboration fix** ships with the evidence transition if that stays bounded and imminent, and
+  ships alone if it does not.
+- **All new numeric boundaries are provisional** until each has an owner, a rationale, replay evidence and
+  a review date.
+- Added to the beta-critical work: opportunity-linked feedback, notification fail-closed rule, a beta
+  safety / support card, success / failure criteria, participant criteria, physical-device acceptance.
