@@ -70,3 +70,83 @@ def test_different_domains_do_not_share_hypotheses():
         _reasoning(significance="AI: rally", stance="new"), domain="social"
     )
     assert stocks_model.model_id != social_model.model_id
+
+
+# --- bounded retention (ADR-074) ----------------------------------------------
+
+
+def test_trace_and_evidence_lists_stay_bounded_under_repeated_polling():
+    from logan_core.mental_model.engine import MAX_RECENT_HYPOTHESIS_HISTORY
+
+    assert MAX_RECENT_HYPOTHESIS_HISTORY == 50
+    engine = MentalModelEngine()
+    model = None
+    for index in range(5_000):
+        stance = "contradicts" if index % 3 == 0 else "confirms"
+        _, model = engine.process(
+            _reasoning(significance="Tesla: earnings signal", stance=stance),
+            domain="stocks",
+        )
+        assert len(model.decision_trace) <= MAX_RECENT_HYPOTHESIS_HISTORY
+        assert len(model.supporting) <= MAX_RECENT_HYPOTHESIS_HISTORY
+        assert len(model.opposing) <= MAX_RECENT_HYPOTHESIS_HISTORY
+    assert len(model.decision_trace) == MAX_RECENT_HYPOTHESIS_HISTORY
+    assert len(model.supporting) == MAX_RECENT_HYPOTHESIS_HISTORY
+    assert len(model.opposing) == MAX_RECENT_HYPOTHESIS_HISTORY
+    assert len(engine._hypotheses) == 1
+
+
+def test_the_most_recent_history_is_what_survives():
+    engine = MentalModelEngine()
+    event_ids = []
+    model = None
+    for _ in range(120):
+        reasoning = _reasoning(significance="Tesla: earnings signal", stance="confirms")
+        event_ids.append(str(reasoning.event_id))
+        _, model = engine.process(reasoning, domain="stocks")
+    # Oldest dropped first, newest kept, order preserved.
+    assert model.supporting == event_ids[-50:]
+    assert model.decision_trace[-1].rule.startswith("trend=")
+    timestamps = [entry.timestamp for entry in model.decision_trace]
+    assert timestamps == sorted(timestamps)
+
+
+def test_history_below_the_bound_is_untouched():
+    engine = MentalModelEngine()
+    model = None
+    for _ in range(10):
+        _, model = engine.process(
+            _reasoning(significance="Tesla: earnings signal", stance="confirms"),
+            domain="stocks",
+        )
+    assert len(model.decision_trace) == 10
+    assert len(model.supporting) == 10
+    assert model.opposing == []
+
+
+def test_bounding_history_does_not_change_confidence_or_trend():
+    """Confidence is computed from the previous confidence, never from the
+    lists -- so it must match plain arithmetic over the full stance
+    sequence, well past the point where history starts being dropped."""
+    stances = (["confirms"] * 3 + ["contradicts"] * 4 + ["complicates"]) * 40
+    deltas = {"confirms": 0.10, "contradicts": -0.15, "complicates": -0.05}
+
+    engine = MentalModelEngine()
+    _, model = engine.process(
+        _reasoning(significance="Tesla: earnings signal", stance="new"), domain="stocks"
+    )
+    expected = 0.5
+    for stance in stances:
+        previous = expected
+        expected = max(0.0, min(1.0, expected + deltas[stance]))
+        _, model = engine.process(
+            _reasoning(significance="Tesla: earnings signal", stance=stance),
+            domain="stocks",
+        )
+        assert model.confidence == expected
+        assert model.trend == (
+            "strengthening"
+            if expected > previous
+            else "weakening" if expected < previous else "stable"
+        )
+    assert len(stances) > 50  # history was being dropped throughout

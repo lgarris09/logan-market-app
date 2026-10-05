@@ -3568,3 +3568,56 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   Competition Ratio, deterministic Thesis Novelty Rate, complete evidence payload rate) have no confirmed
   real-data mapping and are explicitly listed as blocked (`universe_telemetry.BLOCKED_METRICS`,
   `expansion_review.UNCONFIRMED_REQUIRED_FIELDS`) rather than guessed at.
+
+## ADR-074: Bound the in-memory Operational History and MentalModel history (residual memory growth)
+- Date: 2026-10-05
+- Status: Proposed — implemented and tested locally on `fix/residual-memory-retention` (based on deployed
+  commit `6ef1ecb`); **not pushed, not deployed**, pending Logan/Chuck review of the combined pre-deploy
+  report. Numbered 074 because ADR-071 (unmerged sprint branch), ADR-072 (scheduler restart-safety) and
+  ADR-073 (V1a evidence assembler) exist on other unmerged branches.
+- Context: Fly v31 (`6ef1ecb`) bounded WorldModel's per-event `signal_ids`/`decision_trace`, but production
+  RSS kept climbing in a straight line afterwards — 92 MB at 2 minutes to 141 MB at 63 minutes, about
+  0.80 MB/min (about 9 hours to the 512 MB limit, against about 4 before). That fix had been validated with a WorldModel-only
+  soak; the rest of the pipeline was never soaked. A full-pipeline probe on the deployed code found two
+  more process-lifetime structures growing on every poll:
+  1. `OperationalHistoryStore` (`logan_core/orchestrator/history.py`) appended one entry per normalized
+     signal and one per enriched event on every pipeline run and never removed any. Because the feed uses
+     one process-lifetime Orchestrator, it retained every signal and every per-poll copy of every event
+     for the life of the process — about 87% of the remaining growth.
+  2. `MentalModelEngine` appended one `decision_trace` entry and one `supporting`/`opposing` event id per
+     hypothesis per poll, with no cap — the rest of the growth.
+  With both neutralised in a scratch run, memory was flat.
+- Decision:
+  1. **Operational History keeps the most recent 2,000 entries** (`OPERATIONAL_HISTORY_MAX_ENTRIES`),
+     oldest dropped first. Minimum history required by current semantics: none — `get`/`by_kind`/
+     `by_domain` have no caller outside tests; nothing in qualification, confidence, lifecycle, Watch,
+     Personal Learning, ranking or revisions reads this store. 2,000 entries is several complete pipeline
+     runs at the current cohort (about 7 MB), enough for a developer to inspect what the pipeline just
+     saw. Ownership is unchanged: only the Orchestrator writes it.
+  2. **MentalModel keeps the most recent 50 entries** of `decision_trace`, `supporting` and `opposing`
+     per hypothesis (`MAX_RECENT_HYPOTHESIS_HISTORY`, the same bound WorldModel already uses). `confidence`
+     and `trend` are computed from the previous confidence value, never from these lists, and Mental
+     Model output influences nothing downstream in V1 (ADR-015), so no computed result changes.
+  3. **Spec drift, flagged rather than silently resolved.** `06_LAYER_INTERFACE_SPECIFICATION.md` describes
+     Operational History as "retained indefinitely ... not loaded into active memory", and
+     `08_BUILD_ORDER.md` as "all data, not retained between reasoning cycles". Both describe a durable
+     store that does not exist (database undecided, ADR-006). The in-memory class was standing in for it
+     by keeping everything in process memory, which satisfies neither sentence. This ADR bounds the
+     in-memory stand-in; it does not decide the durable store, and the spec is not edited.
+  4. **Not changed, deliberately:** WorldModel's `supporting` list. It still grows by one entry each time
+     a signal's *content* changes (not on identical re-polls). `EvidenceTrustEngine` reads its length for
+     corroboration (saturating at 3), so bounding it touches a confidence input and was kept out of this
+     block. Its growth is slow — see Consequences.
+  5. No pipeline redesign, no notification-poller change, no Fly memory increase.
+- Consequences: Local full-pipeline soak, 3,000 polls, same workload on both trees: before, RSS 42 → 362 MB
+  with 69,000 history entries and 33,000 MentalModel trace entries retained; after, RSS 42 → 54.5 MB with
+  2,000 history entries and 550 trace entries, both flat from the first checkpoint. With durable
+  persistence enabled the result is the same (43 → 56 MB). The remaining ~0.002 MB/poll is the unbounded
+  WorldModel `supporting` list in the demo fixtures, where two signals change value on every poll; in
+  production a signal's content changes far less often (quotes are cached for 30 minutes), so this is
+  expected to be negligible, but it is the one known unbounded list left and is recorded here so it is a
+  decision rather than a surprise. The soak is demo-mode: it exercises the real pipeline, Orchestrator and
+  stores but not live FMP provider paths, so production RSS after deploy is the real validation. Recent
+  history older than 2,000 entries is no longer inspectable in process; nothing durable is affected
+  (daily telemetry, revisions, lifecycle, membership and operational observations are untouched and
+  tested to be).
