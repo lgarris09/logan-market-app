@@ -1,0 +1,245 @@
+{
+ "fetched_for": "30 monitored cohort symbols",
+ "quotes": {
+  "AAPL": {
+   "symbol": "AAPL",
+   "price": 333.48,
+   "previousClose": 333.69,
+   "changePercentage": -0.06293266,
+   "timestamp": 1791221175,
+   "volume": 12511242
+  },
+  "ABBV": {
+   "symbol": "ABBV",
+   "price": 263.61,
+   "previousClose": 262.82,
+   "changePercentage": 0.30059,
+   "timestamp": 1791221163,
+   "volume": 1490521
+  },
+  "ABT": {
+   "symbol": "ABT",
+   "price": 100.355,
+   "previousClose": 97.5,
+   "changePercentage": 2.92821,
+   "timestamp": 1791221169,
+   "volume": 3552525
+  },
+  "ACN": {
+   "symbol": "ACN",
+   "price": 194.285,
+   "previousClose": 198.9,
+   "changePercentage": -2.32026,
+   "timestamp": 1791221172,
+   "volume": 3098116
+  },
+  "ADBE": {
+   "symbol": "ADBE",
+   "price": 235.9731,
+   "previousClose": 237.69,
+   "changePercentage": -0.72233,
+   "timestamp": 1791221171,
+   "volume": 1748659.75982
+  },
+  "AMGN": {
+   "symbol": "AMGN",
+   "price": 402.895,
+   "previousClose": 403.04,
+   "changePercentage": -0.03597658,
+   "timestamp": 1791221175,
+   "volume": 1016549
+  },
+  "AMT": {
+   "symbol": "AMT",
+   "price": 161.02,
+   "previousClose": 162.2,
+   "changePercentage": -0.72749,
+   "timestamp": 1791221174,
+   "volume": 872852
+  },
+  "AMZN": {
+   "symbol": "AMZN",
+   "price": 253.665,
+   "previousClose": 251.52,
+   "changePercentage": 0.85281,
+   "timestamp": 1791221177,
+   "volume": 16751917.48171
+  },
+  "AXP": {
+   "symbol": "AXP",
+   "price": 303.34,
+   "previousClose": 302.78,
+   "changePercentage": 0.18495,
+   "timestamp": 1791221170,
+   "volume": 1054391
+  },
+  "BA": {
+   "symbol": "BA",
+   "price": 192.46001,
+   "previousClose": 193.56,
+   "changePercentage": -0.5683,
+   "timestamp": 1791221171,
+   "volume": 3086242
+  },
+  "BAC": {
+   "symbol": "BAC",
+   "price": 54.15,
+   "previousClose": 53.75,
+   "changePercentage": 0.74419,
+   "timestamp": 1791221173,
+   "volume": 16393743
+  },
+  "BKNG": {
+   "symbol": "BKNG",
+   "price": 157.28,
+   "previousClose": 159.02,
+   "changePercentage": -1.0942,
+   "timestamp": 1791221176,
+   "volume": 3896650.41908
+  },
+  "BLK": {
+   "symbol": "BLK",
+   "price": 1064.125,
+   "previousClose": 1059.63,
+   "changePercentage": 0.4242,
+   "timestamp": 1791221168,
+   "volume": 186354
+  },
+  "CAT": {
+   "symbol": "CAT",
+   "price": 853.39502,
+   "previousClose": 845.42,
+   "changePercentage": 0.94332,
+   "timestamp": 1791221174,
+   "volume": 975990
+  },
+  "CL": {
+   "symbol": "CL",
+   "price": 85.545,
+   "previousClose": 84.26,
+   "changePercentage": 1.52504,
+   "timestamp": 1791221176,
+   "volume": 2126217
+  },
+  "CMCSA": {
+   "symbol": "CMCSA",
+   "price": 21.485,
+   "previousClose": 21.57,
+   "changePercentage": -0.39407,
+   "timestamp": 1791221176,
+   "volume": 10490578.7308
+  },
+  "COP": {
+   "symbol": "COP",
+   "price": 128.485,
+   "previousClose": 126.75,
+   "changePercentage": 1.36884,
+   "timestamp": 1791221175,
+   "volume": 2154273
+  },
+  "COST": {
+   "symbol": "COST",
+   "price": 924.65,
+   "previousClose": 920.65,
+   "changePercentage": 0.43448,
+   "timestamp": 1791221175,
+   "volume": 725480.32119
+  },
+  "CVX": {
+   "symbol": "CVX",
+   "price": 206.14,
+   "previousClose": 206.69,
+   "changePercentage": -0.2661,
+   "timestamp": 1791221176,
+   "volume": 3004465
+  },
+  "DE": {
+   "symbol": "DE",
+   "price": 687.09,
+   "previousClose": 687,
+   "changePercentage": 0.01310044,
+   "timestamp": 1791221154,
+   "volume": 275810
+  },
+  "DIS": {
+   "symbol": "DIS",
+   "price": 102.645,
+   "previousClose": 102.19,
+   "changePercentage": 0.44525,
+   "timestamp": 1791221166,
+   "volume": 2549325
+  },
+  "DUK": {
+   "symbol": "DUK",
+   "price": 114.06,
+   "previousClose": 114.13,
+   "changePercentage": -0.06133357,
+   "timestamp": 1791221167,
+   "volume": 1390524
+  },
+  "GM": {
+   "symbol": "GM",
+   "price": 80.14,
+   "previousClose": 78.27,
+   "changePercentage": 2.38917,
+   "timestamp": 1791221172,
+   "volume": 2472969.61273
+  },
+  "GOOGL": {
+   "symbol": "GOOGL",
+   "price": 346.38,
+   "previousClose": 343.5,
+   "changePercentage": 0.83843,
+   "timestamp": 1791221177,
+   "volume": 8972344
+  },
+  "KO": {
+   "symbol": "KO",
+   "price": 86.375,
+   "previousClose": 85.65,
+   "changePercentage": 0.84647,
+   "timestamp": 1791221175,
+   "volume": 5681584
+  },
+  "LIN": {
+   "symbol": "LIN",
+   "price": 484.905,
+   "previousClose": 479.48,
+   "changePercentage": 1.13143,
+   "timestamp": 1791221174,
+   "volume": 1141212.32667
+  },
+  "NEE": {
+   "symbol": "NEE",
+   "price": 76.68,
+   "previousClose": 76.825,
+   "changePercentage": -0.18874,
+   "timestamp": 1791221170,
+   "volume": 3727954
+  },
+  "PLD": {
+   "symbol": "PLD",
+   "price": 128.78999,
+   "previousClose": 128.91,
+   "changePercentage": -0.09309341,
+   "timestamp": 1791221167,
+   "volume": 1096236
+  },
+  "SHW": {
+   "symbol": "SHW",
+   "price": 319.45,
+   "previousClose": 319.51,
+   "changePercentage": -0.01877875,
+   "timestamp": 1791221171,
+   "volume": 461979
+  },
+  "SLB": {
+   "symbol": "SLB",
+   "price": 50.445,
+   "previousClose": 48.74,
+   "changePercentage": 3.49815,
+   "timestamp": 1791221176,
+   "volume": 3973284
+  }
+ }
+}

@@ -3647,8 +3647,9 @@ code lands. Every non-obvious technical, product, or process choice belongs here
      (`test_multiple_revisions_since_last_view_reports_only_the_latest`) expected a larger earnings beat
      from the same source to produce a `confidence_increased` revision. It only ever did so through
      self-corroboration, because trigger contributions do not depend on magnitude. That test is marked
-     `xfail(strict=True)` with this explanation; the magnitude-aware trigger contribution (designed, not
-     implemented) restores the behaviour for the right reason, and the test must pass again when it lands.
+     `xfail(strict=True)` with this explanation. Magnitude is not part of evidence strength (ADR-078), so the
+     fix is for the lifecycle to record a same-source correction as a revision in its own right; the test
+     must pass again when that exists.
   2. **On deploy, affected opportunities step down once.** A price opportunity whose score included
      self-corroboration will record one `confidence_decreased` revision. Nothing about the underlying
      evidence weakened; this is a correction. How to present that one-time step needs a decision before
@@ -3674,3 +3675,49 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   Not changed, and noted for cleanup: `mobile/components/ConfidenceRing.tsx` still renders a percentage but
   is imported nowhere, and `mobile/lib/attentionLayout.ts` still sizes a label from a percentage string
   that is no longer displayed.
+
+## ADR-078: Qualification, evidence strength and materiality are separate; EPS comparability is a hard gate (shadow)
+- Date: 2026-10-05
+- Status: Accepted as direction (Logan and Chuck, after red-team review, 2026-10-05) — **shadow only**. The
+  rules exist as an unwired module with tests and a replay; nothing in the pipeline uses them. Not pushed,
+  not deployed. Supersedes the magnitude-aware trigger contribution proposed earlier the same day.
+- Context: The confidence score clusters because, for single-provider evidence, it reduces to a constant
+  per trigger type. The first proposal was to scale each trigger's contribution by its magnitude. Review
+  rejected that: it would make a large event look like better evidence, and it would have built on EPS
+  figures that are not comparable. The provider's `epsActual` is GAAP diluted for some issuers (including
+  non-operating gains larger than operating income) and adjusted for others, with no basis stated for the
+  estimate.
+- Decision:
+  1. Six concepts stay separate and are never collapsed into one scalar: qualification, evidence
+     strength, event materiality, trajectory, personal relevance, priority. Evidence strength answers
+     "how well-supported and usable is the evidence"; it is not probability, expected return, direction,
+     importance, relevance or event magnitude. `docs/CONFIDENCE_SEMANTICS.md` is the contract.
+  2. Qualification has five states: `qualified`, `not_qualified`, `blocked_invalid_input`,
+     `blocked_incomparable_basis`, `blocked_stale_or_missing_required_fields`, each with stable reason
+     codes decided before any transformation. A blocked observation emits no trigger, earns no discount
+     and gets no label.
+  3. EPS comparability is a hard gate: same issuer, same fiscal period, a pre-release estimate timestamp,
+     compatible accounting and share basis, same currency, no unadjusted split, no unresolved restatement,
+     provenance retained. Anything not established blocks with `earnings_eps_comparability_unresolved`.
+     Other signal families qualify independently.
+  4. No percentage is computed on a zero, near-zero or negative denominator, and a pathological percentage
+     is never capped into a valid value.
+  5. Materiality is a deterministic band per trigger family (`barely_qualified`, `meaningful`, `large`,
+     `capped_exceptional`), from validated comparable inputs only. Proposed first for price movement and
+     revenue surprise. EPS magnitude stays blocked; analyst actions stay magnitude-neutral.
+  6. Corroboration means an independent evidence origin. Same-source revisions and multiple signal
+     families are not corroboration (ADR-076 stands).
+  7. Model changes are migration-neutral: no user-facing "strengthened/weakened", notification or timeline
+     event unless external evidence changed; prior and current assessment, model version, evidence
+     snapshot and reason are retained.
+  8. Labels are recalibrated later, by named conditions, after shadow replay. Current thresholds are not
+     preserved automatically and no percentile-only labels are used.
+- Consequences: Replayed against the 20 current earnings opportunities, the hard gate blocks all 20 with
+  the provider data available today, and blocks revenue surprise for the same missing facts. Switched on
+  as-is, the feed would lose its earnings opportunities. So the gate cannot ship before a decision on how
+  comparability will be established: the provider cannot prove the consensus basis on the current plan.
+  Fiscal period, currency, release time and split status can be established from endpoints already
+  available; a pre-release estimate timestamp can be established by STRATUS snapshotting upcoming
+  estimates itself (a new durable store, not decided here); the consensus basis needs a provider that
+  states it. Not decided here: a revenue-surprise trigger and its threshold, the EPS denominator floor, the
+  audit-record store for migrations, and the label names.

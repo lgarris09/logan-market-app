@@ -201,9 +201,10 @@ def test_material_change_reflects_the_specific_recorded_change_type(
         "report from the same source) used to appear only because the source "
         "was counted as corroborating itself. With that removed, and trigger "
         "contributions still independent of magnitude, a larger beat no longer "
-        "changes confidence, so no revision is created. The magnitude-aware "
-        "trigger contribution (designed, not yet implemented) restores this "
-        "for the right reason; this test must pass again when it lands."
+        "changes confidence, so no revision is created. Magnitude is not part "
+        "of evidence strength (ADR-078), so the right fix is for the lifecycle "
+        "to record a same-source correction as a revision of the event in its "
+        "own right; this test must pass again when that exists."
     ),
 )
 def test_multiple_revisions_since_last_view_reports_only_the_latest(

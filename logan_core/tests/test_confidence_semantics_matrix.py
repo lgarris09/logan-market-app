@@ -556,9 +556,10 @@ def test_a_change_below_the_threshold_is_not_a_revision():
 def test_a_change_past_the_threshold_is_a_revision_with_plain_wording(
     new_value, change_type
 ):
-    """0.595 -> 0.487 is the size of step a weak earnings beat would take
-    under the proposed magnitude-aware contribution: it IS a revision, so
-    that change needs a transition rule before it ships."""
+    """A step of this size IS a revision under today's tracker, whatever
+    caused it. That is why a model or scoring change needs a neutral
+    transition (ADR-078): recalculation must not reach this path as if the
+    evidence itself had moved."""
     tracker = OpportunityLifecycleTracker()
     first = _observe(tracker, 0.595, NOW)
     delta = _observe(tracker, new_value, NOW + timedelta(minutes=1))

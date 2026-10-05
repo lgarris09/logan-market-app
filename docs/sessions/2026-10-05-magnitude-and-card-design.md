@@ -40,7 +40,13 @@ STRATUS ingestion or transformation defect.
 **This also touches qualification, not only magnitude.** An earnings "beat" computed on mismatched bases
 may not be a beat at all. That is outside this block and is flagged for a separate decision.
 
-## 2. Proposed magnitude function
+## 2. Proposed magnitude function — SUPERSEDED
+
+> **Superseded on review (2026-10-05, ADR-078). Do not implement.** Magnitude is not part of evidence
+> strength. The 0.5 floor and the logarithmic function are dropped; EPS comparability is a hard
+> qualification gate, not a discount; size is expressed as materiality bands. See
+> `2026-10-05-qualification-and-materiality-shadow.md`. The text below is kept as the record of what
+> was proposed.
 
 ```
 contribution = C × (F + (1 − F) × s)
