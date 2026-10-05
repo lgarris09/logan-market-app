@@ -1,0 +1,226 @@
+{
+ "reported_quarters": 600,
+ "quarters_matched_to_a_statement": 600,
+ "revenue_definition": {
+  "compared": 600,
+  "equal_within_0.05pct": 511,
+  "differs_0.05_to_1pct": 12,
+  "differs_1pct_or_more": 77,
+  "symbols_with_any_1pct_difference": {
+   "AXP": 20,
+   "BAC": 19,
+   "PLD": 18,
+   "CVX": 5,
+   "DUK": 5,
+   "COP": 4,
+   "DE": 2,
+   "AMT": 1,
+   "COST": 1,
+   "LIN": 1,
+   "NEE": 1
+  },
+  "symbols_always_equal": [
+   "AAPL",
+   "ABBV",
+   "ABT",
+   "ACN",
+   "ADBE",
+   "AMZN",
+   "BA",
+   "BKNG",
+   "BLK",
+   "CAT",
+   "CL",
+   "CMCSA",
+   "GM",
+   "GOOGL",
+   "SHW"
+  ]
+ },
+ "eps_actual_vs_gaap_diluted": {
+  "compared": 600,
+  "equal_to_gaap_diluted": 203,
+  "not_equal": 397,
+  "symbols_always_gaap": [
+   "GOOGL"
+  ],
+  "symbols_never_gaap": [
+   "ABBV",
+   "ABT",
+   "ADBE",
+   "AMGN",
+   "BA",
+   "BLK",
+   "CAT",
+   "CVX",
+   "DIS",
+   "LIN",
+   "SHW"
+  ],
+  "symbols_mixed": [
+   "AAPL",
+   "ACN",
+   "AMT",
+   "AMZN",
+   "AXP",
+   "BAC",
+   "BKNG",
+   "CL",
+   "CMCSA",
+   "COP",
+   "COST",
+   "DE",
+   "DUK",
+   "GM",
+   "KO",
+   "NEE",
+   "PLD",
+   "SLB"
+  ]
+ },
+ "revenue_surprise": {
+  "reports": 600,
+  "abs_surprise_percentiles": {
+   "25": 0.79,
+   "50": 1.79,
+   "75": 4.26,
+   "90": 9.02,
+   "95": 15.31
+  },
+  "share_of_reports_qualifying_at_threshold": {
+   "1%": 0.688,
+   "2%": 0.465,
+   "3%": 0.328,
+   "4%": 0.263,
+   "5%": 0.213,
+   "8%": 0.115
+  },
+  "per_30_symbols_per_quarter_at_threshold": {
+   "1%": 20.6,
+   "2%": 13.9,
+   "3%": 9.8,
+   "4%": 7.9,
+   "5%": 6.4,
+   "8%": 3.5
+  },
+  "share_positive": 0.72
+ },
+ "revenue_surprise_definition_matched_only": {
+  "reports": 511,
+  "share_qualifying": {
+   "1%": 0.699,
+   "2%": 0.472,
+   "3%": 0.335,
+   "4%": 0.264,
+   "5%": 0.221,
+   "8%": 0.119
+  }
+ },
+ "eps_estimate_denominators": {
+  "reports": 600,
+  "zero_or_negative": 20,
+  "abs_below_0.05": 1,
+  "abs_below_0.10": 5,
+  "abs_below_0.25": 11,
+  "minimum_abs": 0.01,
+  "median_abs": 1.73
+ },
+ "days_from_period_end_to_report": {
+  "min": 11,
+  "median": 27,
+  "p95": 39,
+  "max": 58
+ },
+ "days_between_consecutive_reports": {
+  "min": 62,
+  "median": 91,
+  "max": 124
+ },
+ "upcoming_rows_with_estimates": 30,
+ "upcoming_sample": [
+  [
+   "BAC",
+   "2026-10-14",
+   "2026-10-05"
+  ],
+  [
+   "BLK",
+   "2026-10-14",
+   "2026-10-05"
+  ],
+  [
+   "PLD",
+   "2026-10-15",
+   "2026-10-05"
+  ],
+  [
+   "GM",
+   "2026-10-20",
+   "2026-10-05"
+  ],
+  [
+   "ABT",
+   "2026-10-21",
+   "2026-10-05"
+  ]
+ ],
+ "price_moves_one_year": {
+  "symbol_days": 7560,
+  "trading_days": 252,
+  "share_qualifying_at_threshold": {
+   "3%": 0.0903,
+   "4%": 0.041,
+   "5%": 0.0196,
+   "6%": 0.0111,
+   "7.5%": 0.0042
+  },
+  "events_per_week_across_30_symbols": {
+   "3%": 13.55,
+   "4%": 6.15,
+   "5%": 2.94,
+   "6%": 1.67,
+   "7.5%": 0.63
+  },
+  "bands_at_5pct_threshold": {
+   "barely_qualified_5_to_7.5": 116,
+   "meaningful_7.5_to_12.5": 27,
+   "large_12.5_to_20": 5,
+   "capped_exceptional_20_plus": 0
+  },
+  "symbols_with_no_qualifying_day": 3,
+  "trading_days_with_no_qualifying_move": 154,
+  "largest": [
+   [
+    "ACN",
+    "2026-06-18",
+    -18.0
+   ],
+   [
+    "ACN",
+    "2026-10-01",
+    15.8
+   ],
+   [
+    "AMZN",
+    "2026-07-31",
+    15.3
+   ],
+   [
+    "GM",
+    "2025-10-21",
+    14.9
+   ],
+   [
+    "CMCSA",
+    "2026-04-24",
+    -12.9
+   ],
+   [
+    "CAT",
+    "2025-10-29",
+    11.6
+   ]
+  ],
+  "qualifying_days_within_2_days_after_an_earnings_report": "46 of 148"
+ }
+}
