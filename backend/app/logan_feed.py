@@ -67,6 +67,7 @@ from logan_core.receptors.providers import (  # noqa: E402
     ProviderScheduler,
     ProviderSchedulerSaturatedError,
     classify_freshness,
+    fmp_last_successful_fetch_age_seconds,
     seed_earnings_from_durable_observation,
     signal_family_contract,
 )
@@ -2190,6 +2191,13 @@ def _run_feed_pipeline(
             "price_change": "quote",
             "analyst_change": "analyst_grade",
         }
+        # The FmpResponseCache endpoint each freshness family is fetched
+        # through (see FmpEarningsProvider / FmpMarketDataProvider).
+        _FRESHNESS_FAMILY_TO_FMP_ENDPOINT = {
+            "earnings": "earnings",
+            "quote": "quote",
+            "analyst_grade": "grades",
+        }
         result_by_event_id = {r.event.event_id: r for _, r in results}
         item_by_event_id = {item.event_id: item for item in items}
         thesis_candidates: list[ThesisCandidate] = []
@@ -2197,27 +2205,55 @@ def _run_feed_pipeline(
         for item in items:
             r = result_by_event_id[item.event_id]
 
-            # Item 1 (Runtime Freshness Integration): classified from this
-            # item's own primary signal's real captured_at age against that
+            # Item 1 (Runtime Freshness Integration): classified against that
             # signal family's existing TTL/grace contract (freshness.py) --
             # never a second, independently-invented freshness concept.
             # Provider degradation is checked first and takes priority over
-            # a merely-aged signal -- distinct from "no qualifying
+            # a merely-aged fetch -- distinct from "no qualifying
             # opportunity" (a healthy, empty result never reaches this
             # per-item loop at all).
+            #
+            # Freshness clock (ADR-075, decided 2026-10-05): the age of
+            # STRATUS's latest successful fetch of this evidence, never the
+            # age of the market event itself. A live signal's `captured_at`
+            # is the provider's event time (the earnings report date, the
+            # quote timestamp, the grade date) -- event age is owned by
+            # lifecycle aging and EvidenceTrust's recency score, and
+            # comparing it to a cache lifetime marked every thesis older
+            # than ~30 hours UNAVAILABLE however recently it was fetched.
+            #   - live-substituted entity: the shared FMP cache's own
+            #     last-successful-fetch age for this family's endpoint. No
+            #     fetch record at all means STRATUS cannot show when it last
+            #     observed this evidence -> UNAVAILABLE (fail closed), and
+            #     no ratio is recorded.
+            #   - simulated entity: its signal is captured this poll, so
+            #     `captured_at` already is the observation time (unchanged).
             family = _SIGNAL_TYPE_TO_FRESHNESS_FAMILY.get(
                 r.normalized_signals[0].signal_type
             )
             if family is not None:
+                fetch_age_seconds: float | None
+                if item.entity_id in live_substituted:
+                    fetch_age_seconds = fmp_last_successful_fetch_age_seconds(
+                        _FRESHNESS_FAMILY_TO_FMP_ENDPOINT[family], item.entity_id
+                    )
+                else:
+                    fetch_age_seconds = max(
+                        (now - r.normalized_signals[0].captured_at).total_seconds(),
+                        0.0,
+                    )
                 if family == "earnings" and ticker_provider_failed.get(
                     item.entity_id, False
                 ):
                     item.freshness_state = "UNAVAILABLE"
-                else:
-                    age_seconds = max(
-                        (now - r.normalized_signals[0].captured_at).total_seconds(),
-                        0.0,
+                elif fetch_age_seconds is None:
+                    item.freshness_state = classify_freshness(
+                        has_value=False,
+                        age_seconds=None,
+                        contract=signal_family_contract(family),
                     )
+                else:
+                    age_seconds = fetch_age_seconds
                     contract = signal_family_contract(family)
                     item.freshness_state = classify_freshness(
                         has_value=True,

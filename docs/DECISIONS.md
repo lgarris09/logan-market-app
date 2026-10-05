@@ -3621,3 +3621,50 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   history older than 2,000 entries is no longer inspectable in process; nothing durable is affected
   (daily telemetry, revisions, lifecycle, membership and operational observations are untouched and
   tested to be).
+
+## ADR-075: Freshness is the age of the latest successful fetch, not the age of the market event
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05) — implemented and tested locally on
+  `fix/freshness-fetch-age` (based on deployed commit `8ffe2f4`); **not pushed, not deployed**, and not to
+  be bundled with the Operational Integrity deploys without explicit authorization. Numbered 075 because
+  ADR-071 through ADR-074 exist on other branches.
+- Context: The V1a evidence reconstruction (ADR-073) found 99.8% of 2.75M freshness classifications
+  reading `UNAVAILABLE`, which also drove the evidence-completeness measure to 0.3%. The cause:
+  `logan_feed.py` classified each item from `now - captured_at` of its primary signal, and the live stock
+  receptors set `captured_at` to the provider's *event* time (earnings report date, quote timestamp, grade
+  date). That age was compared against a *cache lifetime* contract (earnings 6h + 24h grace), so any
+  thesis older than about 30 hours read `UNAVAILABLE` however recently its data had been fetched.
+  Simulated receptors set `captured_at` to now, so demo mode and most tests never showed the difference.
+  The freshness module's own language ("observed within its target refresh cadence", "matching
+  FmpResponseCache's own stale_grace_seconds mechanism", `UNAVAILABLE` = "STRATUS could not reliably
+  evaluate this security"), the gate wording (ratios to TTL, "stale-grace reads"), and the lifecycle design
+  (ADR-066 keeps an earnings thesis for days to weeks) all point the other way.
+- Decision: Freshness is the age of STRATUS's latest successfully fetched evidence for the item,
+  compared against the applicable refresh/cache lifetime. Event age is not the freshness clock; it stays
+  owned by lifecycle aging and EvidenceTrust's recency weighting.
+  1. `FmpResponseCache.last_successful_fetch_age_seconds(endpoint, entity_id)` (and the module-level
+     `fmp_last_successful_fetch_age_seconds`) — a read-only accessor over the cache's existing `cached_at`.
+     It never fetches, mutates, or counts as a cache hit. An entry served from stale grace keeps its
+     original fetch time; an entry recovered from durable storage carries its real wall-clock age.
+  2. `logan_feed.py` passes that age to `classify_freshness()` for live-substituted entities, using the
+     endpoint each family is fetched through (earnings → `earnings`, quote → `quote`, analyst grade →
+     `grades`). A live item with no fetch record at all is `UNAVAILABLE` (fail closed) and records no
+     ratio. Simulated entities are unchanged: their `captured_at` already is the observation time.
+  3. `captured_at` itself is untouched, so dedup, lifecycle and recency behave exactly as before.
+  4. No schema, threshold, contract, qualification, lifecycle or cache-policy change.
+- Consequences: A recently fetched six-week-old earnings thesis now reads `FRESH`; a fetch that has gone
+  stale reads `RECENTLY_OBSERVED` / `STALE_WITHIN_GRACE` / `UNAVAILABLE` on the existing boundaries, which
+  is what the state was defined to report. `freshness_state` on `FeedItem` changes value in the API
+  response (the mobile client does not read the field today). Freshness remains an annotation: tests
+  prove ranking, confidence, lifecycle, revisions, diversity and exploration are identical whatever the
+  freshness clock says. One existing end-to-end assertion that encoded the old reading ("an
+  aged-but-successfully-fetched report must never be FRESH") was reversed, deliberately.
+  **History is not rewritten.** Last-successful-fetch times were never durably persisted, so the
+  2026-09-04 → 2026-10-04 record's freshness-dependent gates (critical freshness P95/P99, stale-grace
+  read rate, user-visible stale beyond grace, complete evidence chains) stay classified invalid for that
+  period, and the V1a disposition stays "valid evidence with invalidated dimensions — ITERATE". The
+  corrected measurement applies only to telemetry recorded after this change is deployed. The V1a
+  evidence assembler (ADR-073) is on another branch and still marks these gates structurally invalid; it
+  must be taught the deploy date of this change before it is used for the forward re-proof, so that
+  pre-change days stay invalid and post-change days can be read. A process restart empties the cache, so
+  the first poll after a restart reads `FRESH`; that is correct under this definition.
