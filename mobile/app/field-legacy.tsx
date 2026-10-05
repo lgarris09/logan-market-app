@@ -69,7 +69,7 @@ export default function LegacyOpportunityFieldScreen() {
           <View style={styles.detailHeader}>
             <Text style={styles.detailName}>{selected.display_name}</Text>
             <Text style={styles.detailConfidence}>
-              {selected.confidence_label} · {Math.round(selected.confidence_score * 100)}%
+              {selected.confidence_label} evidence
             </Text>
           </View>
           <Text style={styles.detailHeadline}>{selected.delivered_item.headline}</Text>

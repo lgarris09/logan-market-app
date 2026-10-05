@@ -1,0 +1,645 @@
+{
+ "source": "FMP /earnings, fetched 2026-10-05 for the current earnings opportunities (latest four rows each)",
+ "symbols": {
+  "AAPL": {
+   "rows": [
+    {
+     "date": "2026-10-29",
+     "epsActual": null,
+     "epsEstimated": 1.99,
+     "revenueActual": null,
+     "revenueEstimated": 113368900000
+    },
+    {
+     "date": "2026-07-30",
+     "epsActual": 2.02,
+     "epsEstimated": 1.89,
+     "revenueActual": 109417000000,
+     "revenueEstimated": 109038900000
+    },
+    {
+     "date": "2026-04-30",
+     "epsActual": 2.01,
+     "epsEstimated": 1.95,
+     "revenueActual": 111184000000,
+     "revenueEstimated": 109457600000
+    },
+    {
+     "date": "2026-01-29",
+     "epsActual": 2.85,
+     "epsEstimated": 2.67,
+     "revenueActual": 143756000000,
+     "revenueEstimated": 138391000000
+    }
+   ]
+  },
+  "AMGN": {
+   "rows": [
+    {
+     "date": "2026-11-03",
+     "epsActual": null,
+     "epsEstimated": 5.79,
+     "revenueActual": null,
+     "revenueEstimated": 10046680000
+    },
+    {
+     "date": "2026-08-04",
+     "epsActual": 6.29,
+     "epsEstimated": 5.62,
+     "revenueActual": 10054000000,
+     "revenueEstimated": 9426191000
+    },
+    {
+     "date": "2026-04-30",
+     "epsActual": 5.15,
+     "epsEstimated": 4.77,
+     "revenueActual": 8618000000,
+     "revenueEstimated": 8575078000
+    },
+    {
+     "date": "2026-02-03",
+     "epsActual": 5.29,
+     "epsEstimated": 4.73,
+     "revenueActual": 9866000000,
+     "revenueEstimated": 9474021000
+    }
+   ]
+  },
+  "AMT": {
+   "rows": [
+    {
+     "date": "2026-10-27",
+     "epsActual": null,
+     "epsEstimated": 1.64,
+     "revenueActual": null,
+     "revenueEstimated": 2759901000
+    },
+    {
+     "date": "2026-07-28",
+     "epsActual": 1.86,
+     "epsEstimated": 1.57,
+     "revenueActual": 2749100000,
+     "revenueEstimated": 2699481000
+    },
+    {
+     "date": "2026-04-28",
+     "epsActual": 1.84,
+     "epsEstimated": 1.6,
+     "revenueActual": 2738000000,
+     "revenueEstimated": 2655265000
+    },
+    {
+     "date": "2026-02-24",
+     "epsActual": 1.75,
+     "epsEstimated": 1.48,
+     "revenueActual": 2737500000,
+     "revenueEstimated": 2685882000
+    }
+   ]
+  },
+  "AMZN": {
+   "rows": [
+    {
+     "date": "2026-10-29",
+     "epsActual": null,
+     "epsEstimated": 1.96,
+     "revenueActual": null,
+     "revenueEstimated": 202034700000
+    },
+    {
+     "date": "2026-07-30",
+     "epsActual": 5.75,
+     "epsEstimated": 1.82,
+     "revenueActual": 200606000000,
+     "revenueEstimated": 197034800000
+    },
+    {
+     "date": "2026-04-29",
+     "epsActual": 2.78,
+     "epsEstimated": 1.63,
+     "revenueActual": 181519000000,
+     "revenueEstimated": 177281400000
+    },
+    {
+     "date": "2026-02-05",
+     "epsActual": 1.95,
+     "epsEstimated": 1.97,
+     "revenueActual": 213386000000,
+     "revenueEstimated": 211454800000
+    }
+   ]
+  },
+  "BAC": {
+   "rows": [
+    {
+     "date": "2026-10-14",
+     "epsActual": null,
+     "epsEstimated": 1.11,
+     "revenueActual": null,
+     "revenueEstimated": 30757530000
+    },
+    {
+     "date": "2026-07-14",
+     "epsActual": 1.21,
+     "epsEstimated": 1.13,
+     "revenueActual": 31558000000,
+     "revenueEstimated": 30776100000
+    },
+    {
+     "date": "2026-04-15",
+     "epsActual": 1.11,
+     "epsEstimated": 1.01,
+     "revenueActual": 30272000000,
+     "revenueEstimated": 29949370000
+    },
+    {
+     "date": "2026-01-14",
+     "epsActual": 0.98,
+     "epsEstimated": 0.958,
+     "revenueActual": 28367000000,
+     "revenueEstimated": 27761140000
+    }
+   ]
+  },
+  "BLK": {
+   "rows": [
+    {
+     "date": "2026-10-14",
+     "epsActual": null,
+     "epsEstimated": 14.25,
+     "revenueActual": null,
+     "revenueEstimated": 7444005000
+    },
+    {
+     "date": "2026-07-15",
+     "epsActual": 13.91,
+     "epsEstimated": 12.69,
+     "revenueActual": 7084000000,
+     "revenueEstimated": 6727419000
+    },
+    {
+     "date": "2026-04-14",
+     "epsActual": 12.53,
+     "epsEstimated": 11.65,
+     "revenueActual": 6698000000,
+     "revenueEstimated": 6550612000
+    },
+    {
+     "date": "2026-01-15",
+     "epsActual": 13.16,
+     "epsEstimated": 12.24,
+     "revenueActual": 7008000000,
+     "revenueEstimated": 6760364000
+    }
+   ]
+  },
+  "CAT": {
+   "rows": [
+    {
+     "date": "2026-11-04",
+     "epsActual": null,
+     "epsEstimated": 6.93,
+     "revenueActual": null,
+     "revenueEstimated": 20486010000
+    },
+    {
+     "date": "2026-08-04",
+     "epsActual": 8.17,
+     "epsEstimated": 6.22,
+     "revenueActual": 20543000000,
+     "revenueEstimated": 19335240000
+    },
+    {
+     "date": "2026-04-30",
+     "epsActual": 5.54,
+     "epsEstimated": 4.65,
+     "revenueActual": 17415000000,
+     "revenueEstimated": 16526510000
+    },
+    {
+     "date": "2026-01-29",
+     "epsActual": 5.16,
+     "epsEstimated": 4.71,
+     "revenueActual": 19133000000,
+     "revenueEstimated": 17851130000
+    }
+   ]
+  },
+  "CMCSA": {
+   "rows": [
+    {
+     "date": "2026-10-22",
+     "epsActual": null,
+     "epsEstimated": 0.984,
+     "revenueActual": null,
+     "revenueEstimated": 29209640000
+    },
+    {
+     "date": "2026-07-23",
+     "epsActual": 1.04,
+     "epsEstimated": 0.97,
+     "revenueActual": 29940000000,
+     "revenueEstimated": 29235580000
+    },
+    {
+     "date": "2026-04-23",
+     "epsActual": 0.79,
+     "epsEstimated": 0.725,
+     "revenueActual": 31457000000,
+     "revenueEstimated": 30414900000
+    },
+    {
+     "date": "2026-01-29",
+     "epsActual": 0.84,
+     "epsEstimated": 0.729,
+     "revenueActual": 32310000000,
+     "revenueEstimated": 32337860000
+    }
+   ]
+  },
+  "COP": {
+   "rows": [
+    {
+     "date": "2026-11-05",
+     "epsActual": null,
+     "epsEstimated": 2.65,
+     "revenueActual": null,
+     "revenueEstimated": 17624150000
+    },
+    {
+     "date": "2026-08-06",
+     "epsActual": 3.24,
+     "epsEstimated": 2.9,
+     "revenueActual": 19522000000,
+     "revenueEstimated": 18786710000
+    },
+    {
+     "date": "2026-04-30",
+     "epsActual": 1.89,
+     "epsEstimated": 1.72,
+     "revenueActual": 16054000000,
+     "revenueEstimated": 15618330000
+    },
+    {
+     "date": "2026-02-05",
+     "epsActual": 1.02,
+     "epsEstimated": 1.07,
+     "revenueActual": 14185000000,
+     "revenueEstimated": 13946590000
+    }
+   ]
+  },
+  "CVX": {
+   "rows": [
+    {
+     "date": "2026-10-30",
+     "epsActual": null,
+     "epsEstimated": 4.75,
+     "revenueActual": null,
+     "revenueEstimated": 58347790000
+    },
+    {
+     "date": "2026-07-31",
+     "epsActual": 6.06,
+     "epsEstimated": 5.55,
+     "revenueActual": 70055000000,
+     "revenueEstimated": 62720790000
+    },
+    {
+     "date": "2026-05-01",
+     "epsActual": 1.41,
+     "epsEstimated": 1,
+     "revenueActual": 48607000000,
+     "revenueEstimated": 51861200000
+    },
+    {
+     "date": "2026-01-30",
+     "epsActual": 1.52,
+     "epsEstimated": 1.41,
+     "revenueActual": 46873000000,
+     "revenueEstimated": 46790710000
+    }
+   ]
+  },
+  "DE": {
+   "rows": [
+    {
+     "date": "2026-11-25",
+     "epsActual": null,
+     "epsEstimated": 4.08,
+     "revenueActual": null,
+     "revenueEstimated": 10416280000
+    },
+    {
+     "date": "2026-08-20",
+     "epsActual": 5.1,
+     "epsEstimated": 4.69,
+     "revenueActual": 12608000000,
+     "revenueEstimated": 10814670000
+    },
+    {
+     "date": "2026-05-21",
+     "epsActual": 6.55,
+     "epsEstimated": 5.7,
+     "revenueActual": 11778000000,
+     "revenueEstimated": 11550040000
+    },
+    {
+     "date": "2026-02-19",
+     "epsActual": 2.42,
+     "epsEstimated": 2.02,
+     "revenueActual": 8001000000,
+     "revenueEstimated": 7587607000
+    }
+   ]
+  },
+  "DIS": {
+   "rows": [
+    {
+     "date": "2026-11-12",
+     "epsActual": null,
+     "epsEstimated": 1.7,
+     "revenueActual": null,
+     "revenueEstimated": 25176150000
+    },
+    {
+     "date": "2026-08-05",
+     "epsActual": 2.06,
+     "epsEstimated": 1.86,
+     "revenueActual": 25248000000,
+     "revenueEstimated": 25391870000
+    },
+    {
+     "date": "2026-05-06",
+     "epsActual": 1.57,
+     "epsEstimated": 1.49,
+     "revenueActual": 25248000000,
+     "revenueEstimated": 24866270000
+    },
+    {
+     "date": "2026-02-02",
+     "epsActual": 1.63,
+     "epsEstimated": 1.57,
+     "revenueActual": 25981000000,
+     "revenueEstimated": 25696760000
+    }
+   ]
+  },
+  "DUK": {
+   "rows": [
+    {
+     "date": "2026-11-05",
+     "epsActual": null,
+     "epsEstimated": 1.89,
+     "revenueActual": null,
+     "revenueEstimated": 8912238000
+    },
+    {
+     "date": "2026-08-04",
+     "epsActual": 1.43,
+     "epsEstimated": 1.3,
+     "revenueActual": 7592000000,
+     "revenueEstimated": 7658944000
+    },
+    {
+     "date": "2026-05-05",
+     "epsActual": 1.93,
+     "epsEstimated": 1.87,
+     "revenueActual": 9178000000,
+     "revenueEstimated": 8439470000
+    },
+    {
+     "date": "2026-02-10",
+     "epsActual": 1.5,
+     "epsEstimated": 1.49,
+     "revenueActual": 7938000000,
+     "revenueEstimated": 7426649000
+    }
+   ]
+  },
+  "GM": {
+   "rows": [
+    {
+     "date": "2026-10-20",
+     "epsActual": null,
+     "epsEstimated": 3.68,
+     "revenueActual": null,
+     "revenueEstimated": 48742040000
+    },
+    {
+     "date": "2026-07-21",
+     "epsActual": 3.57,
+     "epsEstimated": 3.19,
+     "revenueActual": 48026000000,
+     "revenueEstimated": 47011490000
+    },
+    {
+     "date": "2026-04-28",
+     "epsActual": 3.7,
+     "epsEstimated": 2.61,
+     "revenueActual": 43624000000,
+     "revenueEstimated": 43505100000
+    },
+    {
+     "date": "2026-01-27",
+     "epsActual": 2.51,
+     "epsEstimated": 2.26,
+     "revenueActual": 45287000000,
+     "revenueEstimated": 46095770000
+    }
+   ]
+  },
+  "GOOGL": {
+   "rows": [
+    {
+     "date": "2026-10-28",
+     "epsActual": null,
+     "epsEstimated": 3.04,
+     "revenueActual": null,
+     "revenueEstimated": 127237900000
+    },
+    {
+     "date": "2026-07-22",
+     "epsActual": 9.11,
+     "epsEstimated": 2.87,
+     "revenueActual": 119796000000,
+     "revenueEstimated": 116532500000
+    },
+    {
+     "date": "2026-04-29",
+     "epsActual": 5.11,
+     "epsEstimated": 2.64,
+     "revenueActual": 109896000000,
+     "revenueEstimated": 106976100000
+    },
+    {
+     "date": "2026-02-04",
+     "epsActual": 2.82,
+     "epsEstimated": 2.57,
+     "revenueActual": 113828000000,
+     "revenueEstimated": 111332400000
+    }
+   ]
+  },
+  "KO": {
+   "rows": [
+    {
+     "date": "2026-10-27",
+     "epsActual": null,
+     "epsEstimated": 0.879,
+     "revenueActual": null,
+     "revenueEstimated": 12888350000
+    },
+    {
+     "date": "2026-07-28",
+     "epsActual": 0.97,
+     "epsEstimated": 0.92,
+     "revenueActual": 13373000000,
+     "revenueEstimated": 13170960000
+    },
+    {
+     "date": "2026-04-28",
+     "epsActual": 0.86,
+     "epsEstimated": 0.812,
+     "revenueActual": 12471000000,
+     "revenueEstimated": 12236250000
+    },
+    {
+     "date": "2026-02-10",
+     "epsActual": 0.58,
+     "epsEstimated": 0.565,
+     "revenueActual": 11800000000,
+     "revenueEstimated": 12049710000
+    }
+   ]
+  },
+  "NEE": {
+   "rows": [
+    {
+     "date": "2026-10-27",
+     "epsActual": null,
+     "epsEstimated": 1.2,
+     "revenueActual": null,
+     "revenueEstimated": 8885164000
+    },
+    {
+     "date": "2026-07-24",
+     "epsActual": 1.15,
+     "epsEstimated": 1.09,
+     "revenueActual": 7534000000,
+     "revenueEstimated": 8108191000
+    },
+    {
+     "date": "2026-04-23",
+     "epsActual": 1.09,
+     "epsEstimated": 1.03,
+     "revenueActual": 6701000000,
+     "revenueEstimated": 7265358000
+    },
+    {
+     "date": "2026-01-27",
+     "epsActual": 0.53,
+     "epsEstimated": 0.56,
+     "revenueActual": 6500000000,
+     "revenueEstimated": 6724873000
+    }
+   ]
+  },
+  "PLD": {
+   "rows": [
+    {
+     "date": "2026-10-15",
+     "epsActual": null,
+     "epsEstimated": 0.777,
+     "revenueActual": null,
+     "revenueEstimated": 2172293000
+    },
+    {
+     "date": "2026-07-16",
+     "epsActual": 1.13,
+     "epsEstimated": 0.747,
+     "revenueActual": 2177074000,
+     "revenueEstimated": 2161330000
+    },
+    {
+     "date": "2026-04-16",
+     "epsActual": 1.05,
+     "epsEstimated": 0.806,
+     "revenueActual": 2125084000,
+     "revenueEstimated": 2121336000
+    },
+    {
+     "date": "2026-01-21",
+     "epsActual": 1.49,
+     "epsEstimated": 0.737,
+     "revenueActual": 2092107000,
+     "revenueEstimated": 2089203000
+    }
+   ]
+  },
+  "SHW": {
+   "rows": [
+    {
+     "date": "2026-10-27",
+     "epsActual": null,
+     "epsEstimated": 3.69,
+     "revenueActual": null,
+     "revenueEstimated": 6786915000
+    },
+    {
+     "date": "2026-07-28",
+     "epsActual": 3.7,
+     "epsEstimated": 3.52,
+     "revenueActual": 6789300000,
+     "revenueEstimated": 6602129000
+    },
+    {
+     "date": "2026-04-28",
+     "epsActual": 2.35,
+     "epsEstimated": 2.27,
+     "revenueActual": 5666900000,
+     "revenueEstimated": 5560846000
+    },
+    {
+     "date": "2026-01-29",
+     "epsActual": 2.23,
+     "epsEstimated": 2.16,
+     "revenueActual": 5595900000,
+     "revenueEstimated": 5565364000
+    }
+   ]
+  },
+  "SLB": {
+   "rows": [
+    {
+     "date": "2026-10-23",
+     "epsActual": null,
+     "epsEstimated": 0.619,
+     "revenueActual": null,
+     "revenueEstimated": 9265689000
+    },
+    {
+     "date": "2026-07-24",
+     "epsActual": 0.55,
+     "epsEstimated": 0.511,
+     "revenueActual": 8972000000,
+     "revenueEstimated": 8667177000
+    },
+    {
+     "date": "2026-04-24",
+     "epsActual": 0.52,
+     "epsEstimated": 0.508,
+     "revenueActual": 8721000000,
+     "revenueEstimated": 8628079000
+    },
+    {
+     "date": "2026-01-23",
+     "epsActual": 0.78,
+     "epsEstimated": 0.742,
+     "revenueActual": 9745000000,
+     "revenueEstimated": 9552943000
+    }
+   ]
+  }
+ }
+}

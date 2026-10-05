@@ -609,16 +609,12 @@ class OpportunityLifecycleTracker:
                 reason = f"New evidence appeared: {', '.join(added_codes)}."
             elif confidence_delta > 0:
                 change_type = "confidence_increased"
-                reason = (
-                    f"Confidence strengthened from {prior.confidence_score:.2f} "
-                    f"to {confidence_score:.2f}."
-                )
+                # ADR-076: no raw score in user-facing text -- the number
+                # is an internal evidence measure, not a probability.
+                reason = "The evidence supporting this has strengthened."
             else:
                 change_type = "confidence_decreased"
-                reason = (
-                    f"Confidence weakened from {prior.confidence_score:.2f} to "
-                    f"{confidence_score:.2f}."
-                )
+                reason = "The evidence supporting this has weakened."
         elif since_change_hours >= expire_window:
             new_state = "expired"
             first_time = prior.lifecycle_state != "expired"

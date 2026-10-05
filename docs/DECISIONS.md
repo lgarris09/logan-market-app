@@ -3777,3 +3777,103 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   history older than 2,000 entries is no longer inspectable in process; nothing durable is affected
   (daily telemetry, revisions, lifecycle, membership and operational observations are untouched and
   tested to be).
+
+## ADR-076: A source cannot corroborate itself
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05, as a correctness fix) — implemented and tested
+  locally on `feat/evidence-strength-presentation` (based on deployed commit `8ffe2f4`); **not pushed, not
+  deployed**. Numbered 076 because ADR-071 through ADR-075 exist on other branches.
+- Context: `WorldModel.process()` appended a signal to an event's `supporting` list whenever it was not an
+  exact repeat of the last observation, and `EvidenceTrustEngine` reads the length of that list as the
+  corroboration count (worth up to 0.25 of the trust score). So one source re-reporting *changed* content —
+  a quote that moved, a corrected report — was counted as independent corroboration of itself. In
+  production this is what lifted TSLA's price opportunity to 0.563 against 0.475 for the same kind of
+  evidence elsewhere. An earlier test asserted this behaviour deliberately
+  (`test_changed_content_from_same_source_still_counts_as_corroboration`).
+- Decision: `WorldModel` remembers the distinct `source_id`s that have contributed to each event.
+  `supporting` grows only when a source not yet in that set reports. The same source reporting different
+  content is still absorbed (its signal is recorded; a corrected trigger still replaces the prior one) but
+  is not counted. Corroboration keeps its meaning: independent sources.
+- Consequences: Scores can only go down or stay the same for the same evidence; no score rises. Tested
+  through the real pipeline: the same opportunities qualify, event ids are stable, lifecycle states are
+  identical, and entities that were never self-corroborated are untouched. `supporting` is now bounded by
+  the number of distinct sources, which also removes the last unbounded list noted in ADR-074.
+  Two effects to know about:
+  1. **A stronger corrected report no longer creates a revision.** One existing test
+     (`test_multiple_revisions_since_last_view_reports_only_the_latest`) expected a larger earnings beat
+     from the same source to produce a `confidence_increased` revision. It only ever did so through
+     self-corroboration, because trigger contributions do not depend on magnitude. That test is marked
+     `xfail(strict=True)` with this explanation. Magnitude is not part of evidence strength (ADR-078), so the
+     fix is for the lifecycle to record a same-source correction as a revision in its own right; the test
+     must pass again when that exists.
+  2. **On deploy, affected opportunities step down once.** A price opportunity whose score included
+     self-corroboration will record one `confidence_decreased` revision. Nothing about the underlying
+     evidence weakened; this is a correction. How to present that one-time step needs a decision before
+     deploy.
+
+## ADR-077: Confidence is presented as evidence strength, never as a percentage
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05) — implemented and tested locally on
+  `feat/evidence-strength-presentation`; **not pushed, not deployed**; the mobile part needs a new build.
+- Context: `confidence_score` is an internal measure of how well supported an observation is. Shown as
+  "60%" it reads as a likelihood, which it is not. The main card stopped showing it on 2026-08-29, but a
+  percentage or raw score still reached users in four places: the notification list row and its
+  accessibility label, two legacy/demo cards, revision explanations ("Confidence strengthened from 0.59 to
+  0.62"), and the Ask STRATUS model context (which passed the raw score to the LLM).
+- Decision: No user-facing surface shows the score as a number. The label is shown as evidence strength
+  ("Moderate evidence"). Revision explanations say the evidence strengthened or weakened, without numbers.
+  The Ask STRATUS context carries the label and classification only, with an explicit instruction never to
+  express it as a percentage or probability. `confidence_score` itself is unchanged and stays on the data
+  contract for ranking, lifecycle and audit.
+- Consequences: Nothing about scoring, ranking or qualification changes. The Low / Moderate / High labels
+  are kept for now with their existing thresholds; "High" is unreachable for single-provider evidence
+  today, so the thresholds should be re-examined when the magnitude-aware trigger contribution is decided.
+  Not changed, and noted for cleanup: `mobile/components/ConfidenceRing.tsx` still renders a percentage but
+  is imported nowhere, and `mobile/lib/attentionLayout.ts` still sizes a label from a percentage string
+  that is no longer displayed.
+
+## ADR-078: Qualification, evidence strength and materiality are separate; EPS comparability is a hard gate (shadow)
+- Date: 2026-10-05
+- Status: Accepted as direction (Logan and Chuck, after red-team review, 2026-10-05) — **shadow only**. The
+  rules exist as an unwired module with tests and a replay; nothing in the pipeline uses them. Not pushed,
+  not deployed. Supersedes the magnitude-aware trigger contribution proposed earlier the same day.
+- Context: The confidence score clusters because, for single-provider evidence, it reduces to a constant
+  per trigger type. The first proposal was to scale each trigger's contribution by its magnitude. Review
+  rejected that: it would make a large event look like better evidence, and it would have built on EPS
+  figures that are not comparable. The provider's `epsActual` is GAAP diluted for some issuers (including
+  non-operating gains larger than operating income) and adjusted for others, with no basis stated for the
+  estimate.
+- Decision:
+  1. Six concepts stay separate and are never collapsed into one scalar: qualification, evidence
+     strength, event materiality, trajectory, personal relevance, priority. Evidence strength answers
+     "how well-supported and usable is the evidence"; it is not probability, expected return, direction,
+     importance, relevance or event magnitude. `docs/CONFIDENCE_SEMANTICS.md` is the contract.
+  2. Qualification has five states: `qualified`, `not_qualified`, `blocked_invalid_input`,
+     `blocked_incomparable_basis`, `blocked_stale_or_missing_required_fields`, each with stable reason
+     codes decided before any transformation. A blocked observation emits no trigger, earns no discount
+     and gets no label.
+  3. EPS comparability is a hard gate: same issuer, same fiscal period, a pre-release estimate timestamp,
+     compatible accounting and share basis, same currency, no unadjusted split, no unresolved restatement,
+     provenance retained. Anything not established blocks with `earnings_eps_comparability_unresolved`.
+     Other signal families qualify independently.
+  4. No percentage is computed on a zero, near-zero or negative denominator, and a pathological percentage
+     is never capped into a valid value.
+  5. Materiality is a deterministic band per trigger family (`barely_qualified`, `meaningful`, `large`,
+     `capped_exceptional`), from validated comparable inputs only. Proposed first for price movement and
+     revenue surprise. EPS magnitude stays blocked; analyst actions stay magnitude-neutral.
+  6. Corroboration means an independent evidence origin. Same-source revisions and multiple signal
+     families are not corroboration (ADR-076 stands).
+  7. Model changes are migration-neutral: no user-facing "strengthened/weakened", notification or timeline
+     event unless external evidence changed; prior and current assessment, model version, evidence
+     snapshot and reason are retained.
+  8. Labels are recalibrated later, by named conditions, after shadow replay. Current thresholds are not
+     preserved automatically and no percentile-only labels are used.
+- Consequences: Replayed against the 20 current earnings opportunities, the hard gate blocks all 20 with
+  the provider data available today, and blocks revenue surprise for the same missing facts. Switched on
+  as-is, the feed would lose its earnings opportunities. So the gate cannot ship before a decision on how
+  comparability will be established: the provider cannot prove the consensus basis on the current plan.
+  Fiscal period, currency, release time and split status can be established from endpoints already
+  available; a pre-release estimate timestamp can be established by STRATUS snapshotting upcoming
+  estimates itself (a new durable store, not decided here); the consensus basis needs a provider that
+  states it. Not decided here: a revenue-surprise trigger and its threshold, the EPS denominator floor, the
+  audit-record store for migrations, and the label names.
