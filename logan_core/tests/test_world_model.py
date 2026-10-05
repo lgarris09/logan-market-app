@@ -242,14 +242,16 @@ def test_different_source_after_duplicate_polls_still_counts_as_corroboration(no
     assert "duplicate observation" not in event.decision_trace[-1].rule
 
 
-def test_changed_content_from_same_source_still_counts_as_corroboration(now):
-    """A corrected/revised report from the same source (different EPS
-    numbers -- different signal.value text) is genuinely new information,
-    not a duplicate poll, and should still be able to increase confidence."""
+def test_changed_content_from_same_source_is_absorbed_not_corroboration(now):
+    """ADR-076 reversed the earlier rule here. A corrected/revised report
+    from the same source is genuinely new information and is absorbed (its
+    signal is recorded, and a corrected trigger replaces the prior one --
+    see test_corrected_earnings_replaces_prior_trigger_for_same_code), but
+    one source cannot corroborate itself: `supporting` does not grow."""
     normalizer = Normalizer()
     world_model = WorldModel()
 
-    world_model.process(
+    first = world_model.process(
         normalizer.normalize(_nvda_raw(now, actual_eps=1.87, consensus_eps=1.76))
     )
     revised = normalizer.normalize(
@@ -257,7 +259,96 @@ def test_changed_content_from_same_source_still_counts_as_corroboration(now):
     )
     event = world_model.process(revised)
 
-    assert revised.signal_id in event.supporting
+    assert event.event_id == first.event_id
+    assert event.supporting == []
+    assert revised.signal_id in event.signal_ids
+    assert "already counted" in event.decision_trace[-1].rule
+    assert "corroboration: merged" not in event.decision_trace[-1].rule
+
+
+def test_a_source_reporting_ever_changing_content_never_corroborates_itself(now):
+    """The live case: a quote whose value moves on every refresh."""
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    event = None
+    for step in range(500):
+        event = world_model.process(
+            normalizer.normalize(
+                _nvda_raw(
+                    now + timedelta(seconds=step),
+                    actual_eps=1.87 + step / 1000,
+                    consensus_eps=1.76,
+                )
+            )
+        )
+    assert event.supporting == []
+
+
+def test_supporting_counts_each_independent_source_once(now):
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    world_model.process(normalizer.normalize(_nvda_raw(now)))
+
+    event = None
+    for step in range(1, 41):
+        # Two other sources alternate, each changing its content every time.
+        source = "bloomberg_terminal" if step % 2 else "reuters_wire"
+        event = world_model.process(
+            normalizer.normalize(
+                _nvda_raw(
+                    now + timedelta(seconds=step),
+                    actual_eps=1.87 + step / 100,
+                    consensus_eps=1.76,
+                    source_id=source,
+                )
+            )
+        )
+    assert len(event.supporting) == 2  # one per independent source, not 40
+
+
+def test_a_new_source_still_corroborates_after_same_source_updates(now):
+    normalizer = Normalizer()
+    world_model = WorldModel()
+    world_model.process(normalizer.normalize(_nvda_raw(now, actual_eps=1.87)))
+    world_model.process(
+        normalizer.normalize(_nvda_raw(now + timedelta(minutes=1), actual_eps=1.90))
+    )
+    independent = normalizer.normalize(
+        _nvda_raw(now + timedelta(minutes=2), source_id="bloomberg_terminal")
+    )
+    event = world_model.process(independent)
+    assert event.supporting == [independent.signal_id]
+    assert "corroboration: merged" in event.decision_trace[-1].rule
+
+
+def test_same_source_updates_do_not_raise_the_trust_score(now):
+    """What the fix is for: confidence must not rise because one source
+    kept re-reporting. Compared at one fixed evaluation time so recency is
+    identical on both sides."""
+    from logan_core.evidence_trust import EvidenceTrustEngine
+
+    normalizer = Normalizer()
+    engine = EvidenceTrustEngine()
+    evaluated_at = now + timedelta(minutes=30)
+
+    single_model = WorldModel()
+    single_signal = normalizer.normalize(_nvda_raw(now))
+    single = engine.evaluate(
+        single_model.process(single_signal), [single_signal], now=evaluated_at
+    )
+
+    repeated_model = WorldModel()
+    signals, event = [], None
+    for step in range(10):
+        signal = normalizer.normalize(
+            _nvda_raw(now, actual_eps=1.87 + step / 100, consensus_eps=1.76)
+        )
+        signals.append(signal)
+        event = repeated_model.process(signal)
+    repeated = engine.evaluate(event, signals, now=evaluated_at)
+
+    assert single.corroboration == repeated.corroboration == 0
+    assert repeated.trust_score == single.trust_score
 
 
 def test_repeated_identical_fmp_evidence_does_not_inflate_confidence(now):

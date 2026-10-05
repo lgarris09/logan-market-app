@@ -3621,3 +3621,35 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   history older than 2,000 entries is no longer inspectable in process; nothing durable is affected
   (daily telemetry, revisions, lifecycle, membership and operational observations are untouched and
   tested to be).
+
+## ADR-076: A source cannot corroborate itself
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05, as a correctness fix) — implemented and tested
+  locally on `feat/evidence-strength-presentation` (based on deployed commit `8ffe2f4`); **not pushed, not
+  deployed**. Numbered 076 because ADR-071 through ADR-075 exist on other branches.
+- Context: `WorldModel.process()` appended a signal to an event's `supporting` list whenever it was not an
+  exact repeat of the last observation, and `EvidenceTrustEngine` reads the length of that list as the
+  corroboration count (worth up to 0.25 of the trust score). So one source re-reporting *changed* content —
+  a quote that moved, a corrected report — was counted as independent corroboration of itself. In
+  production this is what lifted TSLA's price opportunity to 0.563 against 0.475 for the same kind of
+  evidence elsewhere. An earlier test asserted this behaviour deliberately
+  (`test_changed_content_from_same_source_still_counts_as_corroboration`).
+- Decision: `WorldModel` remembers the distinct `source_id`s that have contributed to each event.
+  `supporting` grows only when a source not yet in that set reports. The same source reporting different
+  content is still absorbed (its signal is recorded; a corrected trigger still replaces the prior one) but
+  is not counted. Corroboration keeps its meaning: independent sources.
+- Consequences: Scores can only go down or stay the same for the same evidence; no score rises. Tested
+  through the real pipeline: the same opportunities qualify, event ids are stable, lifecycle states are
+  identical, and entities that were never self-corroborated are untouched. `supporting` is now bounded by
+  the number of distinct sources, which also removes the last unbounded list noted in ADR-074.
+  Two effects to know about:
+  1. **A stronger corrected report no longer creates a revision.** One existing test
+     (`test_multiple_revisions_since_last_view_reports_only_the_latest`) expected a larger earnings beat
+     from the same source to produce a `confidence_increased` revision. It only ever did so through
+     self-corroboration, because trigger contributions do not depend on magnitude. That test is marked
+     `xfail(strict=True)` with this explanation; the magnitude-aware trigger contribution (designed, not
+     implemented) restores the behaviour for the right reason, and the test must pass again when it lands.
+  2. **On deploy, affected opportunities step down once.** A price opportunity whose score included
+     self-corroboration will record one `confidence_decreased` revision. Nothing about the underlying
+     evidence weakened; this is a correction. How to present that one-time step needs a decision before
+     deploy.

@@ -128,6 +128,14 @@ class WorldModel:
         # on every /v1/opportunities request) apart from "a different source, or the
         # same source with genuinely changed content" (real corroboration).
         self._last_observed: dict[tuple[str, str], tuple[str, object]] = {}
+        # Self-corroboration fix (ADR-076): the distinct source_ids that have
+        # contributed to each event. `supporting` -- which
+        # EvidenceTrustEngine reads as the corroboration count -- may only
+        # grow when a source NOT already in this set reports. Before this,
+        # one source re-reporting changed content (a quote that moved, a
+        # corrected report) was appended to `supporting` and counted as
+        # independent corroboration of itself.
+        self._event_sources: dict[UUID, set[str]] = {}
 
     def _get_or_create_entity(
         self, entity_id: str, entity_type: EntityType, domain: Domain
@@ -296,12 +304,12 @@ class WorldModel:
             # polled repeatedly, never from anything genuinely new. `signal_ids`
             # still grows either way, preserving the honest provenance record
             # that this poll happened -- bounded by _bounded_history() below
-            # (STRATUS reliability correction), same as `decision_trace`. A
-            # different source, or the same source reporting genuinely
-            # different content (e.g. a corrected report -- see
-            # test_corrected_earnings_replaces_prior_trigger_for_same_code),
-            # is real corroboration and still grows `supporting` as before
-            # (never bounded -- confidence math reads it directly).
+            # (STRATUS reliability correction), same as `decision_trace`.
+            # Only a source that has not yet contributed to this event is
+            # real corroboration and grows `supporting` (ADR-076); the same
+            # source reporting different content is absorbed without
+            # counting (see `_event_sources` in __init__). `supporting` is
+            # therefore bounded by the number of distinct sources.
             last_source_id, last_value = self._last_observed.get(
                 dedup_key, (None, None)
             )
@@ -309,6 +317,7 @@ class WorldModel:
                 signal.source_id == last_source_id and signal.value == last_value
             )
             new_signal_ids = _bounded_history(existing.signal_ids + [signal.signal_id])
+            contributing_sources = self._event_sources.setdefault(prior_event_id, set())
             if is_duplicate_observation:
                 new_supporting = existing.supporting
                 trace_rule = (
@@ -316,12 +325,24 @@ class WorldModel:
                     f"content re-polled within {DEDUP_WINDOW} -- not counted as new "
                     f"corroborating evidence"
                 )
+            elif signal.source_id in contributing_sources:
+                # The same source reporting different content (a quote that
+                # moved, a corrected/revised report). The new content is
+                # absorbed -- trigger replacement above, signal_ids below --
+                # but a source cannot corroborate itself.
+                new_supporting = existing.supporting
+                trace_rule = (
+                    f"updated content from a source already counted "
+                    f"({signal.source_id}) -- absorbed, not independent "
+                    f"corroboration"
+                )
             else:
                 new_supporting = existing.supporting + [signal.signal_id]
                 trace_rule = (
                     f"corroboration: merged into existing event "
                     f"(within {DEDUP_WINDOW} dedup window)"
                 )
+            contributing_sources.add(signal.source_id)
 
             event = existing.model_copy(
                 update={
@@ -344,6 +365,8 @@ class WorldModel:
                 }
             )
 
+        if prior_event_id is None:
+            self._event_sources[event.event_id] = {signal.source_id}
         self._recent[dedup_key] = (signal.captured_at, observed_at, event.event_id)
         self._last_observed[dedup_key] = (signal.source_id, signal.value)
         self._events[event.event_id] = event
