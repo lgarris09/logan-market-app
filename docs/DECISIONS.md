@@ -3924,3 +3924,118 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   estimates itself (a new durable store, not decided here); the consensus basis needs a provider that
   states it. Not decided here: a revenue-surprise trigger and its threshold, the EPS denominator floor, the
   audit-record store for migrations, and the label names.
+
+## ADR-079: Beta 1 EPS-safe fallback — no earnings-surprise trigger without proven comparability
+- Date: 2026-10-05
+- Status: Accepted as direction (Logan and Chuck, 2026-10-05). Implemented locally on `beta1/candidate`
+  behind `STRATUS_EPS_COMPARABILITY_GATE` (default off). Not pushed, not deployed.
+- Context: ADR-078 established that an EPS beat or miss is only true when the reported and consensus
+  figures are on the same basis. The current provider states no basis, and its actual EPS is GAAP for some
+  issuers and adjusted for others. The provider investigation was time-boxed; the one alternate source
+  that documents a single basis is enterprise-only. Beta 1 must not wait for it and must not state a
+  comparison STRATUS cannot substantiate.
+- Decision:
+  1. When the gate is on, `StocksTriggerEvaluator` emits `STOCK_EARNINGS_BEAT`, `STOCK_EARNINGS_MISS` or
+     `STOCK_EARNINGS_IN_LINE` only if the raw signal itself proves comparability: accounting basis and
+     share basis for both figures, matching fiscal period and currency, a consensus captured before the
+     release, and no unresolved split or restatement. The proof must come from the provider in the signal;
+     an absent field is unknown, and unknown blocks.
+  2. A blocked comparison produces no trigger of any direction, no confidence contribution, no magnitude
+     and no materiality. It is not downgraded into a weaker claim. The governed state and reason codes
+     (ADR-078) are returned by `assess_eps_comparability()` and logged.
+  3. The same check runs before the live feed substitutes an earnings signal, so an unproven comparison
+     never surfaces as an opportunity without a qualifying trigger.
+  4. Price, analyst and every other signal family are unaffected, as are revisions, trajectory, Watch, Ask
+     and notifications for opportunities that qualify on other evidence.
+  5. What remains usable from an earnings release without the comparison is listed in
+     `docs/sessions/2026-10-06-beta1-release-candidate.md`. Nothing is shown in place of the comparison in
+     Beta 1; a neutral "results reported" fact would be a new trigger code and is not decided here.
+- Consequences: With the current provider and the gate on, no earnings-surprise opportunity fires. In the
+  2026-10-05 production snapshot that removes 20 of the earnings-driven opportunities; the feed then rests
+  on price and analyst signals. The gate defaults to off so the existing suites and current behaviour are
+  byte-identical; turning it on is a production flag change and belongs to the Beta 1 deployment sequence.
+  The rest of ADR-078 (price and revenue qualification, materiality bands) stays shadow; a test asserts
+  that only the EPS gate is wired.
+
+## ADR-080: Notifications fail closed, and can be paused
+- Date: 2026-10-05
+- Status: Accepted as direction (Master Plan REV4 2A.11; pause approved for design 2026-10-05).
+  Implemented locally on `beta1/candidate`. Not pushed, not deployed.
+- Context: The governing rule is that when freshness, provider state, decision attribution or required
+  evidence truth cannot be established, STRATUS suppresses the interruption rather than guesses. An audit
+  of the path found three places where uncertainty could become a send: an entity with no lifecycle
+  revision was sent on prioritisation alone; freshness was never consulted; and nothing could stop pushes
+  short of a deploy or stopping the application.
+- Decision:
+  1. `decide_notification()` gains two inputs. `freshness_state`: only `FRESH` and `RECENTLY_OBSERVED`
+     allow an interruption; `STALE_WITHIN_GRACE` suppresses as `stale_evidence_suppressed`; anything else,
+     including no state, suppresses as `freshness_unestablished_suppressed`. `notifications_paused`:
+     suppresses as `beta_notifications_paused`, checked first so the recorded reason is the pause.
+  2. In live-data-only mode an alert-level item with no lifecycle revision is suppressed as
+     `revision_unattributable_suppressed`. Demo mode keeps its prior behaviour for simulated entities.
+  3. The pause is `STRATUS_NOTIFICATIONS_PAUSED`, read on every poll through the existing flag mechanism.
+     It is enforced twice: in the decision (so the ledger records the reason) and at the send boundary in
+     `dispatch_eligible_notifications()`. It does not touch the feed, Watch, Ask, lifecycle state or any
+     durable store, and needs no mobile release.
+  4. Lifting the pause does not release a backlog: a revision is notification-worthy only on the poll that
+     produced it.
+- Consequences: Activation requires setting a Fly secret, which restarts the machine (seconds). That is
+  acceptable for a safety control but is not instantaneous; a runtime switch without restart would need a
+  durable flag store and is not built. A model-version deploy can still create "strengthened" revisions
+  from recalibration alone; until the lifecycle snapshot records the model version (a schema change, not
+  made here) the procedure is to deploy model changes with the pause on and lift it after one full poll.
+
+## ADR-081: Decision Ledger for Beta 1 — bounded retention, dispatch states, model version
+- Date: 2026-10-05
+- Status: `b10c100` (ADR-071) approved as the post-Operational-Integrity basis (Logan and Chuck,
+  2026-10-05), with conditions. Applied to the production commit on `beta1/candidate` and extended
+  locally. Not pushed, not deployed. **Creates tables; needs explicit schema approval before deployment.**
+- Context: ADR-071 records every notification candidate and its SEND / SUPPRESS decision. It had no
+  retention bound, recorded nothing about what happened after a SEND, and nothing identified the rules in
+  force. The dispatch code recorded a push as sent whenever the HTTP call returned, without reading the
+  response.
+- Decision:
+  1. Retention: rows older than `STRATUS_NOTIFICATION_LEDGER_RETENTION_DAYS` (default 120, minimum 7) are
+     deleted at startup and at most once a day thereafter.
+  2. A third table, `notification_dispatches`, holds one row per dispatch attempt per opportunity:
+     `dispatch_attempted` (2xx, no per-message ticket readable), `dispatch_accepted` (at least one ticket
+     ok), `dispatch_rejected` (every ticket an error), `dispatch_failed` (request error or non-2xx).
+     `delivery_state` is always `unknown`: no delivery receipt is read, and acceptance by the push provider
+     is not delivery to a device.
+  3. Behaviour follows the state: failed is retried and never recorded as notified; rejected is not
+     retried and never recorded as notified; accepted and attempted count as notified for de-duplication,
+     so an unreadable response can never cause a second push.
+  4. `EVIDENCE_MODEL_VERSION` (`logan_core/contracts/model_version.py`) is recorded on every candidate with
+     the qualifying trigger codes. It is a label; nothing branches on it.
+- Consequences: Candidates carry `qualification_state = "qualified"` by construction, because a blocked
+  observation never becomes an opportunity. Blocked observations are logged, not stored per entity; a
+  per-observation qualification record is not built. Delivery receipts are not read, so "did it arrive"
+  remains unknown by design. Schema: `notification_candidates` and `notification_decisions` (ADR-071) plus
+  `notification_dispatches`, all in `notification_ledger.db`, which exists in production today as an
+  empty file.
+
+## ADR-082: Opportunity-linked beta feedback through the existing telemetry path
+- Date: 2026-10-05
+- Status: Approved to build locally (Logan and Chuck, 2026-10-05). Implemented on `beta1/candidate`,
+  backend and mobile. Not pushed, not deployed.
+- Context: Beta users need a way to flag a bad opportunity that can be investigated rather than taken as
+  anecdote (REV4 2A.10). The server already accepted a boolean usefulness event that no screen sent.
+- Decision:
+  1. One new telemetry event, `opportunity_feedback_submitted`, with five governed reasons:
+     `seems_wrong`, `stale`, `not_useful`, `unclear_why`, `expected_else`, and an optional note of at most
+     500 characters. No new store: the context is held in the existing JSON column.
+  2. Each report records the opportunity id, the stable entity id, the revision, what was displayed
+     (headline, evidence label, trajectory, freshness state, as-of time), the app build, and the evidence
+     model version. The model version is set by the server and a client value is discarded.
+  3. A report is an observation. The telemetry module neither imports nor calls anything that scores,
+     learns or changes the user model, and a test asserts it. Nothing reads feedback to alter
+     qualification, evidence strength, ranking or Watch.
+  4. Ask events may carry the entity and revision of the opportunity they were opened from.
+  5. Telemetry is now removed with the account. It previously was not; with free-text notes in it that
+     could not stand.
+  6. On mobile, one control on the opportunity detail opens a small sheet. It is absent for items without
+     a revision, and it tells the user when a report did not go through.
+- Consequences: The `opportunity_id` in a report is regenerated when the backend restarts, so entity id
+  plus revision is the durable join key. `usefulness_feedback_submitted` stays in the schema with no
+  screen. Telemetry has no retention bound of its own; volume is a handful of rows per user per day, and a
+  bound should be set before any wider release.
