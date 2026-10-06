@@ -104,6 +104,15 @@ class TelemetryStore:
         ).fetchall()
         return [_row_to_event(row) for row in rows]
 
+    def delete_user(self, user_id: str) -> int:
+        """Account deletion (ADR-082): removes every event recorded for
+        `user_id`. The only delete this otherwise append-only store has."""
+        cursor = self._conn.execute(
+            "DELETE FROM telemetry_events WHERE user_id = ?", (user_id,)
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def close(self) -> None:
         self._conn.close()
 
