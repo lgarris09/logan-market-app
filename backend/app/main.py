@@ -14,6 +14,7 @@ from .clerk_auth import ClerkClaims
 from .config import (
     cors_allowed_origins,
     legacy_memory_db_path,
+    live_data_only_mode,
     live_stock_tickers,
     startup_config_summary,
     universe_scheduler_enabled,
@@ -543,6 +544,10 @@ def notification_ledger_report_route() -> dict[str, str]:
 
 @app.get("/v1/briefing", response_model=BriefingResponse)
 def briefing() -> BriefingResponse:
+    # Beta 1: this legacy route serves static demo opportunities by design.
+    # A live-data-only deployment must have no path that returns them.
+    if live_data_only_mode():
+        raise HTTPException(status_code=404, detail="Not found")
     return BriefingResponse(
         greeting="Good evening",
         headline="Three changes match the way you look for opportunity.",
@@ -858,7 +863,13 @@ def demo_tesla() -> TeslaDemoResponse:
     summary. Demo/proof-of-connectivity endpoint -- see ADR-022. Deprecated as of
     V3.1.4 BATCH-4: kept for single-entity debugging, superseded by `/v1/opportunities`
     for anything client-facing.
+
+    Beta 1: not served in live-data-only mode. This route returns simulated
+    data by design, and a production deployment must have no path that
+    returns simulated data at all.
     """
+    if live_data_only_mode():
+        raise HTTPException(status_code=404, detail="Not found")
     return run_tesla_demo()
 
 

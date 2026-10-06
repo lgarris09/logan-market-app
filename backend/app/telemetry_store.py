@@ -102,7 +102,20 @@ class TelemetryStore:
         rows = self._conn.execute(
             "SELECT * FROM telemetry_events ORDER BY occurred_at ASC"
         ).fetchall()
-        return [_row_to_event(row) for row in rows]
+        events: list[TelemetryEvent] = []
+        for row in rows:
+            try:
+                events.append(_row_to_event(row))
+            except Exception as exc:  # noqa: BLE001
+                # A row this version cannot read (written by a newer build
+                # before a rollback, for example) is skipped, never fatal:
+                # it stays in the durable store untouched and one unreadable
+                # row must not take the whole telemetry path down.
+                print(
+                    f"[telemetry] skipping unreadable event {row['event_id']}: "
+                    f"{type(exc).__name__}"
+                )
+        return events
 
     def delete_user(self, user_id: str) -> int:
         """Account deletion (ADR-082): removes every event recorded for

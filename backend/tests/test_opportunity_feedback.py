@@ -335,3 +335,59 @@ def test_store_delete_user_removes_only_that_user(tmp_path):
     assert store.delete_user(USER) == 1
     assert [e.user_id for e in store.load_all()] == [OTHER]
     store.close()
+
+
+# --- robustness and separation -------------------------------------------------
+
+
+def test_an_unreadable_row_is_skipped_not_fatal(tmp_path):
+    """A row written by a different build (an event name or context field
+    this build does not know) must not stop the store from loading."""
+    store = TelemetryStore(tmp_path / "telemetry.db")
+    store._conn.execute(
+        "INSERT INTO telemetry_events (event_id, schema_version, event_name, "
+        "occurred_at, recorded_at, user_id, context) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            str(uuid4()),
+            "1.0",
+            "an_event_from_the_future",
+            _now_iso(),
+            _now_iso(),
+            USER,
+            '{"unknown_field": 1}',
+        ),
+    )
+    store._conn.commit()
+    assert store.load_all() == []
+    store.close()
+
+
+def test_watch_state_never_reaches_the_evidence_layers():
+    """Watch is personal relevance. It must not be an input to trigger
+    detection, evidence trust, conclusion confidence, the world model or
+    lifecycle classification."""
+    import pathlib
+
+    import logan_core
+
+    root = pathlib.Path(logan_core.__file__).resolve().parent
+    evidence_layers = [
+        "trigger_detection",
+        "evidence_trust",
+        "conclusion_confidence",
+        "confidence",
+        "world_model",
+        "normalization",
+        "receptors",
+    ]
+    offenders = []
+    for layer in evidence_layers:
+        for path in (root / layer).rglob("*.py") if (root / layer).is_dir() else []:
+            text = path.read_text(encoding="utf-8")
+            if any(k in text for k in ("is_watched", "watch_route", "watched_")):
+                offenders.append(str(path.relative_to(root)))
+    tracker = (root / "opportunity_lifecycle" / "tracker.py").read_text(
+        encoding="utf-8"
+    )
+    assert "is_watched" not in tracker and "watch_route" not in tracker
+    assert offenders == []
