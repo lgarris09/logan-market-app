@@ -67,6 +67,9 @@ def build_notification_candidate(
     freshness_state: Optional[str],
     market_evidence: Optional[EvidenceSnapshot],
     earned_notification_inputs: EarnedNotificationInputs,
+    model_version: Optional[str] = None,
+    trigger_codes: Optional[list[str]] = None,
+    first_detected_at: Optional[datetime] = None,
 ) -> NotificationCandidate:
     """Assembles a NotificationCandidate from already-computed inputs only.
     `candidate_id` is supplied by the caller (deterministic, derived from
@@ -83,6 +86,10 @@ def build_notification_candidate(
         thesis_id=entity_id,
         created_at=now,
         source_captured_at=source_captured_at,
+        model_version=model_version,
+        qualification_state="qualified" if trigger_codes else None,
+        trigger_codes=trigger_codes,
+        first_detected_at=first_detected_at,
         watch=WatchDecisionSnapshot(
             is_watched=is_watched,
             watch_route=watch_route,

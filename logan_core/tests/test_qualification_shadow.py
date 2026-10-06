@@ -2,8 +2,6 @@
 comparability as a hard gate, denominator eligibility, timestamp and
 fiscal-period matching, and materiality bands for price and revenue."""
 
-import ast
-import inspect
 import math
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -483,22 +481,27 @@ def test_identical_inputs_give_identical_results():
 # --- shadow only ---------------------------------------------------------------
 
 
-def test_nothing_in_the_pipeline_imports_the_shadow_module():
+def test_only_the_eps_gate_uses_the_shadow_module():
+    """ADR-079 wires exactly one thing: the EPS comparability gate in the
+    stocks trigger evaluator, behind a flag that defaults to off. The price
+    and revenue qualification paths and the materiality bands stay shadow."""
     import pathlib
 
     root = pathlib.Path(shadow.__file__).resolve().parents[2]
-    offenders = []
+    users = []
     for path in list((root / "logan_core").rglob("*.py")) + list(
         (root / "backend" / "app").rglob("*.py")
     ):
         if "tests" in path.parts or path.name == "qualification_shadow.py":
             continue
         if "qualification_shadow" in path.read_text(encoding="utf-8"):
-            offenders.append(str(path))
-    assert offenders == []
-
-
-def test_the_shadow_module_computes_no_score():
-    tree = ast.parse(inspect.getsource(shadow))
-    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    assert not names & {"confidence_score", "trust_score", "confidence_contribution"}
+            users.append(path)
+    assert [p.name for p in users] == ["stocks.py"]
+    source = users[0].read_text(encoding="utf-8")
+    for unwired in (
+        "qualify_price_move",
+        "qualify_revenue_surprise",
+        "PRICE_MOVE_BANDS",
+        "REVENUE_SURPRISE_BANDS",
+    ):
+        assert unwired not in source

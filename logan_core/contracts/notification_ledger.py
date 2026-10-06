@@ -76,6 +76,11 @@ LedgerSuppressionReason = Literal[
     "same_revision_suppressed",
     "cooldown_suppressed",
     "provider_degraded_suppressed",
+    # ADR-080 fail-closed reasons, reused verbatim from notification_gate.
+    "beta_notifications_paused",
+    "freshness_unestablished_suppressed",
+    "stale_evidence_suppressed",
+    "revision_unattributable_suppressed",
 ]
 
 # The only real production "yes" path today -- reached exclusively through
@@ -174,6 +179,19 @@ class NotificationCandidate(BaseModel):
     thesis_id: str
     created_at: datetime
     source_captured_at: Optional[datetime] = None
+    # ADR-081 attribution. `model_version` names the evidence / qualification
+    # rules in force when this candidate was evaluated
+    # (logan_core.contracts.model_version.EVIDENCE_MODEL_VERSION).
+    # `trigger_codes` are the qualifying triggers behind the opportunity; an
+    # opportunity only exists because at least one trigger qualified, so
+    # `qualification_state` is "qualified" by construction here -- blocked
+    # observations never become candidates. All optional so rows written
+    # before these fields existed still parse.
+    model_version: Optional[str] = None
+    qualification_state: Optional[str] = None
+    trigger_codes: Optional[list[str]] = None
+    # When the opportunity was first detected (lifecycle first_seen_at).
+    first_detected_at: Optional[datetime] = None
     watch: WatchDecisionSnapshot
     prioritization: PrioritizationSnapshot
     revision: RevisionSnapshot

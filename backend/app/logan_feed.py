@@ -35,6 +35,7 @@ from logan_core.contracts import (  # noqa: E402
     ThesisMetadata,
     UserModel,
 )
+from logan_core.contracts.model_version import EVIDENCE_MODEL_VERSION  # noqa: E402
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.exploration import (  # noqa: E402
     apply_exploration_placement,
@@ -51,6 +52,9 @@ from logan_core.opportunity_lifecycle import (  # noqa: E402
     compute_since_last_looked,
     compute_user_sync_delta,
     decide_notification,
+)
+from logan_core.opportunity_lifecycle.notification_gate import (  # noqa: E402
+    FRESHNESS_NOT_CHECKED,
 )
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
@@ -82,6 +86,10 @@ from logan_core.trigger_detection import (  # noqa: E402
     evaluate_earnings_beat_condition,
     evaluate_price_move_condition,
 )
+from logan_core.trigger_detection.stocks import (  # noqa: E402
+    assess_eps_comparability,
+    eps_surprise_is_comparable,
+)
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
 from .ask_context import (  # noqa: E402
@@ -92,12 +100,15 @@ from .ask_context import (  # noqa: E402
 from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
     earnings_cache_store_db_path,
+    eps_comparability_gate_enabled,
     lifecycle_store_db_path,
     live_data_only_mode,
     live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
+    notification_ledger_retention_days,
     notification_ledger_store_db_path,
+    notifications_paused,
     revision_store_db_path,
     user_knowledge_store_db_path,
 )
@@ -609,6 +620,12 @@ def _get_orchestrator() -> Orchestrator:
                     _notification_ledger_store = NotificationLedgerStore(
                         notification_ledger_store_db_path()
                     )
+                    # ADR-081: bounded retention, applied at startup and
+                    # then at most once a day from the recording path.
+                    _notification_ledger_store.maybe_purge(
+                        datetime.now(timezone.utc),
+                        notification_ledger_retention_days(),
+                    )
                     # V2.3A.1 field reliability work: durable last-successful-
                     # earnings-observation store, gated identically to
                     # _lifecycle_store above (its own docstring has the full
@@ -662,7 +679,9 @@ def _get_orchestrator() -> Orchestrator:
 
             deps = (
                 PipelineDependencies(
-                    trigger_detector=StocksTriggerEvaluator(),
+                    trigger_detector=StocksTriggerEvaluator(
+                        eps_comparability_gate=eps_comparability_gate_enabled()
+                    ),
                     convergence_tracker=StockConvergenceTracker(),
                     lifecycle_tracker=_lifecycle_tracker,
                     memory_store=memory_store,
@@ -1016,12 +1035,28 @@ def _live_earnings_raw_signal(
         )
         return None, False
 
+    raw_signal = earnings_report_to_raw_signal(report)
+    if eps_comparability_gate_enabled():
+        # ADR-079: the same gate the trigger evaluator applies, checked here
+        # so an unproven comparison never substitutes a signal that would
+        # then surface without a qualifying trigger. Not a provider failure
+        # -- an honest "STRATUS cannot make this comparison".
+        assessment = assess_eps_comparability(raw_signal, ticker)
+        if not eps_surprise_is_comparable(assessment):
+            print(
+                f"[live-stocks] {ticker}: real report fetched but the EPS "
+                f"comparison is not established ({assessment.state}: "
+                f"{', '.join(assessment.reason_codes)}), no earnings-surprise "
+                f"signal; {fallback_note}"
+            )
+            return None, False
+
     print(
         f"[live-stocks] {ticker}: using real FMP earnings report dated "
         f"{report.report_timestamp.date()} (source={report.source_id}, "
         f"beat_pct={beat_pct:.2f})"
     )
-    return earnings_report_to_raw_signal(report), False
+    return raw_signal, False
 
 
 def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
@@ -2447,14 +2482,43 @@ def _run_feed_pipeline(
         # suppressed, and why) is recorded in _notification_decisions_cache
         # purely for observability/testing -- never itself a gate on
         # anything.
+        #
+        # ADR-080 (fail closed): an interruption is suppressed, never
+        # guessed, when the operator pause is on, when this entity's
+        # freshness cannot be established or is known stale, or when -- in
+        # live-data-only mode -- there is no revision to attribute the send
+        # to. The feed itself is unaffected by any of these.
         alert_event_ids = []
         notification_decisions: list[NotificationDecision] = []
+        paused = notifications_paused()
+        live_only = live_data_only_mode()
         for entity_id, r in results:
             if r.prioritized_item.interruption != "alert":
                 continue
             if r.lifecycle_delta is None:
+                if paused or live_only:
+                    unattributable = NotificationDecision(
+                        entity_id=entity_id,
+                        user_id=user_id,
+                        should_notify=False,
+                        reason=(
+                            "beta_notifications_paused"
+                            if paused
+                            else "revision_unattributable_suppressed"
+                        ),
+                        evaluated_at=now,
+                    )
+                    notification_decisions.append(unattributable)
+                    print(
+                        f"[notifications] {user_id}/{entity_id}: "
+                        f"{unattributable.reason} (should_notify=False, "
+                        "revision=None)"
+                    )
+                    continue
                 alert_event_ids.append(r.event.event_id)
                 continue
+            alert_item = item_by_event_id.get(r.event.event_id)
+            item_freshness = alert_item.freshness_state if alert_item else None
             decision = decide_notification(
                 entity_id=entity_id,
                 user_id=user_id,
@@ -2464,6 +2528,15 @@ def _run_feed_pipeline(
                 knowledge=_get_user_knowledge(user_id, entity_id),
                 provider_degraded=ticker_provider_failed.get(entity_id, False),
                 now=now,
+                notifications_paused=paused,
+                # Simulated (demo-mode) entities outside the live families
+                # have no freshness contract; the rule applies wherever a
+                # state exists, and always in live-data-only mode.
+                freshness_state=(
+                    item_freshness
+                    if (live_only or item_freshness is not None)
+                    else FRESHNESS_NOT_CHECKED
+                ),
             )
             notification_decisions.append(decision)
             print(
@@ -2559,6 +2632,8 @@ def _run_feed_pipeline(
                         earned_notification_inputs=(
                             build_earned_notification_inputs(r)
                         ),
+                        model_version=EVIDENCE_MODEL_VERSION,
+                        trigger_codes=list(r.lifecycle_delta.new_trigger_codes),
                     )
                     ledger_decision = build_ledger_decision(
                         decision_id=uuid4(),
@@ -2566,6 +2641,9 @@ def _run_feed_pipeline(
                         policy_permitted=r.policy_result.permitted,
                         now=now,
                         material_delta_decision=decision_by_entity_id.get(entity_id),
+                    )
+                    _notification_ledger_store.maybe_purge(
+                        now, notification_ledger_retention_days()
                     )
                     _notification_ledger_store.save_candidate(ledger_candidate)
                     _notification_ledger_store.save_decision(

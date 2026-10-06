@@ -72,7 +72,20 @@ NotificationDecisionReason = Literal[
     "cooldown_suppressed",
     "provider_degraded_suppressed",
     "no_material_delta",
+    # ADR-080 (fail closed): interruption is suppressed, never guessed,
+    # whenever something it depends on cannot be established.
+    "beta_notifications_paused",
+    "freshness_unestablished_suppressed",
+    "stale_evidence_suppressed",
+    "revision_unattributable_suppressed",
 ]
+
+# Freshness states under which an interruption is allowed. Anything else --
+# including "no state at all" -- suppresses. STALE_WITHIN_GRACE is a known
+# state, but interrupting someone with evidence already known to be stale is
+# not defensible, so it suppresses under its own reason.
+FRESHNESS_STATES_ALLOWING_INTERRUPTION = frozenset({"FRESH", "RECENTLY_OBSERVED"})
+FRESHNESS_NOT_CHECKED = "NOT_CHECKED"
 
 
 class NotificationDecision(BaseModel):
@@ -99,12 +112,22 @@ def decide_notification(
     knowledge: Optional[UserOpportunityKnowledge],
     provider_degraded: bool,
     now: datetime,
+    *,
+    notifications_paused: bool = False,
+    freshness_state: Optional[str] = FRESHNESS_NOT_CHECKED,
 ) -> NotificationDecision:
     """`current_revision`/`is_notification_worthy`/`change_type` are this
     poll's own already-computed LifecycleDelta verdict -- never
     re-evaluated here. `knowledge=None` means this user has no durable
     record for this entity at all (never notified) -- the same as every
     pointer being None.
+
+    ADR-080: `notifications_paused` is the operator pause (first, so the
+    recorded reason is always the pause while it is on). `freshness_state`
+    is this entity's already-classified runtime freshness; pass the real
+    value (including None for "no state could be established") to apply
+    the fail-closed freshness rule. The default sentinel skips that rule,
+    which keeps every pre-existing caller's behavior unchanged.
     """
 
     def _decision(
@@ -118,11 +141,20 @@ def decide_notification(
             evaluated_at=now,
         )
 
+    if notifications_paused:
+        return _decision(False, "beta_notifications_paused")
+
     if provider_degraded:
         return _decision(False, "provider_degraded_suppressed")
 
     if current_revision is None or not is_notification_worthy:
         return _decision(False, "no_material_delta")
+
+    if freshness_state != FRESHNESS_NOT_CHECKED:
+        if freshness_state == "STALE_WITHIN_GRACE":
+            return _decision(False, "stale_evidence_suppressed")
+        if freshness_state not in FRESHNESS_STATES_ALLOWING_INTERRUPTION:
+            return _decision(False, "freshness_unestablished_suppressed")
 
     last_notified_revision = knowledge.last_notified_revision if knowledge else None
     if (

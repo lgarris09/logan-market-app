@@ -39,8 +39,17 @@ from uuid import UUID
 
 import httpx
 
-from .config import memory_persistence_enabled, notification_store_db_path
-from .logan_feed import FeedItem, get_alert_eligible_items, mark_user_notified
+from .config import (
+    memory_persistence_enabled,
+    notification_store_db_path,
+    notifications_paused,
+)
+from .logan_feed import (
+    FeedItem,
+    get_alert_eligible_items,
+    get_notification_ledger_store,
+    mark_user_notified,
+)
 from .models import RegisterPushTokenRequest, RegisterPushTokenResponse
 from .notification_store import NotificationStore
 
@@ -230,6 +239,89 @@ def _notification_body(item: FeedItem) -> str:
     return value[0].upper() + value[1:]
 
 
+def classify_dispatch_response(
+    response: object, items_count: int, tokens_count: int
+) -> list[tuple[str, int, int, Optional[str]]]:
+    """ADR-081. Reads the push provider's response and returns, per item (in
+    the order the messages were built: item-major, token-minor), a tuple
+    `(state, accepted_count, rejected_count, detail)` using the bounded
+    states in notification_ledger_store.DISPATCH_STATES. Claims only what
+    the response establishes; anything unreadable is "dispatch_attempted",
+    never "accepted".
+    """
+    status_code = getattr(response, "status_code", None)
+    if not isinstance(status_code, int) or not 200 <= status_code < 300:
+        return [("dispatch_failed", 0, 0, f"http_status={status_code}")] * items_count
+
+    tickets: object = None
+    try:
+        body = response.json()  # type: ignore[attr-defined]
+        tickets = body.get("data") if isinstance(body, dict) else None
+    except Exception:  # noqa: BLE001 -- an unreadable body is "unknown", not a crash
+        tickets = None
+
+    expected = items_count * tokens_count
+    if not isinstance(tickets, list) or len(tickets) != expected:
+        return [("dispatch_attempted", 0, 0, "no_per_message_tickets")] * items_count
+
+    outcomes: list[tuple[str, int, int, Optional[str]]] = []
+    for index in range(items_count):
+        chunk = tickets[index * tokens_count : (index + 1) * tokens_count]
+        accepted = sum(
+            1 for t in chunk if isinstance(t, dict) and t.get("status") == "ok"
+        )
+        errors = [
+            t for t in chunk if isinstance(t, dict) and t.get("status") == "error"
+        ]
+        detail: Optional[str] = None
+        if errors:
+            codes = sorted(
+                {
+                    str((t.get("details") or {}).get("error") or "error")
+                    for t in errors
+                    if isinstance(t.get("details") or {}, dict)
+                }
+            )
+            detail = ",".join(codes) or "error"
+        if accepted:
+            outcomes.append(("dispatch_accepted", accepted, len(errors), detail))
+        elif errors and len(errors) == len(chunk):
+            outcomes.append(("dispatch_rejected", 0, len(errors), detail))
+        else:
+            outcomes.append(("dispatch_attempted", 0, len(errors), detail))
+    return outcomes
+
+
+def _record_dispatch_outcomes(
+    user_id: str,
+    eligible: list[FeedItem],
+    outcomes: list[tuple[str, int, int, Optional[str]]],
+    attempted_at: datetime,
+) -> None:
+    """Writes one Decision Ledger dispatch row per item. Observation only:
+    a recording failure never affects dispatch."""
+    ledger = get_notification_ledger_store()
+    if ledger is None:
+        return
+    for item, (state, accepted, rejected, detail) in zip(
+        eligible, outcomes, strict=True
+    ):
+        try:
+            ledger.record_dispatch(
+                user_id=user_id,
+                event_id=item.event_id,
+                entity_id=item.entity_id,
+                thesis_revision=item.opportunity_revision,
+                state=state,
+                accepted_count=accepted,
+                rejected_count=rejected,
+                detail=detail,
+                attempted_at=attempted_at,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[notification-ledger] dispatch recording failed: {exc}")
+
+
 def _build_push_message(token: str, item: FeedItem) -> dict:
     # event_id is the one piece of data the mobile app actually needs on tap
     # -- it feeds directly into the existing openNotificationCard(eventId)
@@ -272,6 +364,13 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
     block exists to close.
     """
     _get_store()
+    if notifications_paused():
+        # ADR-080: the operator pause. Nothing is sent and nothing is marked
+        # dispatched or notified. The decision path records
+        # `beta_notifications_paused` for each would-be interruption (see
+        # logan_feed._run_feed_pipeline); this guard makes the pause hold at
+        # the send boundary as well, independently of that path.
+        return 0
     if not _registered_tokens:
         return 0
 
@@ -310,13 +409,62 @@ def dispatch_eligible_notifications(client: Optional[httpx.Client] = None) -> in
                     for item in eligible
                     for token in tokens
                 ]
+                attempt_time = datetime.now(timezone.utc)
                 try:
-                    client.post(EXPO_PUSH_URL, json=messages)
+                    response = client.post(EXPO_PUSH_URL, json=messages)
                 except httpx.RequestError as exc:
                     print(
                         f"[notifications] Expo push dispatch to {user_id} failed, "
                         f"will retry next poll: {exc}"
                     )
+                    _record_dispatch_outcomes(
+                        user_id,
+                        eligible,
+                        [("dispatch_failed", 0, 0, type(exc).__name__)] * len(eligible),
+                        attempt_time,
+                    )
+                    continue
+
+                # ADR-081: dispatch is not delivery. Read what the provider
+                # actually said, per item, and act only on that:
+                #   failed    -> not sent; retried on the next poll
+                #   rejected  -> every token refused; never recorded as a
+                #                notification the user received, and not
+                #                retried (the refusal is deterministic)
+                #   accepted / attempted -> handed to the provider; counts
+                #                as "notified" for dedup so an unreadable
+                #                response can never cause a second push
+                outcomes = classify_dispatch_response(
+                    response, len(eligible), len(tokens)
+                )
+                _record_dispatch_outcomes(user_id, eligible, outcomes, attempt_time)
+                if outcomes and all(o[0] == "dispatch_failed" for o in outcomes):
+                    print(
+                        f"[notifications] Expo push dispatch to {user_id} was not "
+                        f"accepted ({outcomes[0][3]}), will retry next poll"
+                    )
+                    continue
+                rejected_items = [
+                    item
+                    for item, outcome in zip(eligible, outcomes, strict=True)
+                    if outcome[0] == "dispatch_rejected"
+                ]
+                if rejected_items:
+                    rejected_ids = [item.event_id for item in rejected_items]
+                    print(
+                        f"[notifications] push rejected for {user_id}: "
+                        f"{rejected_ids}; not recorded as notified"
+                    )
+                    dispatched_ids.update(rejected_ids)
+                    rejected_store = _get_store()
+                    if rejected_store is not None:
+                        rejected_store.save_dispatched(user_id, rejected_ids)
+                eligible = [
+                    item
+                    for item, outcome in zip(eligible, outcomes, strict=True)
+                    if outcome[0] in ("dispatch_accepted", "dispatch_attempted")
+                ]
+                if not eligible:
                     continue
 
                 dispatched_item_ids = [item.event_id for item in eligible]

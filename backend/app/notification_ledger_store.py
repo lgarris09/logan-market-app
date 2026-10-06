@@ -44,6 +44,7 @@ silently deferred.
 import sqlite3
 import sys
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -52,6 +53,25 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.contracts import LedgerDecision, NotificationCandidate  # noqa: E402
+
+# ADR-081 -- the bounded dispatch-state model. Each value is exactly what
+# the push provider's HTTP response established:
+#   dispatch_attempted  the request was sent and answered 2xx, but the
+#                       response carried no per-message ticket to read
+#   dispatch_accepted   at least one ticket came back "ok"
+#   dispatch_rejected   every ticket came back "error"
+#   dispatch_failed     the request errored or was answered non-2xx
+# Delivery to a device is never claimed: no delivery receipt is read, so
+# delivery_state is always "unknown".
+DISPATCH_STATES = frozenset(
+    {
+        "dispatch_attempted",
+        "dispatch_accepted",
+        "dispatch_rejected",
+        "dispatch_failed",
+    }
+)
+DELIVERY_STATE_UNKNOWN = "unknown"
 
 # Fixed namespace UUID (arbitrary, but must never change once any real data
 # exists under it) -- deterministic candidate_id derivation, never a random
@@ -131,7 +151,102 @@ class NotificationLedgerStore:
             "CREATE INDEX IF NOT EXISTS idx_notification_decisions_lookup "
             "ON notification_decisions (user_id, event_id, thesis_revision, decided_at)"
         )
+        # ADR-081: what actually happened to a SEND. One row per dispatch
+        # attempt for one (user, opportunity, revision). `state` is what the
+        # push provider's own response established and nothing more;
+        # `delivery_state` stays "unknown" because no delivery receipt is
+        # read -- acceptance by the provider is not delivery to a device.
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS notification_dispatches ("
+            "  dispatch_id TEXT PRIMARY KEY,"
+            "  user_id TEXT NOT NULL,"
+            "  event_id TEXT NOT NULL,"
+            "  entity_id TEXT NOT NULL,"
+            "  thesis_revision INTEGER,"
+            "  state TEXT NOT NULL,"
+            "  accepted_count INTEGER NOT NULL,"
+            "  rejected_count INTEGER NOT NULL,"
+            "  detail TEXT,"
+            "  delivery_state TEXT NOT NULL,"
+            "  attempted_at TEXT NOT NULL"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notification_dispatches_lookup "
+            "ON notification_dispatches (user_id, event_id, attempted_at)"
+        )
         self._conn.commit()
+        self._last_purge_at: Optional[datetime] = None
+
+    # --- dispatch outcomes ---------------------------------------------------
+
+    def record_dispatch(
+        self,
+        *,
+        user_id: str,
+        event_id: uuid.UUID,
+        entity_id: str,
+        thesis_revision: Optional[int],
+        state: str,
+        accepted_count: int,
+        rejected_count: int,
+        detail: Optional[str],
+        attempted_at: datetime,
+    ) -> None:
+        if state not in DISPATCH_STATES:
+            raise ValueError(f"unknown dispatch state: {state}")
+        self._conn.execute(
+            "INSERT INTO notification_dispatches "
+            "(dispatch_id, user_id, event_id, entity_id, thesis_revision, state, "
+            "accepted_count, rejected_count, detail, delivery_state, attempted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                user_id,
+                str(event_id),
+                entity_id,
+                thesis_revision,
+                state,
+                accepted_count,
+                rejected_count,
+                (detail or "")[:500] or None,
+                DELIVERY_STATE_UNKNOWN,
+                attempted_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    def all_dispatches(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM notification_dispatches ORDER BY attempted_at ASC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # --- retention -----------------------------------------------------------
+
+    def purge_older_than(self, cutoff: datetime) -> int:
+        """Deletes every row older than `cutoff` from all three tables.
+        Returns the number of rows removed."""
+        removed = 0
+        for statement in (
+            "DELETE FROM notification_candidates WHERE created_at < ?",
+            "DELETE FROM notification_decisions WHERE decided_at < ?",
+            "DELETE FROM notification_dispatches WHERE attempted_at < ?",
+        ):
+            removed += self._conn.execute(statement, (cutoff.isoformat(),)).rowcount
+        self._conn.commit()
+        return removed
+
+    def maybe_purge(self, now: datetime, retention_days: int) -> None:
+        """Runs purge_older_than() at most once a day per process. A restart
+        simply purges again at startup, which is cheap and idempotent."""
+        if (
+            self._last_purge_at is not None
+            and (now - self._last_purge_at).total_seconds() < 86400
+        ):
+            return
+        self._last_purge_at = now
+        self.purge_older_than(now - timedelta(days=retention_days))
 
     def save_candidate(self, candidate: NotificationCandidate) -> None:
         self._conn.execute(
@@ -252,11 +367,15 @@ class NotificationLedgerStore:
         self._conn.execute(
             "DELETE FROM notification_decisions WHERE user_id = ?", (user_id,)
         )
+        self._conn.execute(
+            "DELETE FROM notification_dispatches WHERE user_id = ?", (user_id,)
+        )
         self._conn.commit()
 
     def clear(self) -> None:
         self._conn.execute("DELETE FROM notification_candidates")
         self._conn.execute("DELETE FROM notification_decisions")
+        self._conn.execute("DELETE FROM notification_dispatches")
         self._conn.commit()
 
     def close(self) -> None:

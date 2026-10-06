@@ -45,6 +45,47 @@ def live_nvda_earnings_enabled() -> bool:
     return _env_flag("STRATUS_LIVE_NVDA_EARNINGS")
 
 
+def eps_comparability_gate_enabled() -> bool:
+    """ADR-079 (Beta 1 EPS-safe fallback): when on, the live feed emits an
+    earnings beat / miss / in-line trigger only if the provider proved the
+    reported and consensus EPS comparable (same basis, share basis, fiscal
+    period and currency, pre-release estimate, no unresolved split or
+    restatement). The current provider proves none of this, so with the gate
+    on no EPS-surprise trigger fires. Defaults to off -- byte-identical prior
+    behavior -- like every other capability flag here; Beta 1 requires it on.
+    """
+    return _env_flag("STRATUS_EPS_COMPARABILITY_GATE")
+
+
+def notifications_paused() -> bool:
+    """ADR-080 -- the Beta 1 notification pause. When on, no new push is
+    sent: every would-be interruption is suppressed with the reason
+    `beta_notifications_paused` (recorded in the Decision Ledger when it is
+    enabled) and the dispatch loop sends nothing. The feed, Watch, Ask,
+    lifecycle state and every durable store are untouched. Read from the
+    environment on every poll, so it follows the same activation path as
+    every other flag here (set the variable, restart the process) and needs
+    no mobile release. Off by default.
+    """
+    return _env_flag("STRATUS_NOTIFICATIONS_PAUSED")
+
+
+def notification_ledger_retention_days() -> int:
+    """ADR-081: how long Decision Ledger rows are kept. Bounded and
+    explicit, like the operational-observation log. Default 120 days: long
+    enough to cover a beta cohort and its review, short enough that a
+    per-user decision history never accumulates indefinitely. Overridable
+    via STRATUS_NOTIFICATION_LEDGER_RETENTION_DAYS (minimum 7).
+    """
+    override = os.environ.get("STRATUS_NOTIFICATION_LEDGER_RETENTION_DAYS", "").strip()
+    if override:
+        try:
+            return max(int(override), 7)
+        except ValueError:
+            pass
+    return 120
+
+
 def memory_persistence_enabled() -> bool:
     """Sprint 3.6.7 Block 3: gates whether the shared Orchestrator's
     MemoryStore is backed by a durable local SQLite file (surviving a

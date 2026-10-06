@@ -10,6 +10,12 @@ from logan_core.contracts import (
     TriggerEvent,
 )
 
+from .qualification_shadow import (
+    EstimateActualEvidence,
+    QualificationResult,
+    qualify_eps_beat,
+)
+
 # STOCK_EARNINGS_BEAT / STOCK_EARNINGS_MISS / STOCK_EARNINGS_IN_LINE, per
 # TRIGGER_REGISTRY_STOCKS.md's registered specification. These three share one
 # provider (actual_eps/consensus_eps) and are mutually exclusive by
@@ -238,6 +244,78 @@ def evaluate_analyst_grade_condition(
     )
 
 
+# --- EPS comparability gate (ADR-079) ------------------------------------------
+#
+# A beat / miss / in-line statement compares a reported EPS with a consensus
+# EPS. That comparison is only true when both numbers are proven to be on the
+# same basis (GAAP vs adjusted, basic vs diluted), for the same fiscal period,
+# in the same currency, with a pre-release estimate and no unresolved split or
+# restatement. The proof must be supplied by the provider in the raw signal;
+# anything absent is unknown, and unknown blocks -- it is never assumed valid
+# and never soft-discounted into a weaker trigger.
+_EPS_PROOF_FIELDS = (
+    "actual_eps_basis",
+    "consensus_eps_basis",
+    "actual_eps_share_basis",
+    "consensus_eps_share_basis",
+    "consensus_fiscal_quarter",
+    "consensus_as_of",
+    "actual_eps_currency",
+    "consensus_eps_currency",
+    "split_between_estimate_and_actual",
+    "split_adjusted",
+    "restated",
+)
+
+# Reason codes that mean "comparable, just not a beat" -- every other
+# non-qualified code means the comparison itself is not established.
+_EPS_COMPARABLE_OUTCOME_CODES = frozenset(
+    {"qualified", "wrong_direction", "below_threshold"}
+)
+
+
+def assess_eps_comparability(raw: RawSignal, entity_id: str) -> QualificationResult:
+    """Pure: whether this earnings signal's actual and consensus EPS are
+    proven comparable. Returns the governed qualification result (state +
+    stable reason codes). Callers decide nothing else from it -- a blocked
+    result means no earnings-surprise trigger of any direction."""
+    value = raw.raw_value if isinstance(raw.raw_value, dict) else {}
+    consensus_as_of = value.get("consensus_as_of")
+    if isinstance(consensus_as_of, str):
+        try:
+            consensus_as_of = datetime.fromisoformat(consensus_as_of)
+        except ValueError:
+            consensus_as_of = None
+    evidence = EstimateActualEvidence(
+        actual=value.get("actual_eps"),
+        estimate=value.get("consensus_eps"),
+        actual_issuer=entity_id,
+        estimate_issuer=entity_id,
+        actual_fiscal_period=value.get("fiscal_quarter"),
+        estimate_fiscal_period=value.get("consensus_fiscal_quarter"),
+        release_at=raw.captured_at,
+        estimate_as_of=(
+            consensus_as_of if isinstance(consensus_as_of, datetime) else None
+        ),
+        actual_currency=value.get("actual_eps_currency"),
+        estimate_currency=value.get("consensus_eps_currency"),
+        split_between=value.get("split_between_estimate_and_actual"),
+        split_adjusted=value.get("split_adjusted"),
+        restated=value.get("restated"),
+        actual_source=raw.source_id,
+        estimate_source=raw.source_id,
+        actual_basis=value.get("actual_eps_basis"),
+        estimate_basis=value.get("consensus_eps_basis"),
+        actual_share_basis=value.get("actual_eps_share_basis"),
+        estimate_share_basis=value.get("consensus_eps_share_basis"),
+    )
+    return qualify_eps_beat(evidence)
+
+
+def eps_surprise_is_comparable(result: QualificationResult) -> bool:
+    return set(result.reason_codes) <= _EPS_COMPARABLE_OUTCOME_CODES
+
+
 class StocksTriggerEvaluator:
     """Sprint 3.6.6 (extended Sprint 3.6.6D) — deterministic trigger detection
     for the stocks domain. Sits at the signal/normalization/event-resolution
@@ -266,6 +344,15 @@ class StocksTriggerEvaluator:
     not an error, just nothing to detect this poll.
     """
 
+    def __init__(self, *, eps_comparability_gate: bool = False) -> None:
+        # ADR-079. When on, an earnings-surprise trigger (beat, miss or
+        # in-line) fires only if the provider proved the actual and the
+        # consensus EPS comparable. Off reproduces the prior behavior exactly.
+        self._eps_comparability_gate = eps_comparability_gate
+        # The most recent blocked earnings assessment, for inspection by the
+        # caller (telemetry / tests). Never read by any decision.
+        self.last_eps_block: Optional[QualificationResult] = None
+
     def evaluate(
         self, raw: RawSignal, normalized: NormalizedSignal
     ) -> Optional[TriggerEvent]:
@@ -285,6 +372,15 @@ class StocksTriggerEvaluator:
         assert isinstance(raw.raw_value, dict)  # evaluate() already checked this
         actual_eps = raw.raw_value.get("actual_eps")
         consensus_eps = raw.raw_value.get("consensus_eps")
+
+        if self._eps_comparability_gate:
+            assessment = assess_eps_comparability(raw, normalized.entity_id)
+            if not eps_surprise_is_comparable(assessment):
+                # Blocked: no trigger of any direction, no confidence
+                # contribution, no magnitude. Saying nothing is the only
+                # truthful output for an unproven comparison.
+                self.last_eps_block = assessment
+                return None
 
         beat_fired, beat_pct, beat_reason = evaluate_earnings_beat_condition(
             actual_eps, consensus_eps
