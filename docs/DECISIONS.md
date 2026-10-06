@@ -3948,7 +3948,7 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   4. Price, analyst and every other signal family are unaffected, as are revisions, trajectory, Watch, Ask
      and notifications for opportunities that qualify on other evidence.
   5. What remains usable from an earnings release without the comparison is listed in
-     `docs/sessions/2026-10-06-beta1-release-candidate.md`. Nothing is shown in place of the comparison in
+     `docs/beta1/RELEASE_CANDIDATE.md`. Nothing is shown in place of the comparison in
      Beta 1; a neutral "results reported" fact would be a new trigger code and is not decided here.
 - Consequences: With the current provider and the gate on, no earnings-surprise opportunity fires. In the
   2026-10-05 production snapshot that removes 20 of the earnings-driven opportunities; the feed then rests
