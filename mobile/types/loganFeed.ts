@@ -215,6 +215,12 @@ export type FeedItem = {
   // behind lifecycle tracking the way the fields above are (a user can
   // watch any opportunity they can see, live-tracked or not).
   is_watched: boolean;
+
+  // The backend's runtime freshness classification for this item's
+  // evidence ("FRESH", "RECENTLY_OBSERVED", "STALE_WITHIN_GRACE",
+  // "UNAVAILABLE"), or null when no freshness contract applies. Optional:
+  // older cached or mocked responses omit it.
+  freshness_state?: string | null;
 };
 
 export type DemoFeedResponse = {

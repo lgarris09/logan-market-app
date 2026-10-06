@@ -96,6 +96,9 @@ type AskParams = {
   entityId?: string;
   displayName?: string;
   domain?: string;
+  // The revision the user was looking at when they opened Ask (ADR-082) --
+  // telemetry attribution only, never sent to /v1/ask.
+  revision?: string;
 };
 
 export default function AskScreen() {
@@ -103,6 +106,11 @@ export default function AskScreen() {
   const contextEventId = params.eventId;
   const contextDisplayName = params.displayName;
   const isContextual = !!contextEventId;
+  const parsedRevision = params.revision ? Number.parseInt(params.revision, 10) : NaN;
+  const contextRevision =
+    isContextual && Number.isInteger(parsedRevision) && parsedRevision >= 1
+      ? parsedRevision
+      : undefined;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -132,8 +140,12 @@ export default function AskScreen() {
     logTelemetryEvent({
       eventName: isFirstUserMessage(messages) ? "ask_started" : "ask_follow_up",
       opportunityId: contextEventId ?? undefined,
+      opportunityRevision: contextRevision,
       sourceSurface: "ask",
-      context: { askSessionId: sessionIdRef.current },
+      context: {
+        askSessionId: sessionIdRef.current,
+        entityId: isContextual ? params.entityId : undefined,
+      },
     });
 
     setMessages((prev) => [...prev, { id: nextId(), role: "user", text: clean, time: timeNow() }]);

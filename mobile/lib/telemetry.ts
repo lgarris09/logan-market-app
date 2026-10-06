@@ -29,19 +29,34 @@ export type TelemetryEventName =
   | "watch_removed"
   | "ask_started"
   | "ask_follow_up"
-  | "usefulness_feedback_submitted";
+  | "usefulness_feedback_submitted"
+  | "opportunity_feedback_submitted";
+
+// Mirrors backend/app/telemetry_models.py's OpportunityFeedbackReason
+// exactly -- the five governed beta feedback reasons (ADR-082).
+export type OpportunityFeedbackReason =
+  "seems_wrong" | "stale" | "not_useful" | "unclear_why" | "expected_else";
 
 export type TelemetrySourceSurface =
-  | "wheel"
-  | "feed_card"
-  | "alert"
-  | "digest"
-  | "background"
-  | "ask";
+  "wheel" | "feed_card" | "alert" | "digest" | "background" | "ask";
 
 export type TelemetryContext = {
   askSessionId?: string;
   useful?: boolean;
+  /** The stable entity behind the opportunity (ADR-082). Valid on Ask
+   * events opened from an opportunity and required on feedback. */
+  entityId?: string;
+  // opportunity_feedback_submitted only -- what the user chose and what
+  // the screen was showing when they chose it.
+  feedbackReason?: OpportunityFeedbackReason;
+  feedbackNote?: string;
+  displayedHeadline?: string;
+  displayedEvidenceLabel?: string;
+  displayedTrajectory?: string;
+  displayedFreshnessState?: string;
+  displayedAt?: string;
+  displayedTriggerCodes?: string[];
+  appBuild?: string;
 };
 
 export type TelemetryEventInput = {
@@ -51,6 +66,8 @@ export type TelemetryEventInput = {
    * telemetry_models.py); omit for ask_started/ask_follow_up/usefulness_
    * feedback_submitted when there is no anchoring opportunity. */
   opportunityId?: string;
+  /** The opportunity's revision as displayed (FeedItem.opportunity_revision). */
+  opportunityRevision?: number;
   sourceSurface?: TelemetrySourceSurface;
   context?: TelemetryContext;
 };
@@ -62,14 +79,46 @@ function toRequestBody(input: TelemetryEventInput) {
     event_name: input.eventName,
     occurred_at: new Date().toISOString(),
     opportunity_id: input.opportunityId,
+    opportunity_revision: input.opportunityRevision,
     source_surface: input.sourceSurface,
     context: input.context
       ? {
           ask_session_id: input.context.askSessionId,
           useful: input.context.useful,
+          entity_id: input.context.entityId,
+          feedback_reason: input.context.feedbackReason,
+          feedback_note: input.context.feedbackNote,
+          displayed_headline: input.context.displayedHeadline,
+          displayed_evidence_label: input.context.displayedEvidenceLabel,
+          displayed_trajectory: input.context.displayedTrajectory,
+          displayed_freshness_state: input.context.displayedFreshnessState,
+          displayed_at: input.context.displayedAt,
+          displayed_trigger_codes: input.context.displayedTriggerCodes,
+          app_build: input.context.appBuild,
         }
       : undefined,
   };
+}
+
+/**
+ * Awaitable variant for the one case where the user is owed an answer:
+ * a feedback report. Resolves true only when the backend accepted the
+ * event. Never rejects. One retry, because a report the user typed should
+ * not be lost to a single dropped request; the event_id is generated once
+ * here, so a retried send is idempotent server-side.
+ */
+export async function submitTelemetryEvent(input: TelemetryEventInput): Promise<boolean> {
+  try {
+    const result = await fetchJson("/v1/telemetry/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toRequestBody(input)),
+      retries: 1,
+    });
+    return result.status === "success";
+  } catch {
+    return false;
+  }
 }
 
 /**
