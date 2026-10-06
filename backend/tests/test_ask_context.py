@@ -96,7 +96,13 @@ def test_build_opportunity_context_reflects_real_pipeline_output(
     assert context.headline == result.delivered_item.headline
     assert context.what_happened == result.delivered_item.what_happened
     assert context.confidence_score == result.confidence.confidence_score
-    assert context.confidence_label == result.delivered_item.confidence_label
+    # ADR-083: Ask uses the condition-based evidence word, not the older
+    # score-threshold label.
+    assert result.delivered_item.evidence_strength is not None
+    assert context.confidence_label == (
+        result.delivered_item.evidence_strength.capitalize()
+    )
+    assert context.confidence_label in {"Strong", "Supported", "Limited", "Conflicting"}
     assert context.classification == result.confidence.classification
     assert context.limiting_factors == result.confidence.limiting_factors
     assert STOCK_EARNINGS_BEAT in context.trigger_codes

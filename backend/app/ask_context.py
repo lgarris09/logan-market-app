@@ -201,7 +201,15 @@ def build_opportunity_context(
         why_it_matters_to_me=result.delivered_item.why_it_matters_to_me,
         why_now=result.delivered_item.why_now,
         confidence_score=result.confidence.confidence_score,
-        confidence_label=result.delivered_item.confidence_label,
+        # ADR-083: Ask speaks in the same condition-based evidence words
+        # every other surface uses ("strong", "supported", "limited",
+        # "conflicting"); the older score-threshold label is the
+        # fallback only for a result that carries no strength.
+        confidence_label=(
+            result.delivered_item.evidence_strength.capitalize()
+            if result.delivered_item.evidence_strength
+            else result.delivered_item.confidence_label
+        ),
         classification=result.confidence.classification,
         limiting_factors=list(result.confidence.limiting_factors),
         alternatives=list(result.confidence.alternatives),

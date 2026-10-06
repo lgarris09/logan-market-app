@@ -382,6 +382,7 @@ def test_live_nvda_response_has_no_internal_or_secret_fields(monkeypatch):
         "diversity_suppressed",
         "diversity_suppression_reason",
         "exploration_placement_reason",
+        "signal_families",
     }
 
 

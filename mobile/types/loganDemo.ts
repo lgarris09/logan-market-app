@@ -11,6 +11,8 @@ export type DeliveredItem = {
   why_it_matters_to_me: string;
   why_now: string;
   confidence_label: "High" | "Moderate" | "Low" | "Speculative";
+  // ADR-083: condition-based evidence label; absent from older backends.
+  evidence_label?: string | null;
   confidence_score: number;
   connected_items: string[];
   required_disclaimers: string[];

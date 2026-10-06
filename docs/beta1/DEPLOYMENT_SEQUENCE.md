@@ -71,12 +71,21 @@ No migration step is needed: tables are created on first open, and nothing rewri
 - Freshness: items fetched recently stop being marked unavailable merely because the event is old.
 - Evidence: confidence values fall where the same source was counted more than once.
 
+## Decisions made 2026-10-06
+
+1. Ledger schema approved as built, with 120-day retention: `LEDGER_SCHEMA_APPROVAL.md`.
+2. Recalibration is handled by the pause procedure for Beta 1. No lifecycle model-version column. Release C
+   runs as: pause notifications; deploy the evidence transition; let one full poll recalculate; verify the
+   ledger shows no SEND and that `beta_notifications_paused` was the recorded reason for any would-be
+   interruption; validate feed and revision state; re-enable notifications.
+3. Condition-based evidence labels are built (ADR-083) and ship in Release C. They depend on the freshness
+   release: before it, production reports freshness unavailable for every item, and every label would read
+   Limited. **Release B must precede Release C.**
+4. No SEC 8-K or news path is built. Feed depth is measured first: `GATED_FEED_DEPTH.md`.
+
 ## Open decisions this sequence needs
 
-1. Schema approval for the three ledger tables.
-2. Whether the EPS gate is turned on at Beta Entry given the feed-thinning above, or whether a narrow
-   catalyst path (SEC 8-K) is wanted first for category breadth. The gate itself is a truthfulness
-   requirement; the open point is what else fills the feed.
-3. Whether to add the lifecycle model-version column (schema) so recalibration can never notify, or to
-   rely on the pause procedure for Beta 1.
-4. Owner names on the safety card.
+1. **Feed depth.** With the gate on, the replay shows 3 of 21 opportunities remaining. Whether Beta 1
+   proceeds thin, adds a neutral earnings fact, or waits for another source is undecided and determines
+   whether Release C is enough for Beta Entry.
+2. Owner names on the safety card.

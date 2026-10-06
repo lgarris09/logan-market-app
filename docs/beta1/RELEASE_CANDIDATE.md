@@ -36,19 +36,12 @@ cards, detail, the notification dropdown, accessibility labels, revision text or
 non-user-facing remnants: `ConfidenceRing.tsx` renders a percentage but is imported nowhere, and
 `attentionLayout.ts` builds a percentage string only to estimate label width. Neither is displayed.
 
-**Evidence labels.** Not changed. Every surface now takes its wording from one helper
-(`mobile/lib/opportunityPresentation.ts`): "High / Moderate / Low / Speculative evidence". The
-quality-condition model is specified, not built:
-
-| Label | Conditions |
-|---|---|
-| Strongest tier | Qualified; at least one independent-origin corroboration; freshness established; required fields complete; no conflicting evidence |
-| Supported (middle) | Qualified; single origin; freshness established; no critical conflict |
-| Limited | Qualified, with a defined non-critical limitation: freshness within grace, an optional field missing, or an unresolved minor conflict |
-| No label | Blocked observation. It is not an opportunity and receives no evidence-strength label |
-
-No threshold from the current score is carried over and no population percentile is used. Building it
-changes the confidence layer's output contract and needs approval; the label names are also undecided.
+**Evidence labels.** Built (ADR-083). One pure function derives Strong, Supported, Limited or Conflicting
+from named conditions; no score threshold and no percentile. Every surface, including Ask, uses the same
+wording, and the detail view states the limiting conditions as sentences. A blocked observation receives no
+label. With one provider, the honest distribution is Supported (freshness established) or Limited
+(freshness not established); Strong does not appear until an independent origin exists. The older
+score-based label stays on the contract for older builds and is not displayed.
 
 **Materiality.** Separate from evidence strength and not shown. Price bands exist in shadow and are
 unwired; the live price rule (a 5% move) is unchanged. Revenue: none. EPS: none. Analyst:
@@ -162,7 +155,8 @@ Expected failure: one (`xfail`, strict), from the self-corroboration change, doc
 
 - Nothing was run on a device.
 - The pause and rollback were not rehearsed.
-- The quality-condition labels, a supporting-signals list on the detail view, a neutral earnings fact,
-  and a code guard against recalibration pushes were specified or described, not built.
-- WHAT CHANGED and WHY IT MATTERS NOW text is generated server-side by the Presentation layer and was
-  not rewritten; only what the detail shows and omits was changed.
+- A neutral earnings fact and a code guard against recalibration pushes were described, not built.
+- The server-side `what_happened` and `why_now` strings were not changed (older builds still read them).
+  The detail view now takes WHAT CHANGED from the lifecycle reason and WHY IT MATTERS NOW from lifecycle
+  state and age, and shows supporting signal families when more than one qualified.
+- The gated feed was measured by replay, not seen live: `GATED_FEED_DEPTH.md`. It is thin.

@@ -34,8 +34,11 @@ import { describeSinceLastLooked } from "../lib/sinceLastLooked";
 import {
   describeTrajectory,
   evidenceLabelFor,
-  freshnessNoticeFor,
+  evidenceLimitationsFor,
   stratusTakeFor,
+  supportingSignalsFor,
+  whatChangedFor,
+  whyNowFor,
 } from "../lib/opportunityPresentation";
 import { OpportunityFeedback } from "./OpportunityFeedback";
 import { unwatchOpportunity, watchOpportunity } from "../lib/watch";
@@ -513,8 +516,14 @@ export function Vessel({
       : trajectory?.tone === "down" || trajectory?.tone === "turn"
         ? theme.warning
         : theme.textSecondary;
-  const evidenceLabel = evidenceLabelFor(item);
-  const freshnessNotice = freshnessNoticeFor(item.freshness_state);
+  const evidenceLabel = evidenceLabelFor(item.delivered_item);
+  const evidenceLimitations = evidenceLimitationsFor(item.delivered_item);
+  // WHAT CHANGED is the delta and WHY IT MATTERS NOW is timing; both
+  // come from lifecycle facts, and each is omitted when there is
+  // nothing real to say (see lib/opportunityPresentation.ts).
+  const whatChanged = whatChangedFor(item);
+  const whyNow = whyNowFor(item);
+  const supportingSignals = supportingSignalsFor(item);
   const lastUpdated = relativeTimeFrom(item.delivered_item.delivered_at);
   // V2.3D ("Since You Last Looked"): null for first_view and for an absent
   // summary (lifecycle tracking not active) -- see describeSinceLastLooked's
@@ -1146,7 +1155,7 @@ export function Vessel({
                         </View>
                       )}
 
-                      {!!item.delivered_item.why_now && (
+                      {!!whyNow && (
                         <View style={styles.section}>
                           <View style={styles.sectionHeaderRow}>
                             <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
@@ -1156,11 +1165,11 @@ export function Vessel({
                               WHY IT MATTERS NOW
                             </Text>
                           </View>
-                          <Text style={styles.sectionText}>{item.delivered_item.why_now}</Text>
+                          <Text style={styles.sectionText}>{whyNow}</Text>
                         </View>
                       )}
 
-                      {!!item.delivered_item.what_happened && (
+                      {!!whatChanged && (
                         <View style={styles.section}>
                           <View style={styles.sectionHeaderRow}>
                             <View style={[styles.sectionIconWrap, { borderColor: theme.info }]}>
@@ -1170,9 +1179,7 @@ export function Vessel({
                               WHAT CHANGED
                             </Text>
                           </View>
-                          <Text style={styles.sectionText}>
-                            {item.delivered_item.what_happened}
-                          </Text>
+                          <Text style={styles.sectionText}>{whatChanged}</Text>
                         </View>
                       )}
 
@@ -1205,25 +1212,58 @@ export function Vessel({
                           feed uses, plus the one limiting factor STRATUS
                           can state honestly today -- whether it could
                           confirm how current the data is. */}
-                      <View style={styles.section}>
-                        <View style={styles.sectionHeaderRow}>
-                          <View
-                            style={[styles.sectionIconWrap, { borderColor: theme.textSecondary }]}
-                          >
-                            <Ionicons
-                              name="layers-outline"
-                              size={13}
-                              color={theme.textSecondary}
-                            />
+                      {!!evidenceLabel && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[
+                                styles.sectionIconWrap,
+                                { borderColor: theme.textSecondary },
+                              ]}
+                            >
+                              <Ionicons
+                                name="layers-outline"
+                                size={13}
+                                color={theme.textSecondary}
+                              />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
+                              EVIDENCE
+                            </Text>
                           </View>
-                          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
-                            EVIDENCE
+                          <Text style={styles.sectionText}>
+                            {[`${evidenceLabel}.`, ...evidenceLimitations].join(" ")}
                           </Text>
                         </View>
-                        <Text style={styles.sectionText}>
-                          {freshnessNotice ? `${evidenceLabel}. ${freshnessNotice}` : `${evidenceLabel}.`}
-                        </Text>
-                      </View>
+                      )}
+
+                      {/* Several signal families are several kinds of
+                          evidence about the same company. They are not
+                          independent confirmation and are never called
+                          corroboration. Shown only when more than one
+                          family qualified. */}
+                      {!!supportingSignals && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[
+                                styles.sectionIconWrap,
+                                { borderColor: theme.textSecondary },
+                              ]}
+                            >
+                              <Ionicons
+                                name="git-branch-outline"
+                                size={13}
+                                color={theme.textSecondary}
+                              />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
+                              SUPPORTING SIGNALS
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{supportingSignals.join(" · ")}</Text>
+                        </View>
+                      )}
 
                       <RecommendationPanel recommendation={item.delivered_item.recommendation} />
 

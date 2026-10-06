@@ -4039,3 +4039,48 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   plus revision is the durable join key. `usefulness_feedback_submitted` stays in the schema with no
   screen. Telemetry has no retention bound of its own; volume is a handful of rows per user per day, and a
   bound should be set before any wider release.
+
+## ADR-083: Evidence strength is condition-based; detail sections say only what is real
+- Date: 2026-10-06
+- Status: Decided (Logan and Chuck, 2026-10-06: build the quality-condition labels before Beta 1; do not
+  carry forward High / Moderate / Low / Speculative). Implemented locally on `beta1/candidate`, backend and
+  mobile. Not pushed, not deployed.
+- Context: The user-facing evidence label was a threshold on the confidence score. For single-provider
+  evidence that score is a constant per trigger type (ADR-078), so the label encoded the trigger type, not
+  the quality of the evidence. Separately, the opportunity detail repeated the headline under "what
+  changed", explained "why now" in terms of whether a notification would be sent, and filled the personal
+  panel with a sentence saying nothing was connected.
+- Decision:
+  1. Evidence strength is derived by one pure function
+     (`logan_core/conclusion_confidence/evidence_strength.py`) from named conditions only: qualification,
+     independent corroboration, completeness of details, absence of conflict, manipulation risk, and
+     runtime freshness. It takes no score and compares against no threshold other than the two condition
+     definitions (at least two independent origins; all expected details present). No population
+     percentile is used.
+  2. States: **Strong** — corroborated by an independent origin, complete, no conflict, freshness
+     established. **Supported** — a single origin, complete, no conflict. **Limited** — at least one
+     defined non-critical limitation: details incomplete, elevated manipulation risk, freshness within
+     grace, freshness unconfirmed. **Conflicting** — a critical condition holds (contradicting evidence or
+     high manipulation risk); no strength tier is claimed. A blocked observation receives no label: it
+     never becomes an opportunity.
+  3. Every assessment carries its condition codes. They are stable, recorded with the opportunity, and the
+     limiting ones are shown to the user as sentences.
+  4. The confidence layer evaluates the conditions it knows; the feed re-evaluates with runtime freshness
+     using the same function. The wording lives in one place and every surface uses it, including Ask.
+     `confidence_label` stays on the contract so older builds keep parsing, and is no longer displayed.
+  5. On the detail view: "what changed" is the lifecycle tracker's own reason for the current state and is
+     omitted when there is only the headline to repeat; "why it matters now" is when the opportunity was
+     first detected and where it is in its lifecycle, never notification mechanics; the personal panel is
+     omitted when the backend found no personal basis; supporting signals list the qualifying signal
+     families when there is more than one and are never called corroboration.
+  6. `FeedItem.signal_families` exposes the families whose triggers qualified. It is existing
+     trigger-derived data, already used by the diversity pass; nothing is invented for presentation.
+- Consequences: The distribution is whatever the conditions produce. With one provider every live
+  opportunity has a single origin, so the expected distribution is Supported when freshness is established
+  and Limited when it is not; Strong will not appear until an independent origin exists. That is the
+  honest result and is not to be adjusted. In production today freshness is reported unavailable for every
+  item (the pre-ADR-075 clock), so before the freshness release every item would read Limited; the
+  freshness release must precede or accompany this one. "Conflicting" is a fourth state added to the three
+  named in the decision, because a critical conflict is neither a non-critical limitation nor a blocked
+  qualification; its wording can be changed in one place. The score still exists internally and still
+  orders the feed; separating priority from the score is not done here.

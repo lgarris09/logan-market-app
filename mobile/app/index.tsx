@@ -22,6 +22,7 @@ import { fetchJson } from "../lib/apiClient";
 import { isClerkConfigured } from "../lib/clerkConfig";
 import { FieldBias } from "../lib/fieldBias";
 import { InteractionDomain, recordInteraction } from "../lib/interactions";
+import { evidenceLabelFor } from "../lib/opportunityPresentation";
 import {
   registerForPushNotificationsAsync,
   useNotificationTapHandler,
@@ -319,7 +320,7 @@ export default function AttentionFieldScreen() {
       .map((item) => ({
         eventId: item.event_id,
         name: item.ticker ?? item.display_name,
-        evidenceLabel: `${item.confidence_label} evidence`,
+        evidenceLabel: evidenceLabelFor(item.delivered_item) ?? "",
       }));
   }, [state, locallyReviewedIds]);
 
@@ -717,7 +718,7 @@ export default function AttentionFieldScreen() {
                 style={styles.notifRow}
                 onPress={() => openNotificationCard(n.eventId)}
                 accessibilityRole="button"
-                accessibilityLabel={`${n.name}, ${n.evidenceLabel}`}
+                accessibilityLabel={n.evidenceLabel ? `${n.name}, ${n.evidenceLabel}` : n.name}
                 accessibilityHint="Opens this opportunity's card"
               >
                 <Text style={styles.notifRowName} numberOfLines={1}>

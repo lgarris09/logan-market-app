@@ -60,7 +60,7 @@ export function buildFeedbackEvent(
       feedbackReason: reason,
       feedbackNote: trimmed || undefined,
       displayedHeadline: item.delivered_item.headline.slice(0, 300),
-      displayedEvidenceLabel: evidenceLabelFor(item),
+      displayedEvidenceLabel: evidenceLabelFor(item.delivered_item) ?? undefined,
       displayedTrajectory: describeTrajectory(item)?.label,
       displayedFreshnessState: item.freshness_state ?? undefined,
       displayedAt: item.delivered_item.delivered_at,

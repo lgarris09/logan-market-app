@@ -8,8 +8,11 @@ import {
 import {
   describeTrajectory,
   evidenceLabelFor,
-  freshnessNoticeFor,
+  evidenceLimitationsFor,
   stratusTakeFor,
+  supportingSignalsFor,
+  whatChangedFor,
+  whyNowFor,
 } from "../opportunityPresentation";
 import type { FeedItem } from "../../types/loganFeed";
 
@@ -32,9 +35,13 @@ function item(overrides: Partial<FeedItem> = {}): FeedItem {
     domain: "stocks",
     delivered_item: {
       headline: "NVIDIA: analyst upgrade",
-      what_happened: "NVIDIA: analyst change (upgraded)",
+      what_happened: "NVIDIA: analyst upgrade",
       why_it_matters: "generic",
       why_it_matters_to_me: "You watch NVIDIA.",
+      why_now: "No immediate time pressure; surfaced for background awareness.",
+      evidence_strength: "supported",
+      evidence_label: "Supported evidence",
+      evidence_conditions: ["qualified", "single_origin", "details_complete", "no_conflict"],
       delivered_at: "2026-10-05T21:00:00+00:00",
     } as FeedItem["delivered_item"],
     rank: 1,
@@ -43,10 +50,10 @@ function item(overrides: Partial<FeedItem> = {}): FeedItem {
     connected_event_ids: [],
     is_new_for_user: false,
     signal_type: "analyst_change",
-    lifecycle_state: "ACTIVE" as FeedItem["lifecycle_state"],
+    lifecycle_state: "cooling",
     is_updated: false,
     meaningful_change_type: null,
-    lifecycle_reason: null,
+    lifecycle_reason: "No new evidence since the original signal -- STRATUS is still monitoring.",
     last_meaningful_change_at: null,
     thesis_age_hours: 3,
     opportunity_revision: 4,
@@ -58,6 +65,7 @@ function item(overrides: Partial<FeedItem> = {}): FeedItem {
     since_last_looked: null,
     is_watched: false,
     freshness_state: "FRESH",
+    signal_families: ["analyst_grade"],
     ...overrides,
   };
 }
@@ -94,7 +102,7 @@ describe("buildFeedbackEvent", () => {
         feedbackReason: "stale",
         feedbackNote: "shown as new",
         displayedHeadline: "NVIDIA: analyst upgrade",
-        displayedEvidenceLabel: "Moderate evidence",
+        displayedEvidenceLabel: "Supported evidence",
         displayedTrajectory: "Evidence strengthening",
         displayedFreshnessState: "FRESH",
         displayedAt: "2026-10-05T21:00:00+00:00",
@@ -134,7 +142,7 @@ describe("submitOpportunityFeedback", () => {
     expect(body.opportunity_revision).toBe(4);
     expect(body.context.entity_id).toBe("NVDA");
     expect(body.context.feedback_reason).toBe("unclear_why");
-    expect(body.context.displayed_evidence_label).toBe("Moderate evidence");
+    expect(body.context.displayed_evidence_label).toBe("Supported evidence");
     expect(body.context.model_version).toBeUndefined();
   });
 
@@ -152,12 +160,29 @@ describe("submitOpportunityFeedback", () => {
 });
 
 describe("presentation helpers", () => {
-  it("words evidence the same way everywhere, never as a number", () => {
-    for (const label of ["High", "Moderate", "Low", "Speculative"] as const) {
-      const text = evidenceLabelFor({ confidence_label: label });
-      expect(text).toBe(`${label} evidence`);
-      expect(text).not.toMatch(/[0-9%]/);
+  it("shows the backend's condition-based label and never the old score label", () => {
+    expect(evidenceLabelFor(item().delivered_item)).toBe("Supported evidence");
+    const old = item();
+    old.delivered_item = { ...old.delivered_item, evidence_label: null };
+    expect(evidenceLabelFor(old.delivered_item)).toBeNull();
+    for (const label of ["Strong", "Supported", "Limited", "Conflicting"]) {
+      expect(evidenceLabelFor({ evidence_label: `${label} evidence` })).not.toMatch(/[0-9%]/);
     }
+  });
+
+  it("states the limiting factors behind the label, and only those", () => {
+    expect(evidenceLimitationsFor(item().delivered_item)).toEqual([
+      "One source supports this; nothing independent confirms it yet.",
+    ]);
+    expect(
+      evidenceLimitationsFor({
+        evidence_conditions: ["qualified", "independent_corroboration", "freshness_established"],
+      })
+    ).toEqual([]);
+    expect(evidenceLimitationsFor({ evidence_conditions: ["freshness_unconfirmed"] })[0]).toMatch(
+      /cannot currently confirm/
+    );
+    expect(evidenceLimitationsFor({})).toEqual([]);
   });
 
   it("describes trajectory as observed evidence, not a forecast", () => {
@@ -172,18 +197,69 @@ describe("presentation helpers", () => {
     expect(describeTrajectory(item({ lifecycle_state: null }))).toBeNull();
   });
 
-  it("shows STRATUS TAKE only when there is something personal to say", () => {
+  it("shows STRATUS TAKE only when there is a personal basis", () => {
     expect(stratusTakeFor(item())).toBe("You watch NVIDIA.");
-    const generic = item();
-    generic.delivered_item = { ...generic.delivered_item, why_it_matters_to_me: "  " };
-    expect(stratusTakeFor(generic)).toBeNull();
+    const blank = item();
+    blank.delivered_item = { ...blank.delivered_item, why_it_matters_to_me: "  " };
+    expect(stratusTakeFor(blank)).toBeNull();
+    const none = item();
+    none.delivered_item = {
+      ...none.delivered_item,
+      why_it_matters_to_me:
+        "Nothing in your current holdings or interests is directly connected to this yet.",
+      personal_relevance_result: {
+        value: 0,
+        state: "unknown",
+        basis: "none",
+        is_watched: false,
+        evidence_count: 0,
+        explicit: false,
+        strongest_signals: [],
+        not_contributing: [],
+        explanation: "",
+      },
+    };
+    expect(stratusTakeFor(none)).toBeNull();
   });
 
-  it("qualifies data only when currency cannot be confirmed", () => {
-    expect(freshnessNoticeFor("FRESH")).toBeNull();
-    expect(freshnessNoticeFor("RECENTLY_OBSERVED")).toBeNull();
-    expect(freshnessNoticeFor(null)).toBeNull();
-    expect(freshnessNoticeFor("STALE_WITHIN_GRACE")).toMatch(/out of date/);
-    expect(freshnessNoticeFor("UNAVAILABLE")).toMatch(/cannot currently confirm/);
+  it("WHAT CHANGED is the delta and never repeats the headline", () => {
+    expect(whatChangedFor(item())).toBe(
+      "No new evidence since the original signal: STRATUS is still monitoring."
+    );
+    expect(whatChangedFor(item({ lifecycle_reason: null }))).toBeNull();
+    expect(whatChangedFor(item({ lifecycle_reason: "NVIDIA: analyst upgrade" }))).toBeNull();
+  });
+
+  it("WHY NOW is lifecycle timing and never notification mechanics", () => {
+    const text = whyNowFor(item());
+    expect(text).toBe(
+      "First detected 3 hours ago. There has been no new evidence since, so this is cooling."
+    );
+    for (const state of [
+      "new",
+      "developing",
+      "high_attention",
+      "monitoring",
+      "cooling",
+      "stale",
+      "expired",
+    ] as const) {
+      const t = whyNowFor(item({ lifecycle_state: state, thesis_age_hours: 80 }));
+      expect(t).toMatch(/^First detected 3 days ago\. /);
+      expect(t).not.toMatch(/interruption|notif|alert|push|check-in|flag/i);
+      expect(t).not.toMatch(/will|expect|likely|predict|buy|sell/i);
+    }
+    expect(whyNowFor(item({ lifecycle_state: null }))).toBeNull();
+    expect(whyNowFor(item({ thesis_age_hours: null }))).toBe(
+      "There has been no new evidence since, so this is cooling."
+    );
+  });
+
+  it("lists supporting signals only when more than one family qualified", () => {
+    expect(supportingSignalsFor(item())).toBeNull();
+    expect(supportingSignalsFor(item({ signal_families: undefined }))).toBeNull();
+    const names = supportingSignalsFor(item({ signal_families: ["analyst_grade", "price"] }));
+    expect(names).toEqual(["Analyst action", "Price move"]);
+    expect(names?.join(" ")).not.toMatch(/corroborat|confirm/i);
   });
 });

@@ -17,6 +17,11 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.community_intelligence import EngagementSample  # noqa: E402
+from logan_core.conclusion_confidence.evidence_strength import (  # noqa: E402
+    FRESHNESS_NOT_EVALUATED,
+    assess_evidence_strength,
+    evidence_label_for,
+)
 from logan_core.contracts import (  # noqa: E402
     LOCAL_FOUNDER_USER_ID,
     DeliveredItem,
@@ -79,7 +84,10 @@ from logan_core.receptors.providers import (  # noqa: E402
 )
 from logan_core.thesis import apply_diversity_caps, classify_market_driver  # noqa: E402
 from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
-from logan_core.thesis.market_driver import primary_signal_family  # noqa: E402
+from logan_core.thesis.market_driver import (  # noqa: E402
+    primary_signal_family,
+    secondary_signal_families,
+)
 from logan_core.trigger_detection import (  # noqa: E402
     StocksTriggerEvaluator,
     evaluate_analyst_grade_condition,
@@ -1701,6 +1709,14 @@ class FeedItem(BaseModel):
     # intent, not current live-data availability.
     is_watched: bool = False
 
+    # ADR-083 (Beta 1). The signal families whose triggers qualified for
+    # this opportunity, primary first ("earnings", "analyst_grade",
+    # "price") -- real trigger-derived data, the same values the
+    # diversity pass already uses. More than one family means several
+    # evidence dimensions support the opportunity; it does not mean
+    # independent corroboration, which is a separate condition.
+    signal_families: list[str] = []
+
     # Universe Manager V1a Plan-Conformance Closeout, Item 1 (Runtime
     # Freshness Integration) -- FRESH/RECENTLY_OBSERVED/STALE_WITHIN_GRACE/
     # UNAVAILABLE (logan_core/receptors/providers/freshness.py), computed
@@ -2350,6 +2366,38 @@ def _run_feed_pipeline(
             # (a demo/simulated signal type outside the three live stock
             # families) -- item.freshness_state stays the honest None
             # default, never a fabricated state.
+
+            # ADR-083: evidence strength, re-assessed here with the one
+            # condition the confidence layer cannot know -- runtime
+            # freshness -- using the same pure function and the same
+            # named conditions. No freshness contract for this signal
+            # type (family is None) is "not evaluated", distinct from a
+            # state that was evaluated and could not be established.
+            strength = assess_evidence_strength(
+                corroboration=r.trust.corroboration,
+                completeness=r.trust.completeness,
+                contradiction_flag=r.trust.contradiction_flag,
+                manipulation_risk=r.trust.manipulation_risk,
+                freshness_state=(
+                    item.freshness_state
+                    if family is not None
+                    else FRESHNESS_NOT_EVALUATED
+                ),
+            )
+            item.delivered_item = item.delivered_item.model_copy(
+                update={
+                    "evidence_strength": strength.strength,
+                    "evidence_label": evidence_label_for(strength.strength),
+                    "evidence_conditions": list(strength.conditions),
+                }
+            )
+            item_trigger_codes = sorted(
+                {t.trigger_code for t in r.event.trigger_events}
+            )
+            primary = primary_signal_family(item_trigger_codes)
+            item.signal_families = ([primary] if primary else []) + (
+                secondary_signal_families(item_trigger_codes)
+            )
 
             # V1a Final Proof-Readiness Closeout: the approved evidence-
             # completeness definition, computed from this item's own
