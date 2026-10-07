@@ -7,6 +7,10 @@ docstring for the taxonomy and its honest V1a coverage limits.
 from typing import Optional
 
 from logan_core.convergence.tracker import STOCK_CONVERGENCE_MULTI_SOURCE
+from logan_core.trigger_detection.filings import (
+    EARNINGS_RESULT_FILING_CODES,
+    FILING_TRIGGER_CODES,
+)
 from logan_core.trigger_detection.stocks import (
     STOCK_ANALYST_DOWNGRADE,
     STOCK_ANALYST_UPGRADE,
@@ -20,6 +24,10 @@ _EARNINGS_CODES = frozenset(
     {STOCK_EARNINGS_BEAT, STOCK_EARNINGS_MISS, STOCK_EARNINGS_IN_LINE}
 )
 _ANALYST_CODES = frozenset({STOCK_ANALYST_UPGRADE, STOCK_ANALYST_DOWNGRADE})
+# ADR-084: SEC-filing catalysts. A results filing (8-K Item 2.02) is its
+# own family -- a truthful earnings-result fact with no comparison to
+# consensus -- distinct from the EPS-surprise family above.
+_COMPANY_EVENT_CODES = FILING_TRIGGER_CODES - EARNINGS_RESULT_FILING_CODES
 
 
 def classify_market_driver(
@@ -49,6 +57,10 @@ def classify_market_driver(
 
     if any(c in _EARNINGS_CODES for c in real_codes):
         return "EARNINGS_GUIDANCE" if guidance_revised else "EARNINGS_RESULT"
+    if any(c in EARNINGS_RESULT_FILING_CODES for c in real_codes):
+        return "EARNINGS_RESULT"
+    if any(c in _COMPANY_EVENT_CODES for c in real_codes):
+        return "COMPANY_EVENT"
     if any(c in _ANALYST_CODES for c in real_codes):
         return "ANALYST_REASSESSMENT"
     if STOCK_PRICE_MOVE_SIGNIFICANT in real_codes:
@@ -64,6 +76,10 @@ def primary_signal_family(trigger_codes: list[str]) -> Optional[str]:
     real_codes = [c for c in trigger_codes if c != STOCK_CONVERGENCE_MULTI_SOURCE]
     if any(c in _EARNINGS_CODES for c in real_codes):
         return "earnings"
+    if any(c in EARNINGS_RESULT_FILING_CODES for c in real_codes):
+        return "earnings_result"
+    if any(c in _COMPANY_EVENT_CODES for c in real_codes):
+        return "company_event"
     if any(c in _ANALYST_CODES for c in real_codes):
         return "analyst_grade"
     if STOCK_PRICE_MOVE_SIGNIFICANT in real_codes:
@@ -80,6 +96,10 @@ def secondary_signal_families(trigger_codes: list[str]) -> list[str]:
     families: list[str] = []
     if _EARNINGS_CODES & real_codes and primary != "earnings":
         families.append("earnings")
+    if EARNINGS_RESULT_FILING_CODES & real_codes and primary != "earnings_result":
+        families.append("earnings_result")
+    if _COMPANY_EVENT_CODES & real_codes and primary != "company_event":
+        families.append("company_event")
     if _ANALYST_CODES & real_codes and primary != "analyst_grade":
         families.append("analyst_grade")
     if STOCK_PRICE_MOVE_SIGNIFICANT in real_codes and primary != "price":

@@ -83,9 +83,28 @@ No migration step is needed: tables are created on first open, and nothing rewri
    Limited. **Release B must precede Release C.**
 4. No SEC 8-K or news path is built. Feed depth is measured first: `GATED_FEED_DEPTH.md`.
 
+## Decided 2026-10-07: the catalyst path
+
+The gated feed (3 of 21) was accepted as a core-usability blocker and the narrow SEC 8-K path was built
+locally (ADR-084, `CATALYST_PATH.md`). It becomes **Release D**, after Release C:
+
+| # | Step | Kind | Why here |
+|---|---|---|---|
+| 6a | **Release D — company-filing catalysts.** Set `STRATUS_SEC_USER_AGENT`, then `STRATUS_SEC_FILING_CATALYSTS`. Notifications paused for the first poll | Backend deploy, flags, new outbound provider | After the EPS gate, so the feed is never shown gated and empty for longer than needed; separate from C so its effect is attributable |
+
+Release D adds no schema and no store. It starts outbound requests to the SEC (about 30 companies every
+30 minutes). First-poll behaviour: every qualifying filing in the last 14 days appears as a new
+opportunity at once, each notification-worthy; deploy with the pause on and lift it after one poll, as
+for Release C. C and D may be deployed in one maintenance window but as two releases.
+
+Rollback: turning the flag off removes filing signals on the next poll; opportunities that rested only
+on a filing age out through the lifecycle. Nothing stored needs undoing.
+
 ## Open decisions this sequence needs
 
-1. **Feed depth.** With the gate on, the replay shows 3 of 21 opportunities remaining. Whether Beta 1
-   proceeds thin, adds a neutral earnings fact, or waits for another source is undecided and determines
-   whether Release C is enough for Beta Entry.
-2. Owner names on the safety card.
+1. **The SEC User-Agent contact.** The SEC asks automated clients for an operator name and a real contact
+   address. Logan to supply the value; it is configuration, not source.
+2. **Whether the resulting feed is enough**, and whether Beta 1 should be timed to overlap a reporting
+   season (`CATALYST_PATH.md`, section 9).
+3. Owner, rationale and review date for the provisional catalyst parameters (REV4 2A.8).
+4. Owner names on the safety card.

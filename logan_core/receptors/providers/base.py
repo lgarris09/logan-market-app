@@ -28,6 +28,32 @@ class EarningsReport(BaseModel):
     source_name: str
 
 
+class CompanyFiling(BaseModel):
+    """ADR-084 -- STRATUS-owned shape a regulatory-filings provider maps one
+    filing into. Structured index fields only: the form, the item numbers
+    the issuer assigned, and the identifiers and timestamps needed to cite
+    the filing. No filing text. A field the provider did not supply is None,
+    never a fabricated value.
+    """
+
+    entity_id: str
+    issuer_ticker: Optional[str] = None
+    issuer_cik: Optional[str] = None
+    form: str
+    # Comma-separated 8-K item numbers exactly as the index lists them.
+    items: str = ""
+    accession_number: Optional[str] = None
+    # When the SEC accepted the filing (UTC) -- the filing timestamp.
+    accepted_at: Optional[datetime] = None
+    # The SEC's own filing date and the issuer's stated event ("report")
+    # date, as dates (YYYY-MM-DD).
+    filing_date: Optional[str] = None
+    report_date: Optional[str] = None
+    filing_url: Optional[str] = None
+    source_id: str
+    source_name: str
+
+
 class EarningsProvider(Protocol):
     """A source of real (or, for FixtureEarningsProvider, clearly-labeled
     deterministic test) earnings data for one entity at a time. Sprint 3.6.6

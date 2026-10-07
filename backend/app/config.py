@@ -57,6 +57,24 @@ def eps_comparability_gate_enabled() -> bool:
     return _env_flag("STRATUS_EPS_COMPARABILITY_GATE")
 
 
+def sec_filing_catalysts_enabled() -> bool:
+    """ADR-084: gates the Beta 1 company-filing catalyst path (SEC Form 8-K
+    through EDGAR). Off by default. Turning it on also requires
+    sec_user_agent() to be set; without one the provider refuses to make any
+    request and the path stays silent.
+    """
+    return _env_flag("STRATUS_SEC_FILING_CATALYSTS")
+
+
+def sec_user_agent() -> str | None:
+    """The User-Agent the SEC requires automated clients to send: an
+    operator name and a contact address. Operator configuration
+    (STRATUS_SEC_USER_AGENT), never a value in source control.
+    """
+    value = os.environ.get("STRATUS_SEC_USER_AGENT", "").strip()
+    return value or None
+
+
 def notifications_paused() -> bool:
     """ADR-080 -- the Beta 1 notification pause. When on, no new push is
     sent: every would-be interruption is suppressed with the reason

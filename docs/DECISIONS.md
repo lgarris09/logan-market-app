@@ -4084,3 +4084,48 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   named in the decision, because a critical conflict is neither a non-critical limitation nor a blocked
   qualification; its wording can be changed in one place. The score still exists internally and still
   orders the feed; separating priority from the score is not done here.
+
+## ADR-084: Narrow SEC Form 8-K catalyst path for Beta 1
+- Date: 2026-10-07
+- Status: Directed by Logan and Chuck on 2026-10-07 after the gated-feed result. Implemented locally on
+  `beta1/candidate` behind `STRATUS_SEC_FILING_CATALYSTS` (default off). Not pushed, not deployed.
+- Context: With the EPS comparability gate on (ADR-079), the feed falls from 21 opportunities to 3. That
+  is too thin to evaluate the product and was accepted as a Beta Cut Line blocker under core usability.
+  The smallest trustworthy addition was wanted: structured, attributable, timestamped, company-specific
+  and bounded, with no generalized news system.
+- Decision:
+  1. One source: the SEC EDGAR submissions index. Only structured index fields are used — form, item
+     numbers, accession number, acceptance timestamp, dates. No filing text is fetched or read.
+  2. A filing qualifies only when a governed rule fires on those fields
+     (`logan_core/trigger_detection/filings.py`). Fourteen item numbers are governed, mapping to eleven
+     trigger codes. Items 8.01 and 7.01 are deliberately not governed, because an issuer may file anything
+     under them. A material agreement filed together with a new financial obligation is declined as a
+     routine financing.
+  3. Every candidate resolves to one of the governed qualification states with stable reason codes, and
+     carries source, issuer, form, items, accession, timestamps and URL. The qualification runs at the
+     feed boundary and again in trigger detection from the signal's own fields.
+  4. There is no catalyst materiality score. Every filing category has the same contribution to the
+     internal ordering score, neutral direction and no magnitude. The issuer's own item designation is
+     the only materiality used.
+  5. One filing is one trigger. One company is one opportunity: the newest qualified filing in a 14-day
+     window, joining any existing opportunity as an additional signal family. An amendment qualifies and
+     is worded as one. Lifecycle windows for all filing codes are 48 hours monitored, 7 days to stale, 14
+     days to expiry.
+  6. Item 2.02 is the earnings-result fact that survives without EPS surprise: results were furnished, on
+     a date, in a citable filing. It is its own signal family, `earnings_result`.
+  7. The provider fails closed: no configured User-Agent means it cannot be constructed; an unmapped
+     ticker is never fetched; a response for a different issuer is refused; a failed fetch yields no
+     signal and does not degrade the feed. Freshness is the age of the last successful fetch.
+  8. `company_filing` is added to the stocks signal-type registry.
+- Consequences: On the real cohort sample (48 filings, 2026-08-01 to 2026-10-06) 20 qualify — 11 results
+  and 9 leadership changes — and 28 are declined. The replayed feed moves from 3 opportunities to 7 at the
+  window start and 9 two days later, in three families of equal size. That is varied and still modest,
+  and it depends on the calendar: results filings cluster in reporting seasons. The remaining
+  company-specific news sits under items 8.01 and 7.01 and cannot be reached without reading text, which
+  is out of scope. Guidance changes and the size of an agreement or financing are likewise out of reach.
+  This adds a second external provider and outbound requests to the SEC; the User-Agent contact is an
+  operator decision. The fixed CIK table covers the 30-company cohort and must be extended and re-verified
+  with the Universe. The headline wording is mechanical. A second filing in the same category updates the
+  card without a new lifecycle revision number. All numeric choices here (14-day window, 30-minute cache,
+  lifecycle windows, the shared contribution) are provisional under REV4 2A.8 and need an owner and a
+  review date.

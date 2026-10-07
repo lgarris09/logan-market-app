@@ -69,6 +69,7 @@ from logan_core.receptors import (  # noqa: E402
     simulated_fixtures,
     tesla_ai_partnership_corroboration,
 )
+from logan_core.receptors.company_filings import filing_to_raw_signal  # noqa: E402
 from logan_core.receptors.providers import (  # noqa: E402
     EARNINGS_CACHE_TTL_SECONDS,
     EARNINGS_STALE_GRACE_SECONDS,
@@ -82,6 +83,11 @@ from logan_core.receptors.providers import (  # noqa: E402
     seed_earnings_from_durable_observation,
     signal_family_contract,
 )
+from logan_core.receptors.providers.sec_edgar import (  # noqa: E402
+    SecEdgarFilingsProvider,
+    SecProviderError,
+    recent_window,
+)
 from logan_core.thesis import apply_diversity_caps, classify_market_driver  # noqa: E402
 from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
 from logan_core.thesis.market_driver import (  # noqa: E402
@@ -93,6 +99,10 @@ from logan_core.trigger_detection import (  # noqa: E402
     evaluate_analyst_grade_condition,
     evaluate_earnings_beat_condition,
     evaluate_price_move_condition,
+)
+from logan_core.trigger_detection.filings import (  # noqa: E402
+    FILING_MAX_AGE_AT_DETECTION,
+    qualify_filing,
 )
 from logan_core.trigger_detection.stocks import (  # noqa: E402
     assess_eps_comparability,
@@ -118,6 +128,8 @@ from .config import (  # noqa: E402
     notification_ledger_store_db_path,
     notifications_paused,
     revision_store_db_path,
+    sec_filing_catalysts_enabled,
+    sec_user_agent,
     user_knowledge_store_db_path,
 )
 from .earned_notification_inputs import build_earned_notification_inputs  # noqa: E402
@@ -1118,6 +1130,82 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
     return quote_to_raw_signal(quote)
 
 
+_sec_filings_provider: SecEdgarFilingsProvider | None = None
+_sec_filings_provider_lock = threading.Lock()
+
+
+def _get_sec_filings_provider() -> SecEdgarFilingsProvider | None:
+    """One process-wide provider (its cache and pacing clock are per
+    instance). None when the path is off or no User-Agent is configured --
+    in which case no request to the SEC is ever made."""
+    global _sec_filings_provider
+    if not sec_filing_catalysts_enabled():
+        return None
+    with _sec_filings_provider_lock:
+        if _sec_filings_provider is None:
+            try:
+                _sec_filings_provider = SecEdgarFilingsProvider(
+                    user_agent=sec_user_agent()
+                )
+            except SecProviderError as exc:
+                print(f"[live-stocks] company-filing catalysts unavailable: {exc}")
+                return None
+        return _sec_filings_provider
+
+
+def sec_filings_last_successful_fetch_age_seconds(ticker: str) -> float | None:
+    provider = _sec_filings_provider
+    return (
+        None if provider is None else provider.last_successful_fetch_age_seconds(ticker)
+    )
+
+
+def _live_company_filing_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+    """ADR-084: the most recent SEC Form 8-K for `ticker` on which a
+    governed rule validly fires, as an *additional* raw signal alongside
+    earnings / price / analyst -- never a replacement, and None on any
+    provider failure or when nothing qualifies. One filing per company per
+    poll: the newest qualified one. Older qualified filings inside the
+    window are not separate opportunities.
+
+    Every filing looked at is logged with its governed state and reason
+    codes, so "why did this 8-K not surface" is answerable from the log.
+    """
+    provider = _get_sec_filings_provider()
+    if provider is None:
+        return None
+    try:
+        filings = provider.fetch_recent_filings(ticker)
+    except SecProviderError as exc:
+        print(f"[live-stocks] {ticker}: SEC filings unavailable, skipping: {exc}")
+        return None
+
+    for filing in recent_window(filings, now, FILING_MAX_AGE_AT_DETECTION.days):
+        qualification = qualify_filing(
+            form=filing.form,
+            items=filing.items,
+            accession_number=filing.accession_number,
+            accepted_at=filing.accepted_at,
+            now=now,
+            source_id=filing.source_id,
+            expected_issuer=ticker,
+            filing_issuer=filing.issuer_ticker,
+        )
+        if qualification.is_qualified:
+            print(
+                f"[live-stocks] {ticker}: using SEC {filing.form} "
+                f"{filing.accession_number} (items={filing.items}, "
+                f"primary={qualification.primary_item})"
+            )
+            return filing_to_raw_signal(filing, qualification)
+        print(
+            f"[live-stocks] {ticker}: SEC {filing.form} {filing.accession_number} "
+            f"not surfaced ({qualification.state}: "
+            f"{', '.join(qualification.reason_codes)})"
+        )
+    return None
+
+
 def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
     """Sprint 3.6.7 Block 2, generalized Sprint 3.6.8 Block 5 (was
     `_live_nvda_analyst_grade_raw_signal`): wires the live
@@ -1287,6 +1375,9 @@ def reset_pipeline_state() -> None:
     global _orchestrator, _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
     global _revision_store, _user_knowledge_store, _user_knowledge_cache
     global _live_provider_scheduler, _notification_ledger_store
+    global _sec_filings_provider
+
+    _sec_filings_provider = None
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -1939,6 +2030,10 @@ def _run_feed_pipeline(
         if live_grade_signal is not None:
             signals_this_ticker.append(live_grade_signal)
 
+        live_filing_signal = _live_company_filing_raw_signal(ticker, now)
+        if live_filing_signal is not None:
+            signals_this_ticker.append(live_filing_signal)
+
         if signals_this_ticker:
             live_signals_by_ticker[ticker] = signals_this_ticker
             live_substituted.add(ticker)
@@ -2280,6 +2375,7 @@ def _run_feed_pipeline(
             "earnings_signal": "earnings",
             "price_change": "quote",
             "analyst_change": "analyst_grade",
+            "company_filing": "company_filing",
         }
         # The FmpResponseCache endpoint each freshness family is fetched
         # through (see FmpEarningsProvider / FmpMarketDataProvider).
@@ -2323,7 +2419,12 @@ def _run_feed_pipeline(
             )
             if family is not None:
                 fetch_age_seconds: float | None
-                if item.entity_id in live_substituted:
+                if family == "company_filing":
+                    # ADR-084: the SEC index has its own fetch record.
+                    fetch_age_seconds = sec_filings_last_successful_fetch_age_seconds(
+                        item.entity_id
+                    )
+                elif item.entity_id in live_substituted:
                     fetch_age_seconds = fmp_last_successful_fetch_age_seconds(
                         _FRESHNESS_FAMILY_TO_FMP_ENDPOINT[family], item.entity_id
                     )

@@ -1,6 +1,6 @@
 # Beta 1 critical path
 
-As of 2026-10-06 14:30 UTC. Governing statement: Master Plan REV4, Section 2A. The Beta Cut Line is
+As of 2026-10-07 13:30 UTC. Governing statement: Master Plan REV4, Section 2A. The Beta Cut Line is
 applied: an item is a blocker only if Beta 1 would otherwise be unreliable, untruthful, unusable at its
 core, or unmeasurable.
 
@@ -8,12 +8,13 @@ core, or unmeasurable.
 
 | # | Work item | State | Next action | Depends on | Blocker | Evidence that closes it |
 |---|---|---|---|---|---|---|
-| 1 | 72-hour Operational Integrity window | Running; healthy. Two samples missed at 05:15 and 05:31 UTC (workstation DNS), not interpolated | Interim check 2026-10-06 20:57 UTC; final 2026-10-08 20:57 UTC | Nothing touching production | **YES** | Final report: one process, no OOM, RSS within criteria, feed and scheduler state unchanged |
-| 2 | **Feed depth with the EPS gate on** | **Measured by replay: 3 of 21 opportunities remain.** Too thin to test the central claim | Logan / Chuck decide: proceed thin, add a neutral earnings fact, or another source (`GATED_FEED_DEPTH.md`) | — | **YES** (core usability; measurability) | A recorded decision, then the gated feed seen on a device |
+| 1 | 72-hour Operational Integrity window | Running. Interim check done 2026-10-07: one process, no restart, no faults, scheduler state unchanged, memory inside criteria (see REV4 6.3). Three samples missed to workstation DNS, not interpolated | Final check 2026-10-08 20:57 UTC | Nothing touching production | **YES** | Final report: one process, no OOM, RSS within criteria, feed and scheduler state unchanged |
+| 2 | **Feed depth with the EPS gate on** | Gate alone: 3 of 21. **Narrow SEC 8-K catalyst path built locally (ADR-084): replay gives 7 to 9 opportunities in three equal families.** Varied, still modest outside a reporting season | Logan / Chuck judge sufficiency (`CATALYST_PATH.md` section 9); supply the SEC User-Agent contact | — | **YES** (core usability) until judged on a device | The gated feed with catalysts seen on a device, and a recorded judgment |
 | 3 | Release A: ledger, fail-closed notifications, pause, dispatch states, feedback event | Built and tested. Schema approved 2026-10-06 | Deploy after 1 | 1 | **YES** | Checklist in `LEDGER_SCHEMA_APPROVAL.md` |
 | 4 | Rollback and pause rehearsal | Runbook written; not rehearsed | Rehearse after the window | 1, 3 | **YES** | Runbook section R checked and timed |
 | 5 | Release B: freshness clock (ADR-075) | Built; local | Deploy after 3; set the correction date | 3 | **YES** | Freshness states sane for old events |
 | 6 | Release C: self-corroboration fix, condition-based evidence labels, EPS gate on | Built and tested | Deploy after 5, with notifications paused; verify no SEND; unpause | 3, 5, and the decision in 2 | **YES** | No recalibration push; no beat / miss wording; labels read Supported or Limited |
+| 6a | Release D: company-filing catalysts | Built and tested; flag default off | Deploy after 6, paused for the first poll | 6, SEC User-Agent | **YES** | Filing opportunities in the feed with provenance; no first-poll push |
 | 7 | Mobile Beta build | Built; 263 mobile tests pass; not run on a device | Internal build after Release A | 3 | **YES** | Device acceptance sections 3, 5, 6 |
 | 8 | Physical-device acceptance, including telemetry round trip | Script written | Run on the final build | 3, 6, 7 | **YES** | Signed script, no open evidence-integrity finding |
 | 9 | Safety card owners | Card written; owners blank | Logan / Chuck assign | — | **YES** | Names on the card |
@@ -30,17 +31,21 @@ core, or unmeasurable.
 | WHAT CHANGED repeats the headline | Detail now shows the lifecycle delta, or omits the section |
 | Supporting-signals list lacked an API field | `signal_families` added to the feed item from existing trigger data |
 | Vendor inquiry | Drafted for Logan to send; non-blocking by rule |
+| Feed-depth decision | Narrow SEC 8-K path directed 2026-10-07 and built locally |
 
-## Decision waiting
+## Decisions waiting
 
 | Decision | Options | Needed by |
 |---|---|---|
-| Feed depth without EPS surprise | Proceed thin with a narrowed beta question / add a neutral "results reported" earnings fact / wait for a matched source / narrow SEC 8-K path | Before Release C is treated as sufficient for Beta Entry |
+| SEC User-Agent contact | An operator name and contact address the SEC can reach | Release D |
+| Is the catalyst-augmented feed enough? | Proceed / time Beta 1 to a reporting season / reconsider scope with evidence | Beta Entry Review |
+| Owner and review date for provisional catalyst parameters | — | Before Release D |
 
 ## Not on the path (cannot delay Beta 1)
 
 | Item | Why it is off the path |
 |---|---|
+| Company news under 8-K items 8.01 / 7.01, guidance changes, size of agreements or financings | Need filing text read and classified; a stop condition |
 | EPS-surprise with a matched provider | Disabled for Beta 1 by decision; inquiry runs in parallel |
 | Revenue trigger and revenue materiality | Comparability not proven |
 | Price materiality bands, qualification gates for price and revenue | Shadow only; the live price rule is unchanged and defensible |

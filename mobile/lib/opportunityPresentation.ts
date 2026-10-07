@@ -166,6 +166,10 @@ export function whyNowFor(
 
 const FAMILY_NAME: Record<string, string> = {
   earnings: "Earnings result",
+  // ADR-084: SEC-filing catalysts. A results filing says results were
+  // reported; it makes no comparison to consensus.
+  earnings_result: "Results reported",
+  company_event: "Company filing",
   analyst_grade: "Analyst action",
   price: "Price move",
 };

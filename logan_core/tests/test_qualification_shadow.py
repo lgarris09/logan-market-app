@@ -496,8 +496,13 @@ def test_only_the_eps_gate_uses_the_shadow_module():
             continue
         if "qualification_shadow" in path.read_text(encoding="utf-8"):
             users.append(path)
-    assert [p.name for p in users] == ["stocks.py"]
-    source = users[0].read_text(encoding="utf-8")
+    # filings.py (ADR-084) borrows only the governed state vocabulary.
+    assert sorted(p.name for p in users) == ["filings.py", "stocks.py"]
+    filings_source = next(p for p in users if p.name == "filings.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from .qualification_shadow import QualificationState" in filings_source
+    source = next(p for p in users if p.name == "stocks.py").read_text(encoding="utf-8")
     for unwired in (
         "qualify_price_move",
         "qualify_revenue_surprise",

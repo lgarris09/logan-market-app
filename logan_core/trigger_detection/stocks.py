@@ -10,6 +10,7 @@ from logan_core.contracts import (
     TriggerEvent,
 )
 
+from .filings import FilingQualification, qualify_filing
 from .qualification_shadow import (
     EstimateActualEvidence,
     QualificationResult,
@@ -59,6 +60,11 @@ _IN_LINE_CONFIDENCE_CONTRIBUTION = 0.0
 _PRICE_MOVE_CONFIDENCE_CONTRIBUTION = 0.10
 _ANALYST_UPGRADE_CONFIDENCE_CONTRIBUTION = 0.08
 _ANALYST_DOWNGRADE_CONFIDENCE_CONTRIBUTION = 0.08
+# ADR-084: one constant for every governed filing category. A filing has
+# no magnitude and the categories are not ranked against each other; a
+# per-category number would be precision STRATUS does not have. Equal to
+# the price-move contribution. Provisional (REV4 2A.8).
+_FILING_CONFIDENCE_CONTRIBUTION = 0.10
 
 
 def evaluate_earnings_beat_condition(
@@ -352,6 +358,8 @@ class StocksTriggerEvaluator:
         # The most recent blocked earnings assessment, for inspection by the
         # caller (telemetry / tests). Never read by any decision.
         self.last_eps_block: Optional[QualificationResult] = None
+        # The most recent filing qualification, for inspection only.
+        self.last_filing_qualification: Optional[FilingQualification] = None
 
     def evaluate(
         self, raw: RawSignal, normalized: NormalizedSignal
@@ -364,7 +372,87 @@ class StocksTriggerEvaluator:
             return self._evaluate_price_move(raw, normalized)
         if normalized.signal_type == "analyst_change":
             return self._evaluate_analyst_grade(raw, normalized)
+        if normalized.signal_type == "company_filing":
+            return self._evaluate_company_filing(raw, normalized)
         return None
+
+    def _evaluate_company_filing(
+        self, raw: RawSignal, normalized: NormalizedSignal
+    ) -> Optional[TriggerEvent]:
+        """ADR-084. Re-qualifies the filing from the signal's own
+        structured fields with the same pure function that admitted
+        it, so this layer can never disagree with the receptor
+        boundary. One filing yields one trigger, whatever number of
+        governed items it carries. Direction is neutral: a filing is
+        a disclosure, not a signal of which way anything moves."""
+        assert isinstance(raw.raw_value, dict)
+        value = raw.raw_value
+        accepted = value.get("accepted_at")
+        accepted_at: Optional[datetime] = None
+        if isinstance(accepted, str):
+            try:
+                accepted_at = datetime.fromisoformat(accepted)
+            except ValueError:
+                accepted_at = None
+        now = datetime.now(timezone.utc)
+        qualification = qualify_filing(
+            form=value.get("form"),
+            items=value.get("items"),
+            accession_number=value.get("accession_number"),
+            accepted_at=accepted_at,
+            now=now,
+            source_id=raw.source_id,
+            expected_issuer=normalized.entity_id,
+            filing_issuer=value.get("issuer_ticker"),
+        )
+        self.last_filing_qualification = qualification
+        if not qualification.is_qualified or qualification.primary is None:
+            return None
+        category = qualification.primary
+        context: dict = {
+            "form": value.get("form"),
+            "primary_item": qualification.primary_item,
+            "governed_items": list(qualification.governed_items),
+            "accession_number": value.get("accession_number"),
+            "accepted_at": value.get("accepted_at"),
+            "filing_date": value.get("filing_date"),
+            "is_amendment": value.get("form") == "8-K/A",
+        }
+        for optional_field in ("report_date", "filing_url", "issuer_cik"):
+            if value.get(optional_field):
+                context[optional_field] = value[optional_field]
+        return TriggerEvent(
+            trigger_id=uuid4(),
+            trigger_code=category.trigger_code,
+            trigger_class="catalyst",
+            trigger_type="company_filing",
+            trigger_status="confirmed",
+            domain=raw.domain,
+            affected_entity_id=normalized.entity_id,
+            direction="neutral",
+            # A filing has no magnitude. 1.0 marks that the governed
+            # rule fired, as for an analyst action.
+            raw_magnitude=1.0,
+            confidence_contribution=_FILING_CONFIDENCE_CONTRIBUTION,
+            context=context,
+            originating_signal_ids=[normalized.signal_id],
+            source_id=raw.source_id,
+            source_name=raw.source_name,
+            event_timestamp=raw.captured_at,
+            detected_timestamp=now,
+            decision_trace=[
+                DecisionTraceEntry(
+                    layer="trigger_detection",
+                    rule=(
+                        f"{category.trigger_code}: fired on 8-K item "
+                        f"{qualification.primary_item} "
+                        f"(accession {value.get('accession_number')})"
+                    ),
+                    confidence=_FILING_CONFIDENCE_CONTRIBUTION,
+                    timestamp=now,
+                )
+            ],
+        )
 
     def _evaluate_earnings(
         self, raw: RawSignal, normalized: NormalizedSignal

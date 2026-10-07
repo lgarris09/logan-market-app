@@ -1,0 +1,359 @@
+{
+ "sample": {
+  "filings": 48,
+  "qualified": 20,
+  "declined_by_reason": {
+   "no_governed_item": 22,
+   "routine_financing_not_governed": 6
+  },
+  "qualified_by_code": {
+   "STOCK_FILING_LEADERSHIP_CHANGE": 9,
+   "STOCK_FILING_RESULTS_REPORTED": 11
+  },
+  "companies_with_a_qualified_filing": 17
+ },
+ "gated_baseline": {
+  "opportunities": 3,
+  "by_family": {
+   "analyst_grade": 3
+  },
+  "companies": [
+   "ABT",
+   "CAT",
+   "DE"
+  ]
+ },
+ "with_catalysts_at_window_start": {
+  "as_of": "2026-10-05T20:57:00+00:00",
+  "opportunities": 7,
+  "unique_companies": 7,
+  "by_primary_family": {
+   "analyst_grade": 3,
+   "earnings_result": 2,
+   "company_event": 2
+  },
+  "share_by_family_pct": {
+   "analyst_grade": 42.9,
+   "earnings_result": 28.6,
+   "company_event": 28.6
+  },
+  "largest_family_share_pct": 42.9,
+  "multi_family_opportunities": [],
+  "filing_opportunities": {
+   "ACN": {
+    "item": "2.02",
+    "form": "8-K",
+    "filed": "2026-10-01",
+    "lifecycle_bucket": "cooling (2-7 days)"
+   },
+   "COST": {
+    "item": "2.02",
+    "form": "8-K",
+    "filed": "2026-09-24",
+    "lifecycle_bucket": "stale (7-14 days)"
+   },
+   "CVX": {
+    "item": "5.02",
+    "form": "8-K",
+    "filed": "2026-10-05",
+    "lifecycle_bucket": "active (first 48h)"
+   },
+   "DUK": {
+    "item": "5.02",
+    "form": "8-K",
+    "filed": "2026-09-25",
+    "lifecycle_bucket": "stale (7-14 days)"
+   }
+  },
+  "new_companies_added_by_catalysts": [
+   "ACN",
+   "COST",
+   "CVX",
+   "DUK"
+  ],
+  "lifecycle_buckets": {
+   "cooling (2-7 days)": 1,
+   "stale (7-14 days)": 2,
+   "active (first 48h)": 1
+  }
+ },
+ "with_catalysts_at_sample_time": {
+  "as_of": "2026-10-07T13:00:00+00:00",
+  "opportunities": 9,
+  "unique_companies": 9,
+  "by_primary_family": {
+   "analyst_grade": 3,
+   "earnings_result": 3,
+   "company_event": 3
+  },
+  "share_by_family_pct": {
+   "analyst_grade": 33.3,
+   "earnings_result": 33.3,
+   "company_event": 33.3
+  },
+  "largest_family_share_pct": 33.3,
+  "multi_family_opportunities": [],
+  "filing_opportunities": {
+   "ABBV": {
+    "item": "2.02",
+    "form": "8-K",
+    "filed": "2026-10-05",
+    "lifecycle_bucket": "active (first 48h)"
+   },
+   "ACN": {
+    "item": "2.02",
+    "form": "8-K",
+    "filed": "2026-10-01",
+    "lifecycle_bucket": "cooling (2-7 days)"
+   },
+   "COST": {
+    "item": "2.02",
+    "form": "8-K",
+    "filed": "2026-09-24",
+    "lifecycle_bucket": "stale (7-14 days)"
+   },
+   "CVX": {
+    "item": "5.02",
+    "form": "8-K",
+    "filed": "2026-10-05",
+    "lifecycle_bucket": "active (first 48h)"
+   },
+   "DUK": {
+    "item": "5.02",
+    "form": "8-K",
+    "filed": "2026-09-25",
+    "lifecycle_bucket": "stale (7-14 days)"
+   },
+   "SLB": {
+    "item": "5.02",
+    "form": "8-K",
+    "filed": "2026-10-06",
+    "lifecycle_bucket": "active (first 48h)"
+   }
+  },
+  "new_companies_added_by_catalysts": [
+   "ABBV",
+   "ACN",
+   "COST",
+   "CVX",
+   "DUK",
+   "SLB"
+  ],
+  "lifecycle_buckets": {
+   "active (first 48h)": 3,
+   "cooling (2-7 days)": 1,
+   "stale (7-14 days)": 2
+  }
+ },
+ "daily_2026-09-04_to_10-06": {
+  "days": 33,
+  "standing_filing_opportunities": {
+   "min": 1,
+   "median": 3,
+   "max": 5
+  },
+  "days_with_a_newly_qualified_filing": 8,
+  "newly_qualified_filings": 9,
+  "of_which_revisions_of_a_standing_opportunity": 1,
+  "series": [
+   [
+    "2026-09-04",
+    2,
+    0,
+    0
+   ],
+   [
+    "2026-09-05",
+    1,
+    0,
+    0
+   ],
+   [
+    "2026-09-06",
+    1,
+    0,
+    0
+   ],
+   [
+    "2026-09-07",
+    1,
+    0,
+    0
+   ],
+   [
+    "2026-09-08",
+    2,
+    1,
+    0
+   ],
+   [
+    "2026-09-09",
+    2,
+    0,
+    0
+   ],
+   [
+    "2026-09-10",
+    3,
+    2,
+    1
+   ],
+   [
+    "2026-09-11",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-12",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-13",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-14",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-15",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-16",
+    2,
+    0,
+    0
+   ],
+   [
+    "2026-09-17",
+    2,
+    0,
+    0
+   ],
+   [
+    "2026-09-18",
+    3,
+    1,
+    0
+   ],
+   [
+    "2026-09-19",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-20",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-21",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-22",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-23",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-24",
+    2,
+    1,
+    0
+   ],
+   [
+    "2026-09-25",
+    3,
+    1,
+    0
+   ],
+   [
+    "2026-09-26",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-27",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-28",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-29",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-09-30",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-10-01",
+    4,
+    1,
+    0
+   ],
+   [
+    "2026-10-02",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-10-03",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-10-04",
+    3,
+    0,
+    0
+   ],
+   [
+    "2026-10-05",
+    4,
+    1,
+    0
+   ],
+   [
+    "2026-10-06",
+    5,
+    1,
+    0
+   ]
+  ]
+ }
+}
