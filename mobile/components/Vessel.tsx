@@ -1076,41 +1076,6 @@ export function Vessel({
                     onContentSizeChange={(_, h) => setDetailContentH(h)}
                   >
                     <Animated.View style={detailStyle}>
-                      {/* STRATUS TAKE / WHY IT MATTERS NOW / WHAT CHANGED (V3.1.4.2
-                          brand pass): a "WATCH FOR" section -- 1-2 conditions that
-                          would strengthen/weaken this opportunity -- was requested
-                          too, but no field in the current DeliveredItem contract
-                          backs it (confirmed against logan_core's actual schema,
-                          not just the mobile type); omitted rather than fabricated.
-                          See the completion report for the closest existing hook
-                          (ConclusionConfidence.limiting_factors) that isn't wired
-                          into this response yet. */}
-                      {/* Opportunity Card redesign (owner rendering
-                          reference): section colors are now fixed per
-                          meaning (green=confidence/positive, orange=timing,
-                          blue=analytical), not the entity's domain color --
-                          "the card should not remain predominantly green
-                          simply because the current implementation uses a
-                          green domain border." STRATUS TAKE additionally
-                          gets a bordered hero-panel treatment (the other two
-                          stay plain/inline) to read as the primary
-                          intelligence panel. */}
-                      {!!stratusTake && (
-                        <View style={styles.takePanel}>
-                          <View style={styles.sectionHeaderRow}>
-                            <View
-                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
-                            >
-                              <Ionicons name="star-outline" size={13} color={theme.success} />
-                            </View>
-                            <Text style={[styles.sectionLabel, { color: theme.success }]}>
-                              STRATUS TAKE
-                            </Text>
-                          </View>
-                          <Text style={styles.sectionText}>{stratusTake}</Text>
-                        </View>
-                      )}
-
                       {/* V2.3D ("Since You Last Looked"): reuses STRATUS
                           TAKE's own bordered-panel treatment (same shape,
                           different color per tone) rather than inventing a
@@ -1155,20 +1120,6 @@ export function Vessel({
                         </View>
                       )}
 
-                      {!!whyNow && (
-                        <View style={styles.section}>
-                          <View style={styles.sectionHeaderRow}>
-                            <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
-                              <Ionicons name="time-outline" size={13} color={theme.accent} />
-                            </View>
-                            <Text style={[styles.sectionLabel, { color: theme.accent }]}>
-                              WHY IT MATTERS NOW
-                            </Text>
-                          </View>
-                          <Text style={styles.sectionText}>{whyNow}</Text>
-                        </View>
-                      )}
-
                       {!!whatChanged && (
                         <View style={styles.section}>
                           <View style={styles.sectionHeaderRow}>
@@ -1180,6 +1131,20 @@ export function Vessel({
                             </Text>
                           </View>
                           <Text style={styles.sectionText}>{whatChanged}</Text>
+                        </View>
+                      )}
+
+                      {!!whyNow && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
+                              <Ionicons name="time-outline" size={13} color={theme.accent} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.accent }]}>
+                              WHY IT MATTERS NOW
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{whyNow}</Text>
                         </View>
                       )}
 
@@ -1262,6 +1227,46 @@ export function Vessel({
                             </Text>
                           </View>
                           <Text style={styles.sectionText}>{supportingSignals.join(" · ")}</Text>
+                        </View>
+                      )}
+
+                      {/* Beta 1 detail order: what changed, why now, trajectory,
+                          evidence, supporting signals, then personal relevance.
+                          The objective story comes first; STRATUS TAKE keeps its
+                          own bordered panel so personal relevance never reads as
+                          objective evidence. */}
+                      {/* STRATUS TAKE / WHY IT MATTERS NOW / WHAT CHANGED (V3.1.4.2
+                          brand pass): a "WATCH FOR" section -- 1-2 conditions that
+                          would strengthen/weaken this opportunity -- was requested
+                          too, but no field in the current DeliveredItem contract
+                          backs it (confirmed against logan_core's actual schema,
+                          not just the mobile type); omitted rather than fabricated.
+                          See the completion report for the closest existing hook
+                          (ConclusionConfidence.limiting_factors) that isn't wired
+                          into this response yet. */}
+                      {/* Opportunity Card redesign (owner rendering
+                          reference): section colors are now fixed per
+                          meaning (green=confidence/positive, orange=timing,
+                          blue=analytical), not the entity's domain color --
+                          "the card should not remain predominantly green
+                          simply because the current implementation uses a
+                          green domain border." STRATUS TAKE additionally
+                          gets a bordered hero-panel treatment (the other two
+                          stay plain/inline) to read as the primary
+                          intelligence panel. */}
+                      {!!stratusTake && (
+                        <View style={styles.takePanel}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
+                            >
+                              <Ionicons name="star-outline" size={13} color={theme.success} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.success }]}>
+                              STRATUS TAKE
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{stratusTake}</Text>
                         </View>
                       )}
 
@@ -1608,6 +1613,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: spacing.md,
     paddingVertical: 9,
+    // Beta 1: a comfortable touch target for Watch and Ask.
+    minHeight: 44,
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
   },

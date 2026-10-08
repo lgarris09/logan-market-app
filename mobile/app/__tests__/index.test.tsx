@@ -88,11 +88,13 @@ describe("AttentionFieldScreen", () => {
 
     render(<AttentionFieldScreen />);
 
-    await waitFor(() => expect(screen.getByText("Nothing to show yet")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("Nothing needs your attention right now")).toBeTruthy()
+    );
     // V2.3C Block 13: restrained, honest healthy-but-sparse language --
     // distinct from the provider-degraded copy asserted below.
     expect(
-      screen.getByText("No opportunities currently meet your attention threshold.")
+      screen.getByText("STRATUS is still watching. This will update when something changes.")
     ).toBeTruthy();
   });
 
@@ -105,10 +107,8 @@ describe("AttentionFieldScreen", () => {
 
     render(<AttentionFieldScreen />);
 
-    await waitFor(() =>
-      expect(screen.getByText("Live data temporarily unavailable")).toBeTruthy()
-    );
-    expect(screen.queryByText("Nothing to show yet")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Live data temporarily unavailable")).toBeTruthy());
+    expect(screen.queryByText("Nothing needs your attention right now")).toBeNull();
   });
 
   it("shows a timeout state and can retry", async () => {
@@ -198,5 +198,147 @@ describe("AttentionFieldScreen", () => {
       // avatar's own press handler is fully independent of the bell's.
       expect(screen.queryByText("NEW OPPORTUNITIES")).toBeNull();
     });
+  });
+});
+
+// Beta 1 (returning user): reopening the app must not blank a feed that is
+// already on screen, and a failed refresh must not replace it with an error.
+describe("AttentionFieldScreen -- returning user", () => {
+  const { AppState } = jest.requireActual("react-native");
+
+  function captureAppStateHandler() {
+    const handlers: ((state: string) => void)[] = [];
+    jest.spyOn(AppState, "addEventListener").mockImplementation(((
+      _type: string,
+      handler: (state: string) => void
+    ) => {
+      handlers.push(handler);
+      return { remove: jest.fn() };
+    }) as never);
+    return handlers;
+  }
+
+  function itemsResult(
+    items: Record<string, unknown>[],
+    providerDegraded = false
+  ): ApiResult<OpportunitiesResponse> {
+    return {
+      status: "success",
+      data: {
+        schema_version: "1.0",
+        generated_at: "2026-10-08T00:00:00Z",
+        items: items as unknown as OpportunitiesResponse["items"],
+        provider_degraded: providerDegraded,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    mockedFetchJson.mockReset();
+    jest.restoreAllMocks();
+  });
+
+  it("keeps the feed on screen while it refreshes on resume", async () => {
+    const handlers = captureAppStateHandler();
+    mockedFetchJson.mockResolvedValue(opportunitiesResult(3));
+    render(<AttentionFieldScreen />);
+    await waitFor(() => expect(screen.getByText("AttentionField:3")).toBeTruthy());
+
+    // The refresh is slow: it never resolves during this test.
+    mockedFetchJson.mockReturnValue(new Promise(() => {}));
+    act(() => handlers.forEach((handler) => handler("active")));
+
+    expect(screen.getByText("AttentionField:3")).toBeTruthy();
+    expect(screen.queryByLabelText("Loading opportunities")).toBeNull();
+  });
+
+  it("keeps the feed when the network is unavailable on resume", async () => {
+    const handlers = captureAppStateHandler();
+    mockedFetchJson.mockResolvedValue(opportunitiesResult(3));
+    render(<AttentionFieldScreen />);
+    await waitFor(() => expect(screen.getByText("AttentionField:3")).toBeTruthy());
+
+    mockedFetchJson.mockResolvedValue({ status: "error", message: "Network request failed" });
+    await act(async () => {
+      handlers.forEach((handler) => handler("active"));
+    });
+
+    expect(screen.getByText("AttentionField:3")).toBeTruthy();
+    expect(screen.queryByText("Unable to reach STRATUS")).toBeNull();
+    expect(screen.queryByText("Backend not connected")).toBeNull();
+    expect(screen.queryByText("Taking longer than expected")).toBeNull();
+  });
+
+  it("still shows the full error state when there is nothing to keep", async () => {
+    mockedFetchJson.mockResolvedValue({ status: "error", message: "Network request failed" });
+    render(<AttentionFieldScreen />);
+    await waitFor(() => expect(screen.getByLabelText("Retry")).toBeTruthy());
+  });
+
+  it("tells a returning user what is new and what changed", async () => {
+    mockedFetchJson.mockResolvedValue(
+      itemsResult([
+        {
+          event_id: "a",
+          display_name: "Example Co",
+          ticker: "EXM",
+          is_new_for_user: true,
+          since_last_looked: null,
+          delivered_item: { evidence_label: "Supported evidence" },
+        },
+        {
+          event_id: "b",
+          is_new_for_user: false,
+          since_last_looked: { status: "material_change" },
+        },
+        {
+          event_id: "c",
+          is_new_for_user: false,
+          since_last_looked: { status: "no_material_change" },
+        },
+      ])
+    );
+    render(<AttentionFieldScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("1 new · 1 changed since you last looked")).toBeTruthy()
+    );
+  });
+
+  it("says so when very little has changed", async () => {
+    mockedFetchJson.mockResolvedValue(
+      itemsResult([
+        {
+          event_id: "a",
+          is_new_for_user: false,
+          since_last_looked: { status: "no_material_change" },
+        },
+      ])
+    );
+    render(<AttentionFieldScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Nothing material has changed since you last looked.")).toBeTruthy()
+    );
+  });
+
+  it("flags partly unavailable live data without hiding the feed", async () => {
+    mockedFetchJson.mockResolvedValue(
+      itemsResult([{ event_id: "a", is_new_for_user: false, since_last_looked: null }], true)
+    );
+    render(<AttentionFieldScreen />);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Some live data is temporarily unavailable. This may be incomplete.")
+      ).toBeTruthy()
+    );
+    expect(screen.getByText("AttentionField:1")).toBeTruthy();
+  });
+
+  it("presents a quiet market as a normal state, not an error", async () => {
+    mockedFetchJson.mockResolvedValue(opportunitiesResult(0));
+    render(<AttentionFieldScreen />);
+    await waitFor(() =>
+      expect(screen.getByText("Nothing needs your attention right now")).toBeTruthy()
+    );
+    expect(screen.queryByText("Live data temporarily unavailable")).toBeNull();
   });
 });
