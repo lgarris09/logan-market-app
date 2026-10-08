@@ -94,12 +94,18 @@ export function useStratusAuth(onAuthComplete?: () => void) {
       // error (rate limit, disabled strategy, etc.) is a real sign-in
       // problem and must not be masked as "try creating an account."
       if (error.code !== "form_identifier_not_found") {
-        Alert.alert("Couldn't send a code", error.message || "Please check the address and try again.");
+        Alert.alert(
+          "Couldn't send a code",
+          error.message || "Please check the address and try again."
+        );
         return;
       }
       const created = await signUp.create({ emailAddress: email.trim() });
       if (created.error) {
-        Alert.alert("Couldn't send a code", created.error.message || "Please check the address and try again.");
+        Alert.alert(
+          "Couldn't send a code",
+          created.error.message || "Please check the address and try again."
+        );
         return;
       }
       const sent = await signUp.verifications.sendEmailCode();
@@ -110,7 +116,10 @@ export function useStratusAuth(onAuthComplete?: () => void) {
       setFlow("signUp");
       setStage("code");
     } catch (error) {
-      Alert.alert("Couldn't send a code", error instanceof Error ? error.message : "Please try again.");
+      Alert.alert(
+        "Couldn't send a code",
+        error instanceof Error ? error.message : "Please try again."
+      );
     } finally {
       setBusy(false);
     }
@@ -139,7 +148,10 @@ export function useStratusAuth(onAuthComplete?: () => void) {
       }
       Alert.alert("Incorrect code", "Please check the code and try again.");
     } catch (error) {
-      Alert.alert("Couldn't verify code", error instanceof Error ? error.message : "Please try again.");
+      Alert.alert(
+        "Couldn't verify code",
+        error instanceof Error ? error.message : "Please try again."
+      );
     } finally {
       setBusy(false);
     }

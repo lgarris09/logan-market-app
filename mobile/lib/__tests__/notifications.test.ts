@@ -150,8 +150,7 @@ describe("useNotificationTapHandler", () => {
     const onOpenEventId = jest.fn();
     renderHook(() => useNotificationTapHandler(onOpenEventId));
 
-    const listener =
-      mockedNotifications.addNotificationResponseReceivedListener.mock.calls[0][0];
+    const listener = mockedNotifications.addNotificationResponseReceivedListener.mock.calls[0][0];
     listener({
       notification: { request: { content: { data: { event_id: "abc-123" } } } },
     } as never);
@@ -167,8 +166,7 @@ describe("useNotificationTapHandler", () => {
     const onOpenEventId = jest.fn();
     renderHook(() => useNotificationTapHandler(onOpenEventId));
 
-    const listener =
-      mockedNotifications.addNotificationResponseReceivedListener.mock.calls[0][0];
+    const listener = mockedNotifications.addNotificationResponseReceivedListener.mock.calls[0][0];
     listener({ notification: { request: { content: { data: {} } } } } as never);
 
     expect(onOpenEventId).not.toHaveBeenCalled();

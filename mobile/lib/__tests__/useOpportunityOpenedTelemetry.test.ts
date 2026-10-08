@@ -21,19 +21,17 @@ describe("useOpportunityOpenedTelemetry", () => {
   });
 
   it("logs nothing when nothing is open", () => {
-    renderHook(
-      ({ t }: { t: OpenedTelemetryTarget | null }) => useOpportunityOpenedTelemetry(t),
-      { initialProps: { t: null } }
-    );
+    renderHook(({ t }: { t: OpenedTelemetryTarget | null }) => useOpportunityOpenedTelemetry(t), {
+      initialProps: { t: null },
+    });
 
     expect(mockedLog).not.toHaveBeenCalled();
   });
 
   it("logs opportunity_opened the moment a card opens", () => {
-    renderHook(
-      ({ t }: { t: OpenedTelemetryTarget | null }) => useOpportunityOpenedTelemetry(t),
-      { initialProps: { t: target as OpenedTelemetryTarget | null } }
-    );
+    renderHook(({ t }: { t: OpenedTelemetryTarget | null }) => useOpportunityOpenedTelemetry(t), {
+      initialProps: { t: target as OpenedTelemetryTarget | null },
+    });
 
     expect(mockedLog).toHaveBeenCalledTimes(1);
     expect(mockedLog).toHaveBeenCalledWith({
@@ -80,16 +78,12 @@ describe("useOpportunityOpenedTelemetry", () => {
     rerender({ t: { eventId: "evt-2" } });
 
     expect(mockedLog).toHaveBeenCalledTimes(2);
-    expect(mockedLog).toHaveBeenLastCalledWith(
-      expect.objectContaining({ opportunityId: "evt-2" })
-    );
+    expect(mockedLog).toHaveBeenLastCalledWith(expect.objectContaining({ opportunityId: "evt-2" }));
   });
 
   it("accepts a custom source surface", () => {
     renderHook(() => useOpportunityOpenedTelemetry(target, "wheel"));
 
-    expect(mockedLog).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceSurface: "wheel" })
-    );
+    expect(mockedLog).toHaveBeenCalledWith(expect.objectContaining({ sourceSurface: "wheel" }));
   });
 });

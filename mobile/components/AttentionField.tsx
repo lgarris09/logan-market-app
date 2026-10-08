@@ -121,7 +121,7 @@ export function AttentionField({
   // backgrounding are each handled without fabricating or losing time.
   const openItem =
     disclosure === 1 && focusedId
-      ? items.find((item) => item.event_id === focusedId) ?? null
+      ? (items.find((item) => item.event_id === focusedId) ?? null)
       : null;
   useCardDwellTracking(
     openItem
@@ -145,7 +145,7 @@ export function AttentionField({
   // lib/useImpressionTracking.ts for why this (not disclosure===1, and not
   // "present in `items`") is the honest "shown to the user" signal.
   const focusedItem = focusedId
-    ? items.find((item) => item.event_id === focusedId) ?? null
+    ? (items.find((item) => item.event_id === focusedId) ?? null)
     : null;
   useImpressionTracking(
     focusedItem

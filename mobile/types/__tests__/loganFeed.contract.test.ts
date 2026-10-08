@@ -135,9 +135,7 @@ describe("FeedItem/EvidenceSnapshot contract", () => {
 
   it("accepts a material_change since_last_looked summary", () => {
     expect(fullyPopulatedItem.since_last_looked?.status).toBe("material_change");
-    expect(fullyPopulatedItem.since_last_looked?.change_type).toBe(
-      "confidence_increased"
-    );
+    expect(fullyPopulatedItem.since_last_looked?.change_type).toBe("confidence_increased");
     expect(fullyPopulatedItem.since_last_looked?.detail).toBeTruthy();
   });
 

@@ -57,7 +57,10 @@ describe("deleteAccount", () => {
 
     const result = await deleteAccount();
 
-    expect(fetchJson).toHaveBeenCalledWith("/v1/account", expect.objectContaining({ method: "DELETE" }));
+    expect(fetchJson).toHaveBeenCalledWith(
+      "/v1/account",
+      expect.objectContaining({ method: "DELETE" })
+    );
     expect(result).toBe(true);
   });
 

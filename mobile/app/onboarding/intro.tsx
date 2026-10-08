@@ -39,7 +39,12 @@ export default function IntroScreen() {
   }, []);
 
   return (
-    <Pressable style={styles.screen} onPress={advance} accessibilityRole="button" accessibilityLabel="Continue">
+    <Pressable
+      style={styles.screen}
+      onPress={advance}
+      accessibilityRole="button"
+      accessibilityLabel="Continue"
+    >
       <View style={styles.center}>
         <Image
           source={WORDMARK_SOURCE}

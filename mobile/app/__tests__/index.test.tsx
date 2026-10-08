@@ -105,9 +105,7 @@ describe("AttentionFieldScreen", () => {
 
     render(<AttentionFieldScreen />);
 
-    await waitFor(() =>
-      expect(screen.getByText("Live data temporarily unavailable")).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText("Live data temporarily unavailable")).toBeTruthy());
     expect(screen.queryByText("Nothing to show yet")).toBeNull();
   });
 

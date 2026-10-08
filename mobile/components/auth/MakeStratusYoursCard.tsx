@@ -59,7 +59,12 @@ export function MakeStratusYoursCard({
             accessibilityRole="button"
             accessibilityLabel="Continue as guest"
           >
-            <Ionicons name="person-outline" size={19} color={theme.textSecondary} style={styles.guestIcon} />
+            <Ionicons
+              name="person-outline"
+              size={19}
+              color={theme.textSecondary}
+              style={styles.guestIcon}
+            />
             <View>
               <Text style={styles.guestLabel}>Continue as guest</Text>
               <Text style={styles.guestSublabel}>Explore STRATUS without an account.</Text>
@@ -74,7 +79,8 @@ export function MakeStratusYoursCard({
       </View>
 
       <Text style={styles.disclaimer}>
-        New here? We&rsquo;ll create your account automatically. Already have one? We&rsquo;ll sign you in.
+        New here? We&rsquo;ll create your account automatically. Already have one? We&rsquo;ll sign
+        you in.
       </Text>
     </View>
   );

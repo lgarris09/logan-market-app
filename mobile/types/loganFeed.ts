@@ -61,13 +61,7 @@ export type DeliveredItem = {
 // real, expected MeaningfulChangeType value -- most polls produce no
 // meaningful change at all.
 export type LifecycleState =
-  | "new"
-  | "developing"
-  | "high_attention"
-  | "monitoring"
-  | "cooling"
-  | "stale"
-  | "expired";
+  "new" | "developing" | "high_attention" | "monitoring" | "cooling" | "stale" | "expired";
 
 export type MeaningfulChangeType =
   | "none"
@@ -91,10 +85,7 @@ export type TrajectoryState = "STRENGTHENING" | "STEADY" | "WEAKENING" | "REVERS
 
 // Mirrors opportunity_lifecycle/sync.py's SyncStatus exactly.
 export type UserSyncStatus =
-  | "UP_TO_DATE"
-  | "NEW_TO_USER"
-  | "UPDATED_SINCE_SEEN"
-  | "NOTIFIED_BUT_UNSEEN";
+  "UP_TO_DATE" | "NEW_TO_USER" | "UPDATED_SINCE_SEEN" | "NOTIFIED_BUT_UNSEEN";
 
 // V2.3D ("Since You Last Looked"). Mirrors opportunity_lifecycle/sync.py's
 // SinceLastLookedStatus exactly. A deliberately stricter question than
@@ -104,10 +95,7 @@ export type UserSyncStatus =
 // opportunity before -- present the briefing normally, no "since you last
 // looked" language of any kind.
 export type SinceLastLookedStatus =
-  | "first_view"
-  | "material_change"
-  | "no_material_change"
-  | "degraded";
+  "first_view" | "material_change" | "no_material_change" | "degraded";
 
 // Mirrors opportunity_lifecycle/sync.py's SinceLastLookedSummary exactly.
 // change_type/detail are only ever populated for "material_change" --

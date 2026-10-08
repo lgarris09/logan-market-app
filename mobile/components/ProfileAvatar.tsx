@@ -40,7 +40,13 @@ function initialsFor(user: ProfileAvatarUser): string {
   return "?";
 }
 
-export function ProfileAvatar({ user, size = 30 }: { user: ProfileAvatarUser | null; size?: number }) {
+export function ProfileAvatar({
+  user,
+  size = 30,
+}: {
+  user: ProfileAvatarUser | null;
+  size?: number;
+}) {
   const dimension = { width: size, height: size, borderRadius: size / 2 };
 
   if (user?.hasImage && user.imageUrl) {

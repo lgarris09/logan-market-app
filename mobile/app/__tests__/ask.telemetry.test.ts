@@ -10,12 +10,7 @@ describe("isFirstUserMessage", () => {
   });
 
   it("is false once at least one real user question has been asked", () => {
-    expect(
-      isFirstUserMessage([
-        { role: "user" },
-        { role: "assistant" },
-      ])
-    ).toBe(false);
+    expect(isFirstUserMessage([{ role: "user" }, { role: "assistant" }])).toBe(false);
   });
 
   it("is false for a later follow-up in a longer transcript", () => {

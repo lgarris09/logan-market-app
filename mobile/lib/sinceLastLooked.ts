@@ -62,8 +62,7 @@ export function describeSinceLastLooked(
         tone: "material",
         label: "SINCE YOU LAST LOOKED",
         icon:
-          (summary.change_type && CHANGE_TYPE_ICON[summary.change_type]) ||
-          DEFAULT_MATERIAL_ICON,
+          (summary.change_type && CHANGE_TYPE_ICON[summary.change_type]) || DEFAULT_MATERIAL_ICON,
         text: summary.detail ?? "Something changed since your last look.",
       };
     case "no_material_change":
@@ -78,9 +77,7 @@ export function describeSinceLastLooked(
         tone: "degraded",
         label: "LIVE DATA UNAVAILABLE",
         icon: "cloud-offline-outline",
-        text:
-          summary.detail ??
-          "STRATUS couldn't confirm the latest data this check.",
+        text: summary.detail ?? "STRATUS couldn't confirm the latest data this check.",
       };
     default:
       return null;

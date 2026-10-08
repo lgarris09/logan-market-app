@@ -17,22 +17,10 @@ import { fetchJson } from "./apiClient";
 // in the API response), sent once per focus change by useImpressionTracking
 // below. Never interpreted the way the other types are (see
 // logan_core/learning/engine.py's process_exposure).
-export type InteractionType =
-  | "view"
-  | "click"
-  | "dismiss"
-  | "save"
-  | "share"
-  | "impression";
+export type InteractionType = "view" | "click" | "dismiss" | "save" | "share" | "impression";
 
 // Mirrors logan_core/contracts/common.py's Domain literal.
-export type InteractionDomain =
-  | "stocks"
-  | "sports"
-  | "poly"
-  | "social"
-  | "news"
-  | "crypto";
+export type InteractionDomain = "stocks" | "sports" | "poly" | "social" | "news" | "crypto";
 
 export type RecordInteractionInput = {
   eventId: string;

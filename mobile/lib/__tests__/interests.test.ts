@@ -36,7 +36,9 @@ describe("declared interests", () => {
   });
 
   it("distinguishes a saved empty selection from never having completed the step", async () => {
-    mockGetItem.mockResolvedValue(JSON.stringify({ categories: [], selectedAt: "2026-01-01T00:00:00.000Z" }));
+    mockGetItem.mockResolvedValue(
+      JSON.stringify({ categories: [], selectedAt: "2026-01-01T00:00:00.000Z" })
+    );
 
     const result = await getDeclaredInterests();
 
@@ -46,7 +48,10 @@ describe("declared interests", () => {
 
   it("reads back previously-saved categories (simulated restart)", async () => {
     mockGetItem.mockResolvedValue(
-      JSON.stringify({ categories: ["culture_media", "other"], selectedAt: "2026-01-01T00:00:00.000Z" })
+      JSON.stringify({
+        categories: ["culture_media", "other"],
+        selectedAt: "2026-01-01T00:00:00.000Z",
+      })
     );
 
     const result = await getDeclaredInterests();

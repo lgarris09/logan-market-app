@@ -6,7 +6,14 @@
 // buttons) per the owner's brand-closeout direction -- no solid-orange
 // buttons here; orange is reserved for the one primary action per screen
 // (e.g. onboarding's "Continue to STRATUS"), not every row.
-import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { font, radius, spacing, theme, type } from "../../constants/theme";
@@ -62,11 +69,26 @@ export function AuthMethodControls({
 }) {
   return (
     <View>
-      <MethodRow icon="logo-apple" label="Continue with Apple" onPress={() => onOAuth("oauth_apple")} disabled={busy} />
-      <MethodRow icon="logo-google" label="Continue with Google" onPress={() => onOAuth("oauth_google")} disabled={busy} />
+      <MethodRow
+        icon="logo-apple"
+        label="Continue with Apple"
+        onPress={() => onOAuth("oauth_apple")}
+        disabled={busy}
+      />
+      <MethodRow
+        icon="logo-google"
+        label="Continue with Google"
+        onPress={() => onOAuth("oauth_google")}
+        disabled={busy}
+      />
 
       {stage === "idle" && (
-        <MethodRow icon="mail-outline" label="Continue with Email" onPress={() => setStage("email")} disabled={busy} />
+        <MethodRow
+          icon="mail-outline"
+          label="Continue with Email"
+          onPress={() => setStage("email")}
+          disabled={busy}
+        />
       )}
 
       {stage === "email" && (

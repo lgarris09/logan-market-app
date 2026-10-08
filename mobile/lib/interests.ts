@@ -22,12 +22,7 @@
 import * as SecureStore from "expo-secure-store";
 
 export type InterestCategoryId =
-  | "markets"
-  | "sports_odds"
-  | "trends_tech"
-  | "world_politics"
-  | "culture_media"
-  | "other";
+  "markets" | "sports_odds" | "trends_tech" | "world_politics" | "culture_media" | "other";
 
 export interface DeclaredInterests {
   categories: InterestCategoryId[];
@@ -40,14 +35,50 @@ export const INTEREST_CATEGORIES: {
   id: InterestCategoryId;
   label: string;
   description: string;
-  icon: "trending-up-outline" | "trophy-outline" | "flash-outline" | "earth-outline" | "musical-notes-outline" | "add-circle-outline";
+  icon:
+    | "trending-up-outline"
+    | "trophy-outline"
+    | "flash-outline"
+    | "earth-outline"
+    | "musical-notes-outline"
+    | "add-circle-outline";
 }[] = [
-  { id: "markets", label: "Markets", description: "Stocks, crypto, and global markets", icon: "trending-up-outline" },
-  { id: "sports_odds", label: "Sports & Odds", description: "Scores, odds, and real-time edge", icon: "trophy-outline" },
-  { id: "trends_tech", label: "Trends & Tech", description: "AI, innovation, and what's next", icon: "flash-outline" },
-  { id: "world_politics", label: "World & Politics", description: "Global events and policy shifts", icon: "earth-outline" },
-  { id: "culture_media", label: "Culture & Media", description: "Music, movies, and pop culture", icon: "musical-notes-outline" },
-  { id: "other", label: "Other", description: "Something else on your radar", icon: "add-circle-outline" },
+  {
+    id: "markets",
+    label: "Markets",
+    description: "Stocks, crypto, and global markets",
+    icon: "trending-up-outline",
+  },
+  {
+    id: "sports_odds",
+    label: "Sports & Odds",
+    description: "Scores, odds, and real-time edge",
+    icon: "trophy-outline",
+  },
+  {
+    id: "trends_tech",
+    label: "Trends & Tech",
+    description: "AI, innovation, and what's next",
+    icon: "flash-outline",
+  },
+  {
+    id: "world_politics",
+    label: "World & Politics",
+    description: "Global events and policy shifts",
+    icon: "earth-outline",
+  },
+  {
+    id: "culture_media",
+    label: "Culture & Media",
+    description: "Music, movies, and pop culture",
+    icon: "musical-notes-outline",
+  },
+  {
+    id: "other",
+    label: "Other",
+    description: "Something else on your radar",
+    icon: "add-circle-outline",
+  },
 ];
 
 /**

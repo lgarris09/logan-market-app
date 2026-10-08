@@ -845,7 +845,11 @@ export function Vessel({
               independent components with their own logic. */}
           <Animated.View
             pointerEvents="none"
-            style={[styles.restLabel, restLabelStyle, { transform: [{ translateY: -restIconOffset }] }]}
+            style={[
+              styles.restLabel,
+              restLabelStyle,
+              { transform: [{ translateY: -restIconOffset }] },
+            ]}
           >
             <View style={styles.restLabelIconWrap}>
               <EntitySymbol symbol={symbol} size={restIconSize} />
@@ -1067,9 +1071,7 @@ export function Vessel({
                       {!!stratusTake && (
                         <View style={styles.takePanel}>
                           <View style={styles.sectionHeaderRow}>
-                            <View
-                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
-                            >
+                            <View style={[styles.sectionIconWrap, { borderColor: theme.success }]}>
                               <Ionicons name="star-outline" size={13} color={theme.success} />
                             </View>
                             <Text style={[styles.sectionLabel, { color: theme.success }]}>
@@ -1114,9 +1116,7 @@ export function Vessel({
                                 color={sinceLastLookedColor}
                               />
                             </View>
-                            <Text
-                              style={[styles.sectionLabel, { color: sinceLastLookedColor }]}
-                            >
+                            <Text style={[styles.sectionLabel, { color: sinceLastLookedColor }]}>
                               {sinceLastLooked.label}
                             </Text>
                           </View>
@@ -1188,12 +1188,7 @@ export function Vessel({
                             size={13}
                             color={watched ? theme.success : theme.textSecondary}
                           />
-                          <Text
-                            style={[
-                              styles.askButtonText,
-                              watched && { color: theme.success },
-                            ]}
-                          >
+                          <Text style={[styles.askButtonText, watched && { color: theme.success }]}>
                             {watched ? "Watching" : "Watch"}
                           </Text>
                         </Pressable>
@@ -1226,11 +1221,7 @@ export function Vessel({
                             color={theme.textSecondary}
                           />
                           <Text style={styles.askButtonText}>Ask STRATUS about this</Text>
-                          <Ionicons
-                            name="chevron-forward"
-                            size={13}
-                            color={theme.textSecondary}
-                          />
+                          <Ionicons name="chevron-forward" size={13} color={theme.textSecondary} />
                         </Pressable>
                       </View>
 
@@ -1514,7 +1505,11 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   footerLeft: { gap: 10 },
-  footerDivider: { width: StyleSheet.hairlineWidth, alignSelf: "stretch", backgroundColor: theme.border },
+  footerDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: "stretch",
+    backgroundColor: theme.border,
+  },
   footerDisclaimer: {
     flex: 1,
     color: theme.muted,

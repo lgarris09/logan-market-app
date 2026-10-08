@@ -29,7 +29,9 @@ describe("ProfileAvatar", () => {
   });
 
   it("renders the real Clerk profile image when the user has one", () => {
-    render(<ProfileAvatar user={fakeUser({ hasImage: true, imageUrl: "https://example.com/me.jpg" })} />);
+    render(
+      <ProfileAvatar user={fakeUser({ hasImage: true, imageUrl: "https://example.com/me.jpg" })} />
+    );
 
     const image = screen.getByLabelText("Your profile");
     expect(image.props.source).toEqual({ uri: "https://example.com/me.jpg" });
@@ -55,7 +57,9 @@ describe("ProfileAvatar", () => {
 
   it("falls back to the email address's first letter as a last resort", () => {
     render(
-      <ProfileAvatar user={fakeUser({ primaryEmailAddress: { emailAddress: "grace@example.com" } })} />
+      <ProfileAvatar
+        user={fakeUser({ primaryEmailAddress: { emailAddress: "grace@example.com" } })}
+      />
     );
 
     expect(screen.getByText("G")).toBeTruthy();
@@ -67,7 +71,11 @@ describe("ProfileAvatar", () => {
     // graphic instead of the honest initials/guest fallback.
     render(
       <ProfileAvatar
-        user={fakeUser({ hasImage: false, imageUrl: "https://img.clerk.com/default.png", firstName: "Ada" })}
+        user={fakeUser({
+          hasImage: false,
+          imageUrl: "https://img.clerk.com/default.png",
+          firstName: "Ada",
+        })}
       />
     );
 
