@@ -22,10 +22,9 @@ import { fetchJson } from "../lib/apiClient";
 import { isClerkConfigured } from "../lib/clerkConfig";
 import { FieldBias } from "../lib/fieldBias";
 import { InteractionDomain, recordInteraction } from "../lib/interactions";
-import {
-  registerForPushNotificationsAsync,
-  useNotificationTapHandler,
-} from "../lib/notifications";
+import { evidenceLabelFor } from "../lib/opportunityPresentation";
+import { feedStatusFor } from "../lib/returningUser";
+import { registerForPushNotificationsAsync, useNotificationTapHandler } from "../lib/notifications";
 import { OpportunitiesResponse } from "../types/loganFeed";
 
 // V2.3A consumer closeout -- the standard account affordance, replacing the
@@ -103,11 +102,13 @@ type FeedState =
 // process-lifetime/in-memory on the server, not durable across a backend
 // restart, but a genuine "is this new to this user" signal rather than the
 // earlier client-side event_id-diffing workaround. Just enough shown here
-// to say what changed: name and confidence, nothing fabricated.
+// to say what changed: name and evidence strength, nothing fabricated. The
+// label only, never a percentage -- confidence_score is an internal
+// evidence measure, not a probability (ADR-076).
 type OpportunityNotification = {
   eventId: string;
   name: string;
-  confidencePct: number;
+  evidenceLabel: string;
 };
 
 const NOTIFICATION_POLL_INTERVAL_MS = 60000;
@@ -201,8 +202,34 @@ export default function AttentionFieldScreen() {
   // "all" on a fresh screen mount by design.
   const [fieldBias, setFieldBias] = useState<FieldBias>("all");
 
-  const loadFeed = useCallback(async (signal: AbortSignal) => {
-    setState({ kind: "loading" });
+  // Beta 1 (returning user): when the last successful fetch landed, and
+  // whether the most recent refresh attempt failed. Together they let
+  // the status line say honestly that what is on screen could not be
+  // refreshed, instead of presenting old data as current.
+  const [lastSuccessAtMs, setLastSuccessAtMs] = useState<number | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+
+  // Re-evaluated on every render (cheap): staleness depends on the clock,
+  // and the 60-second poll re-renders this screen whether it succeeds or
+  // fails, so the line can never be more than a poll behind.
+  const feedStatus =
+    state.kind === "loaded"
+      ? feedStatusFor({
+          items: state.response.items,
+          providerDegraded: state.response.provider_degraded ?? false,
+          lastSuccessAtMs,
+          nowMs: Date.now(),
+          refreshFailed,
+        })
+      : null;
+
+  const loadFeed = useCallback(async (signal: AbortSignal, inPlace: boolean) => {
+    // Beta 1 (returning user): a feed already on screen is refreshed in
+    // place. Replacing it with a full-screen spinner on every foreground
+    // made the whole field disappear and re-lay-out each time the app
+    // was reopened, and replaced a perfectly good feed with an error
+    // screen when the network happened to be down on resume.
+    if (!inPlace) setState({ kind: "loading" });
     // V2.3A field report: on a restrictive/blocking network (confirmed:
     // reproduced on a work Wi-Fi, absent on cellular), this request's
     // default 3-attempt/10s-each retry budget -- stacked on top of
@@ -219,6 +246,8 @@ export default function AttentionFieldScreen() {
     });
     switch (result.status) {
       case "success":
+        setLastSuccessAtMs(Date.now());
+        setRefreshFailed(false);
         setState(
           result.data.items.length > 0
             ? { kind: "loaded", response: result.data }
@@ -226,12 +255,20 @@ export default function AttentionFieldScreen() {
         );
         return;
       case "timeout":
+        if (inPlace) {
+          setRefreshFailed(true);
+          return;
+        }
         setState({ kind: "timeout" });
         return;
       case "aborted":
         // Screen unmounted or a new load superseded this one -- no state update.
         return;
       case "error":
+        if (inPlace) {
+          setRefreshFailed(true);
+          return;
+        }
         setState({ kind: "error", message: result.message });
         return;
     }
@@ -245,7 +282,8 @@ export default function AttentionFieldScreen() {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
-    loadFeed(controller.signal);
+    const shown = stateRef.current.kind;
+    loadFeed(controller.signal, shown === "loaded" || shown === "empty");
   }, [loadFeed]);
 
   useEffect(() => {
@@ -286,7 +324,15 @@ export default function AttentionFieldScreen() {
       const result = await fetchJson<OpportunitiesResponse>("/v1/opportunities", {
         signal: controller.signal,
       });
-      if (cancelled || result.status !== "success") return;
+      if (cancelled) return;
+      if (result.status !== "success") {
+        // Still quiet -- nothing on screen is replaced -- but no longer
+        // silent: the status line can now say the data is not current.
+        setRefreshFailed(true);
+        return;
+      }
+      setLastSuccessAtMs(Date.now());
+      setRefreshFailed(false);
       setState(
         result.data.items.length > 0
           ? { kind: "loaded", response: result.data }
@@ -317,7 +363,7 @@ export default function AttentionFieldScreen() {
       .map((item) => ({
         eventId: item.event_id,
         name: item.ticker ?? item.display_name,
-        confidencePct: Math.round(item.confidence_score * 100),
+        evidenceLabel: evidenceLabelFor(item.delivered_item) ?? "",
       }));
   }, [state, locallyReviewedIds]);
 
@@ -351,43 +397,40 @@ export default function AttentionFieldScreen() {
   // that event_id, not the whole batch openNotifications() above marks
   // reviewed. Same fire-and-forget reasoning as openNotifications: the
   // optimistic local clear already updated the UI.
-  const openNotificationCard = useCallback(
-    (eventId: string) => {
-      setPanelItems(null);
-      setOpenRequest({ eventId, token: Date.now() });
-      setLocallyReviewedIds((prev) => new Set(prev).add(eventId));
-      fetchJson("/v1/notifications/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_ids: [eventId] }),
-        retries: 0,
-      });
+  const openNotificationCard = useCallback((eventId: string) => {
+    setPanelItems(null);
+    setOpenRequest({ eventId, token: Date.now() });
+    setLocallyReviewedIds((prev) => new Set(prev).add(eventId));
+    fetchJson("/v1/notifications/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_ids: [eventId] }),
+      retries: 0,
+    });
 
-      // Behavioral-personalization foundation: notification-open is a
-      // distinct behavioral signal from notification-review above --
-      // review only clears badge/dedup state (untouched by this), while
-      // this records the truthful "tapped a notification to open it"
-      // interaction, for both a real push tap and an in-app dropdown tap
-      // (openNotificationCard is the single choke point for both -- see
-      // its own comment). Reuses the existing "click" InteractionType
-      // rather than adding a new one. Silently skipped if the item isn't
-      // in the currently-loaded feed (e.g. a stale/dev-only notification)
-      // -- there is no truthful entity_id/domain to attach otherwise.
-      const currentState = stateRef.current;
-      if (currentState.kind === "loaded") {
-        const item = currentState.response.items.find((i) => i.event_id === eventId);
-        if (item) {
-          recordInteraction({
-            eventId: item.event_id,
-            entityId: item.entity_id,
-            domain: item.domain as InteractionDomain,
-            interactionType: "click",
-          });
-        }
+    // Behavioral-personalization foundation: notification-open is a
+    // distinct behavioral signal from notification-review above --
+    // review only clears badge/dedup state (untouched by this), while
+    // this records the truthful "tapped a notification to open it"
+    // interaction, for both a real push tap and an in-app dropdown tap
+    // (openNotificationCard is the single choke point for both -- see
+    // its own comment). Reuses the existing "click" InteractionType
+    // rather than adding a new one. Silently skipped if the item isn't
+    // in the currently-loaded feed (e.g. a stale/dev-only notification)
+    // -- there is no truthful entity_id/domain to attach otherwise.
+    const currentState = stateRef.current;
+    if (currentState.kind === "loaded") {
+      const item = currentState.response.items.find((i) => i.event_id === eventId);
+      if (item) {
+        recordInteraction({
+          eventId: item.event_id,
+          entityId: item.entity_id,
+          domain: item.domain as InteractionDomain,
+          interactionType: "click",
+        });
       }
-    },
-    []
-  );
+    }
+  }, []);
 
   // Sprint 3.6.6F -- STRATUS Watch. Fire-and-forget: a denied permission or
   // failed registration must not block the rest of the app -- the in-app
@@ -397,7 +440,7 @@ export default function AttentionFieldScreen() {
   useEffect(() => {
     registerForPushNotificationsAsync().then((result) => {
       if (result.status !== "registered") {
-        console.log("[stratus-watch] push registration:", result.status);
+        if (__DEV__) console.log("[stratus-watch] push registration:", result.status);
       }
     });
   }, []);
@@ -515,8 +558,8 @@ export default function AttentionFieldScreen() {
               <>
                 <Text style={styles.errorTitle}>Unable to reach STRATUS</Text>
                 <Text style={styles.errorText}>
-                  Check your connection and try again. Some networks (for example, a
-                  restrictive work Wi-Fi) may block this connection.
+                  Check your connection and try again. Some networks (for example, a restrictive
+                  work Wi-Fi) may block this connection.
                 </Text>
               </>
             )}
@@ -555,7 +598,13 @@ export default function AttentionFieldScreen() {
 
       {state.kind === "empty" && (
         <View style={styles.centerFill}>
-          <View style={styles.error} accessibilityLiveRegion="polite">
+          {/* Beta 1: a quiet market is a normal state, not a failure. It
+              gets a neutral panel; the accent-bordered error treatment
+              is kept for a real provider outage only. */}
+          <View
+            style={state.providerDegraded ? styles.error : styles.quiet}
+            accessibilityLiveRegion="polite"
+          >
             {state.providerDegraded ? (
               // V2.3A.1 field reliability work: a real provider outage must
               // never present as "there's genuinely nothing here" -- that
@@ -564,20 +613,20 @@ export default function AttentionFieldScreen() {
               <>
                 <Text style={styles.errorTitle}>Live data temporarily unavailable</Text>
                 <Text style={styles.errorText}>
-                  STRATUS couldn&apos;t reach live market data this time. Your feed will
-                  return as soon as it&apos;s back.
+                  STRATUS couldn&apos;t reach live market data this time. Your feed will return as
+                  soon as it&apos;s back.
                 </Text>
               </>
             ) : (
               <>
-                <Text style={styles.errorTitle}>Nothing to show yet</Text>
+                <Text style={styles.errorTitle}>Nothing needs your attention right now</Text>
                 <Text style={styles.errorText}>
-                  No opportunities currently meet your attention threshold.
+                  STRATUS is still watching. This will update when something changes.
                 </Text>
               </>
             )}
             <PressableScale
-              style={styles.retryButton}
+              style={state.providerDegraded ? styles.retryButton : styles.quietButton}
               onPress={startLoad}
               accessibilityLabel="Refresh"
               accessibilityHint="Checks again for opportunities"
@@ -596,6 +645,24 @@ export default function AttentionFieldScreen() {
         // vessels clear of the control with zero changes to that (locked)
         // layout solver.
         <View style={styles.fieldColumn}>
+          {/* Beta 1 (returning user): one fixed-height line that says
+              what changed since the last look, or that the data could
+              not be refreshed, or that live data is partly unavailable.
+              Always rendered at the same height, so the field below
+              never moves when the status changes. */}
+          <View style={styles.statusRow} accessibilityLiveRegion="polite">
+            {!!feedStatus && (
+              <Text
+                style={[
+                  styles.statusText,
+                  feedStatus.tone === "notice" && { color: theme.warning },
+                ]}
+                numberOfLines={1}
+              >
+                {feedStatus.text}
+              </Text>
+            )}
+          </View>
           <AttentionField
             items={state.response.items}
             openRequest={openRequest}
@@ -715,13 +782,13 @@ export default function AttentionFieldScreen() {
                 style={styles.notifRow}
                 onPress={() => openNotificationCard(n.eventId)}
                 accessibilityRole="button"
-                accessibilityLabel={`${n.name}, ${n.confidencePct} percent confidence`}
+                accessibilityLabel={n.evidenceLabel ? `${n.name}, ${n.evidenceLabel}` : n.name}
                 accessibilityHint="Opens this opportunity's card"
               >
                 <Text style={styles.notifRowName} numberOfLines={1}>
                   {n.name}
                 </Text>
-                <Text style={styles.notifRowPct}>{n.confidencePct}%</Text>
+                <Text style={styles.notifRowPct}>{n.evidenceLabel}</Text>
               </Pressable>
             ))}
           </Pressable>
@@ -835,6 +902,35 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: 16,
     width: "100%",
+  },
+  // Beta 1: the quiet-market panel. Same geometry as `error`, without the
+  // accent border and tint that signal a problem.
+  quiet: {
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: 16,
+    width: "100%",
+  },
+  quietButton: {
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    marginTop: spacing.sm,
+  },
+  statusRow: {
+    height: 26,
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  statusText: {
+    color: theme.textSecondary,
+    fontFamily: font.body,
+    fontSize: 12.5,
+    textAlign: "center",
   },
   errorTitle: { color: theme.text, fontFamily: font.heading, marginBottom: 7 },
   errorText: { color: theme.textSecondary, fontFamily: font.body, lineHeight: 20, marginBottom: 4 },

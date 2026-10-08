@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "scheme": "loganmarket",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0B0D",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -22,6 +23,14 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0B0D",
+          "image": "./assets/images/stratus-app-icon.png",
+          "imageWidth": 120
+        }
+      ],
       "expo-font",
       "expo-notifications",
       "expo-secure-store",

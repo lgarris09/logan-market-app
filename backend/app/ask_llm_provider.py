@@ -183,8 +183,13 @@ def build_system_prompt(context: OpportunityContext) -> str:
         f"Why it matters: {context.why_it_matters}",
         f"Why it matters to this user: {context.why_it_matters_to_me}",
         f"Why now: {context.why_now}",
-        f"Confidence: {context.confidence_label} ({context.confidence_score:.2f}), "
-        f"classification={context.classification}",
+        # ADR-076: the label only. The underlying score is an internal
+        # evidence-strength measure, not a probability, and must never be
+        # relayed to a user as a percentage or likelihood.
+        f"Evidence strength: {context.confidence_label} "
+        f"(classification={context.classification}). This describes how well "
+        "supported the observation is, not the likelihood of any outcome -- "
+        "never express it as a percentage or probability.",
         "Limiting factors: " + ("; ".join(context.limiting_factors) or "none recorded"),
         "Alternative explanations: "
         + ("; ".join(context.alternatives) or "none recorded"),

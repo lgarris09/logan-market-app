@@ -18,7 +18,9 @@ telemetry has no relationship to the pipeline's own Orchestrator/lifecycle
 state at all.
 """
 
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -35,11 +37,23 @@ from .telemetry_models import (
 )
 from .telemetry_store import TelemetryStore
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from logan_core.contracts.model_version import EVIDENCE_MODEL_VERSION  # noqa: E402
+
 # Insertion-ordered (Python dict semantics) -- doubles as both the
 # idempotency index (a duplicate event_id is a no-op, see record_event) and
 # the in-memory read path every diagnostic function below scans.
 _events: dict[UUID, TelemetryEvent] = {}
 _store: Optional[TelemetryStore] = None
+
+# ADR-082: events read against one specific opportunity carry the evidence
+# model version in force when they were recorded.
+_MODEL_VERSIONED_EVENTS = frozenset(
+    {"opportunity_feedback_submitted", "ask_started", "ask_follow_up"}
+)
 
 _OPPORTUNITY_SCOPED_EVENT_NAMES = frozenset(
     {"opportunity_opened", "opportunity_returned_to", "watch_created", "watch_removed"}
@@ -146,6 +160,15 @@ def record_event(user_id: str, request: TelemetryEventRequest) -> TelemetryEvent
     event_name, opportunity_revision, context = _resolve_opportunity_promotion(
         user_id, request
     )
+    # ADR-082: the evidence model in force is a server fact. Stamped on the
+    # events that are read against a specific opportunity (feedback, Ask),
+    # overwriting anything a client sent.
+    if event_name in _MODEL_VERSIONED_EVENTS:
+        context = (context or TelemetryContext()).model_copy(
+            update={"model_version": EVIDENCE_MODEL_VERSION}
+        )
+    elif context is not None and context.model_version is not None:
+        context = context.model_copy(update={"model_version": None})
     event = TelemetryEvent(
         event_id=request.event_id,
         event_name=event_name,
@@ -177,6 +200,19 @@ def record_batch(
                 TelemetryBatchRejection(event_id=request.event_id, reason=str(exc))
             )
     return TelemetryEventBatchResponse(accepted_count=accepted, rejected=rejected)
+
+
+def purge_user(user_id: str) -> None:
+    """Account deletion (ADR-082): removes every telemetry event recorded
+    for `user_id`, in memory and in the durable store. Telemetry now carries
+    opportunity feedback, including an optional free-text note, so it is
+    user data like any other user-scoped store and leaves with the account.
+    """
+    store = _get_store()
+    for event_id in [eid for eid, ev in _events.items() if ev.user_id == user_id]:
+        del _events[event_id]
+    if store is not None:
+        store.delete_user(user_id)
 
 
 def reset_telemetry_state() -> None:

@@ -34,6 +34,7 @@ from .fmp import (
     PROFILE_CACHE_TTL_SECONDS,
     QUOTE_CACHE_TTL_SECONDS,
 )
+from .sec_edgar import SEC_FILINGS_CACHE_TTL_SECONDS
 
 FreshnessState = Literal[
     "FRESH", "RECENTLY_OBSERVED", "STALE_WITHIN_GRACE", "UNAVAILABLE"
@@ -66,6 +67,12 @@ SIGNAL_FRESHNESS_CONTRACTS: dict[str, FreshnessContract] = {
         "analyst_grade", GRADE_CACHE_TTL_SECONDS, 6 * 60 * 60
     ),
     "profile": FreshnessContract("profile", PROFILE_CACHE_TTL_SECONDS, 72 * 60 * 60),
+    # ADR-084: the SEC filings index. Fresh while within its cache
+    # lifetime; six hours of grace, as for analyst grades -- filings are
+    # infrequent and a few hours' lag does not change what one says.
+    "company_filing": FreshnessContract(
+        "company_filing", SEC_FILINGS_CACHE_TTL_SECONDS, 6 * 60 * 60
+    ),
     "benchmark_quote": FreshnessContract(
         "benchmark_quote", BENCHMARK_QUOTE_CACHE_TTL_SECONDS, 2 * 60 * 60
     ),

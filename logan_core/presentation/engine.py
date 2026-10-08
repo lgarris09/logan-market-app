@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
+from logan_core.conclusion_confidence.evidence_strength import evidence_label_for
 from logan_core.contracts import (
     ConclusionConfidence,
     DecisionTraceEntry,
@@ -62,6 +63,9 @@ class PresentationEngine:
             why_now=_URGENCY_BY_INTERRUPTION.get(prioritized_item.interruption, ""),
             confidence_label=confidence_label_for(confidence.confidence_score),
             confidence_score=confidence.confidence_score,
+            evidence_strength=confidence.evidence_strength,
+            evidence_label=evidence_label_for(confidence.evidence_strength),
+            evidence_conditions=list(confidence.evidence_conditions),
             personal_relevance_result=personal_relevance_result,
             required_disclaimers=policy_result.required_disclaimers,
             delivered_at=now,

@@ -9,6 +9,8 @@ from logan_core.contracts import (
     ReasoningResult,
 )
 
+from .evidence_strength import assess_evidence_strength
+
 
 class ConclusionConfidenceEngine:
     """Layer 9 — evaluates how strongly evidence supports the reasoning conclusion.
@@ -73,6 +75,16 @@ class ConclusionConfidenceEngine:
         if trust.contradiction_flag:
             limiting_factors.append("Contradicting signals exist for this event.")
 
+        # ADR-083: evidence strength from named conditions only -- never
+        # from confidence_score above. Freshness is not known at this
+        # layer; the feed re-assesses with it using the same function.
+        strength = assess_evidence_strength(
+            corroboration=trust.corroboration,
+            completeness=trust.completeness,
+            contradiction_flag=trust.contradiction_flag,
+            manipulation_risk=trust.manipulation_risk,
+        )
+
         now = datetime.now(timezone.utc)
         return ConclusionConfidence(
             event_id=reasoning.event_id,
@@ -80,6 +92,8 @@ class ConclusionConfidenceEngine:
             classification=classification,
             alternatives=alternatives,
             limiting_factors=limiting_factors,
+            evidence_strength=strength.strength,
+            evidence_conditions=list(strength.conditions),
             evaluated_at=now,
             decision_trace=[
                 DecisionTraceEntry(

@@ -31,6 +31,16 @@ import { shouldShowOverflowFade } from "../lib/cardOverflow";
 import { humanizeSignalType } from "../lib/signalType";
 import { LABEL_WIDTH_FRACTION, VesselLayout } from "../lib/attentionLayout";
 import { describeSinceLastLooked } from "../lib/sinceLastLooked";
+import {
+  describeTrajectory,
+  evidenceLabelFor,
+  evidenceLimitationsFor,
+  stratusTakeFor,
+  supportingSignalsFor,
+  whatChangedFor,
+  whyNowFor,
+} from "../lib/opportunityPresentation";
+import { OpportunityFeedback } from "./OpportunityFeedback";
 import { unwatchOpportunity, watchOpportunity } from "../lib/watch";
 import { FeedItem } from "../types/loganFeed";
 
@@ -491,8 +501,29 @@ export function Vessel({
   // why_it_matters is a template concatenation of why_it_matters_to_me and
   // what_happened server-side, so it's deliberately not used here; using it
   // would just repeat WHAT CHANGED below.
-  const stratusTake =
-    item.delivered_item.why_it_matters_to_me?.trim() || item.delivered_item.why_it_matters?.trim();
+  //
+  // Beta 1 information ownership: STRATUS TAKE is personal relevance only.
+  // When the backend has nothing personal to say the panel is omitted, not
+  // filled with the generic why_it_matters text (see stratusTakeFor).
+  const stratusTake = stratusTakeFor(item);
+  // Trajectory and evidence, worded identically on every surface (see
+  // lib/opportunityPresentation.ts). Both describe observed evidence --
+  // neither is a forecast or a probability.
+  const trajectory = describeTrajectory(item);
+  const trajectoryColor =
+    trajectory?.tone === "up"
+      ? theme.success
+      : trajectory?.tone === "down" || trajectory?.tone === "turn"
+        ? theme.warning
+        : theme.textSecondary;
+  const evidenceLabel = evidenceLabelFor(item.delivered_item);
+  const evidenceLimitations = evidenceLimitationsFor(item.delivered_item);
+  // WHAT CHANGED is the delta and WHY IT MATTERS NOW is timing; both
+  // come from lifecycle facts, and each is omitted when there is
+  // nothing real to say (see lib/opportunityPresentation.ts).
+  const whatChanged = whatChangedFor(item);
+  const whyNow = whyNowFor(item);
+  const supportingSignals = supportingSignalsFor(item);
   const lastUpdated = relativeTimeFrom(item.delivered_item.delivered_at);
   // V2.3D ("Since You Last Looked"): null for first_view and for an absent
   // summary (lifecycle tracking not active) -- see describeSinceLastLooked's
@@ -1045,41 +1076,6 @@ export function Vessel({
                     onContentSizeChange={(_, h) => setDetailContentH(h)}
                   >
                     <Animated.View style={detailStyle}>
-                      {/* STRATUS TAKE / WHY IT MATTERS NOW / WHAT CHANGED (V3.1.4.2
-                          brand pass): a "WATCH FOR" section -- 1-2 conditions that
-                          would strengthen/weaken this opportunity -- was requested
-                          too, but no field in the current DeliveredItem contract
-                          backs it (confirmed against logan_core's actual schema,
-                          not just the mobile type); omitted rather than fabricated.
-                          See the completion report for the closest existing hook
-                          (ConclusionConfidence.limiting_factors) that isn't wired
-                          into this response yet. */}
-                      {/* Opportunity Card redesign (owner rendering
-                          reference): section colors are now fixed per
-                          meaning (green=confidence/positive, orange=timing,
-                          blue=analytical), not the entity's domain color --
-                          "the card should not remain predominantly green
-                          simply because the current implementation uses a
-                          green domain border." STRATUS TAKE additionally
-                          gets a bordered hero-panel treatment (the other two
-                          stay plain/inline) to read as the primary
-                          intelligence panel. */}
-                      {!!stratusTake && (
-                        <View style={styles.takePanel}>
-                          <View style={styles.sectionHeaderRow}>
-                            <View
-                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
-                            >
-                              <Ionicons name="star-outline" size={13} color={theme.success} />
-                            </View>
-                            <Text style={[styles.sectionLabel, { color: theme.success }]}>
-                              STRATUS TAKE
-                            </Text>
-                          </View>
-                          <Text style={styles.sectionText}>{stratusTake}</Text>
-                        </View>
-                      )}
-
                       {/* V2.3D ("Since You Last Looked"): reuses STRATUS
                           TAKE's own bordered-panel treatment (same shape,
                           different color per tone) rather than inventing a
@@ -1124,21 +1120,7 @@ export function Vessel({
                         </View>
                       )}
 
-                      {!!item.delivered_item.why_now && (
-                        <View style={styles.section}>
-                          <View style={styles.sectionHeaderRow}>
-                            <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
-                              <Ionicons name="time-outline" size={13} color={theme.accent} />
-                            </View>
-                            <Text style={[styles.sectionLabel, { color: theme.accent }]}>
-                              WHY IT MATTERS NOW
-                            </Text>
-                          </View>
-                          <Text style={styles.sectionText}>{item.delivered_item.why_now}</Text>
-                        </View>
-                      )}
-
-                      {!!item.delivered_item.what_happened && (
+                      {!!whatChanged && (
                         <View style={styles.section}>
                           <View style={styles.sectionHeaderRow}>
                             <View style={[styles.sectionIconWrap, { borderColor: theme.info }]}>
@@ -1148,9 +1130,143 @@ export function Vessel({
                               WHAT CHANGED
                             </Text>
                           </View>
+                          <Text style={styles.sectionText}>{whatChanged}</Text>
+                        </View>
+                      )}
+
+                      {!!whyNow && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View style={[styles.sectionIconWrap, { borderColor: theme.accent }]}>
+                              <Ionicons name="time-outline" size={13} color={theme.accent} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.accent }]}>
+                              WHY IT MATTERS NOW
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{whyNow}</Text>
+                        </View>
+                      )}
+
+                      {/* Beta 1: trajectory and its reason, previously
+                          computed and sent but never shown. Omitted when
+                          lifecycle tracking is not active for this item. */}
+                      {!!trajectory && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View style={[styles.sectionIconWrap, { borderColor: trajectoryColor }]}>
+                              <Ionicons
+                                name={trajectory.icon as any}
+                                size={13}
+                                color={trajectoryColor}
+                              />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: trajectoryColor }]}>
+                              TRAJECTORY
+                            </Text>
+                          </View>
                           <Text style={styles.sectionText}>
-                            {item.delivered_item.what_happened}
+                            {trajectory.reason
+                              ? `${trajectory.label}. ${trajectory.reason}`
+                              : `${trajectory.label}.`}
                           </Text>
+                        </View>
+                      )}
+
+                      {/* Beta 1: evidence quality in the same words the
+                          feed uses, plus the one limiting factor STRATUS
+                          can state honestly today -- whether it could
+                          confirm how current the data is. */}
+                      {!!evidenceLabel && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[
+                                styles.sectionIconWrap,
+                                { borderColor: theme.textSecondary },
+                              ]}
+                            >
+                              <Ionicons
+                                name="layers-outline"
+                                size={13}
+                                color={theme.textSecondary}
+                              />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
+                              EVIDENCE
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>
+                            {[`${evidenceLabel}.`, ...evidenceLimitations].join(" ")}
+                          </Text>
+                        </View>
+                      )}
+
+                      {/* Several signal families are several kinds of
+                          evidence about the same company. They are not
+                          independent confirmation and are never called
+                          corroboration. Shown only when more than one
+                          family qualified. */}
+                      {!!supportingSignals && (
+                        <View style={styles.section}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[
+                                styles.sectionIconWrap,
+                                { borderColor: theme.textSecondary },
+                              ]}
+                            >
+                              <Ionicons
+                                name="git-branch-outline"
+                                size={13}
+                                color={theme.textSecondary}
+                              />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>
+                              SUPPORTING SIGNALS
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{supportingSignals.join(" · ")}</Text>
+                        </View>
+                      )}
+
+                      {/* Beta 1 detail order: what changed, why now, trajectory,
+                          evidence, supporting signals, then personal relevance.
+                          The objective story comes first; STRATUS TAKE keeps its
+                          own bordered panel so personal relevance never reads as
+                          objective evidence. */}
+                      {/* STRATUS TAKE / WHY IT MATTERS NOW / WHAT CHANGED (V3.1.4.2
+                          brand pass): a "WATCH FOR" section -- 1-2 conditions that
+                          would strengthen/weaken this opportunity -- was requested
+                          too, but no field in the current DeliveredItem contract
+                          backs it (confirmed against logan_core's actual schema,
+                          not just the mobile type); omitted rather than fabricated.
+                          See the completion report for the closest existing hook
+                          (ConclusionConfidence.limiting_factors) that isn't wired
+                          into this response yet. */}
+                      {/* Opportunity Card redesign (owner rendering
+                          reference): section colors are now fixed per
+                          meaning (green=confidence/positive, orange=timing,
+                          blue=analytical), not the entity's domain color --
+                          "the card should not remain predominantly green
+                          simply because the current implementation uses a
+                          green domain border." STRATUS TAKE additionally
+                          gets a bordered hero-panel treatment (the other two
+                          stay plain/inline) to read as the primary
+                          intelligence panel. */}
+                      {!!stratusTake && (
+                        <View style={styles.takePanel}>
+                          <View style={styles.sectionHeaderRow}>
+                            <View
+                              style={[styles.sectionIconWrap, { borderColor: theme.success }]}
+                            >
+                              <Ionicons name="star-outline" size={13} color={theme.success} />
+                            </View>
+                            <Text style={[styles.sectionLabel, { color: theme.success }]}>
+                              STRATUS TAKE
+                            </Text>
+                          </View>
+                          <Text style={styles.sectionText}>{stratusTake}</Text>
                         </View>
                       )}
 
@@ -1214,6 +1330,9 @@ export function Vessel({
                                 entityId: item.entity_id,
                                 displayName: item.display_name,
                                 domain: item.domain,
+                                ...(item.opportunity_revision != null
+                                  ? { revision: String(item.opportunity_revision) }
+                                  : {}),
                               },
                             })
                           }
@@ -1233,6 +1352,8 @@ export function Vessel({
                           />
                         </Pressable>
                       </View>
+
+                      <OpportunityFeedback item={item} />
 
                       {/* Opportunity Card redesign: footer metadata stays
                           visually quiet -- LAST UPDATED (+ RELATED SIGNALS
@@ -1492,6 +1613,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: spacing.md,
     paddingVertical: 9,
+    // Beta 1: a comfortable touch target for Watch and Ask.
+    minHeight: 44,
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
   },

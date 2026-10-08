@@ -72,8 +72,7 @@ export default function DemoScreen() {
           <View style={styles.detailsCard}>
             <Text style={styles.detailsLabel}>CONCLUSION CONFIDENCE</Text>
             <Text style={styles.detailsText}>
-              {result.confidence.classification} ·{" "}
-              {Math.round(result.confidence.confidence_score * 100)}%
+              {result.confidence.classification}
             </Text>
             {result.confidence.limiting_factors.map((factor) => (
               <Text key={factor} style={styles.detailsSubtext}>

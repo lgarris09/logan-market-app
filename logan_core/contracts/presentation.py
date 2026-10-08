@@ -18,6 +18,15 @@ class DeliveredItem(BaseModel):
     why_now: str
     confidence_label: Literal["High", "Moderate", "Low", "Speculative"]
     confidence_score: float = Field(ge=0.0, le=1.0)
+    # ADR-083: the condition-based evidence strength and its user-facing
+    # label ("Strong evidence", "Supported evidence", "Limited evidence",
+    # "Conflicting evidence"), plus the named conditions behind it. This
+    # is what every surface shows. `confidence_label` above is the older
+    # score-threshold label, kept on the contract only so builds that
+    # predate ADR-083 keep parsing; nothing new should display it.
+    evidence_strength: Optional[str] = None
+    evidence_label: Optional[str] = None
+    evidence_conditions: list[str] = Field(default_factory=list)
     # V2.3B Phase 2 (Learning-Driven STRATUS) Block 5 -- the structured
     # "why this matters to you" basis behind why_it_matters_to_me above.
     # Optional/None only for a pre-Phase-2 direct construction that doesn't

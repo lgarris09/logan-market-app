@@ -17,6 +17,11 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from logan_core.community_intelligence import EngagementSample  # noqa: E402
+from logan_core.conclusion_confidence.evidence_strength import (  # noqa: E402
+    FRESHNESS_NOT_EVALUATED,
+    assess_evidence_strength,
+    evidence_label_for,
+)
 from logan_core.contracts import (  # noqa: E402
     LOCAL_FOUNDER_USER_ID,
     DeliveredItem,
@@ -35,6 +40,7 @@ from logan_core.contracts import (  # noqa: E402
     ThesisMetadata,
     UserModel,
 )
+from logan_core.contracts.model_version import EVIDENCE_MODEL_VERSION  # noqa: E402
 from logan_core.convergence import StockConvergenceTracker  # noqa: E402
 from logan_core.exploration import (  # noqa: E402
     apply_exploration_placement,
@@ -46,9 +52,14 @@ from logan_core.opportunity_lifecycle import (  # noqa: E402
     OpportunityLifecycleTracker,
     SinceLastLookedSummary,
     UserOpportunityKnowledge,
+    build_ledger_decision,
+    build_notification_candidate,
     compute_since_last_looked,
     compute_user_sync_delta,
     decide_notification,
+)
+from logan_core.opportunity_lifecycle.notification_gate import (  # noqa: E402
+    FRESHNESS_NOT_CHECKED,
 )
 from logan_core.orchestrator import Orchestrator, PipelineDependencies  # noqa: E402
 from logan_core.receptors import (  # noqa: E402
@@ -58,6 +69,7 @@ from logan_core.receptors import (  # noqa: E402
     simulated_fixtures,
     tesla_ai_partnership_corroboration,
 )
+from logan_core.receptors.company_filings import filing_to_raw_signal  # noqa: E402
 from logan_core.receptors.providers import (  # noqa: E402
     EARNINGS_CACHE_TTL_SECONDS,
     EARNINGS_STALE_GRACE_SECONDS,
@@ -67,17 +79,34 @@ from logan_core.receptors.providers import (  # noqa: E402
     ProviderScheduler,
     ProviderSchedulerSaturatedError,
     classify_freshness,
+    fmp_last_successful_fetch_age_seconds,
     seed_earnings_from_durable_observation,
     signal_family_contract,
 )
+from logan_core.receptors.providers.sec_edgar import (  # noqa: E402
+    SecEdgarFilingsProvider,
+    SecProviderError,
+    recent_window,
+)
 from logan_core.thesis import apply_diversity_caps, classify_market_driver  # noqa: E402
 from logan_core.thesis.diversity import DiversityResult, ThesisCandidate  # noqa: E402
-from logan_core.thesis.market_driver import primary_signal_family  # noqa: E402
+from logan_core.thesis.market_driver import (  # noqa: E402
+    primary_signal_family,
+    secondary_signal_families,
+)
 from logan_core.trigger_detection import (  # noqa: E402
     StocksTriggerEvaluator,
     evaluate_analyst_grade_condition,
     evaluate_earnings_beat_condition,
     evaluate_price_move_condition,
+)
+from logan_core.trigger_detection.filings import (  # noqa: E402
+    FILING_MAX_AGE_AT_DETECTION,
+    qualify_filing,
+)
+from logan_core.trigger_detection.stocks import (  # noqa: E402
+    assess_eps_comparability,
+    eps_surprise_is_comparable,
 )
 from logan_core.user_model import UserModelBuilder  # noqa: E402
 
@@ -89,17 +118,28 @@ from .ask_context import (  # noqa: E402
 from .ask_llm_provider import ConversationTurn  # noqa: E402
 from .config import (  # noqa: E402
     earnings_cache_store_db_path,
+    eps_comparability_gate_enabled,
     lifecycle_store_db_path,
     live_data_only_mode,
     live_stock_tickers,
     memory_persistence_enabled,
     memory_store_db_path,
+    notification_ledger_retention_days,
+    notification_ledger_store_db_path,
+    notifications_paused,
     revision_store_db_path,
+    sec_filing_catalysts_enabled,
+    sec_user_agent,
     user_knowledge_store_db_path,
 )
+from .earned_notification_inputs import build_earned_notification_inputs  # noqa: E402
 from .earnings_cache_store import EarningsCacheStore  # noqa: E402
 from .entity_registry import resolve  # noqa: E402
 from .lifecycle_store import LifecycleStore  # noqa: E402
+from .notification_ledger_store import (  # noqa: E402
+    NotificationLedgerStore,
+    candidate_id_for,
+)
 from .revision_store import OpportunityRevisionStore  # noqa: E402
 from .universe_operational_observations import (  # noqa: E402
     record_freshness_ratio_observation,
@@ -240,6 +280,12 @@ _earnings_cache_store: EarningsCacheStore | None = None
 _revision_store: OpportunityRevisionStore | None = None
 _user_knowledge_store: UserKnowledgeStore | None = None
 _user_knowledge_cache: dict[tuple[str, str], UserOpportunityKnowledge] = {}
+# STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): same
+# construction/gating discipline as _revision_store/_user_knowledge_store
+# immediately above -- None unless memory_persistence_enabled(). Shadow-
+# mode only: see notification_ledger_store.py's own docstring for the full
+# scope. Never read by any send/suppress decision anywhere in this file.
+_notification_ledger_store: NotificationLedgerStore | None = None
 # STRATUS 3.6.12 reliability correction: a dedicated ProviderScheduler
 # instance for this live-feed path only -- deliberately its own instance,
 # never shared with universe_manager.py's reevaluation-path scheduler or its
@@ -556,12 +602,14 @@ def _get_orchestrator() -> Orchestrator:
             # -- see lifecycle_store.py.
             global _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
             global _revision_store, _user_knowledge_store, _user_knowledge_cache
+            global _notification_ledger_store
             _lifecycle_tracker = None
             _lifecycle_store = None
             _earnings_cache_store = None
             _revision_store = None
             _user_knowledge_store = None
             _user_knowledge_cache = {}
+            _notification_ledger_store = None
             if live_stock_tickers():
                 _lifecycle_tracker = OpportunityLifecycleTracker()
                 if memory_persistence_enabled():
@@ -583,6 +631,21 @@ def _get_orchestrator() -> Orchestrator:
                         _user_knowledge_cache[
                             (knowledge.user_id, knowledge.entity_id)
                         ] = knowledge
+                    # STRATUS 3.6.12 (Notification Candidate + Decision
+                    # Ledger V1): gated identically -- a notification
+                    # candidate is meaningless without an active lifecycle
+                    # tracker to evaluate a decision against. Shadow-mode
+                    # only; see notification_ledger_store.py's own
+                    # docstring.
+                    _notification_ledger_store = NotificationLedgerStore(
+                        notification_ledger_store_db_path()
+                    )
+                    # ADR-081: bounded retention, applied at startup and
+                    # then at most once a day from the recording path.
+                    _notification_ledger_store.maybe_purge(
+                        datetime.now(timezone.utc),
+                        notification_ledger_retention_days(),
+                    )
                     # V2.3A.1 field reliability work: durable last-successful-
                     # earnings-observation store, gated identically to
                     # _lifecycle_store above (its own docstring has the full
@@ -636,7 +699,9 @@ def _get_orchestrator() -> Orchestrator:
 
             deps = (
                 PipelineDependencies(
-                    trigger_detector=StocksTriggerEvaluator(),
+                    trigger_detector=StocksTriggerEvaluator(
+                        eps_comparability_gate=eps_comparability_gate_enabled()
+                    ),
                     convergence_tracker=StockConvergenceTracker(),
                     lifecycle_tracker=_lifecycle_tracker,
                     memory_store=memory_store,
@@ -646,6 +711,15 @@ def _get_orchestrator() -> Orchestrator:
             )
             _orchestrator = Orchestrator(deps=deps)
         return _orchestrator
+
+
+def get_notification_ledger_store() -> Optional[NotificationLedgerStore]:
+    """STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): a
+    public read accessor for the developer report route
+    (notification_ledger_report.py / GET /v1/dev/notification-ledger) --
+    None whenever persistence or lifecycle tracking isn't active for this
+    process, exactly mirroring every other store's same gating."""
+    return _notification_ledger_store
 
 
 def _get_live_provider_scheduler() -> ProviderScheduler:
@@ -981,12 +1055,28 @@ def _live_earnings_raw_signal(
         )
         return None, False
 
+    raw_signal = earnings_report_to_raw_signal(report)
+    if eps_comparability_gate_enabled():
+        # ADR-079: the same gate the trigger evaluator applies, checked here
+        # so an unproven comparison never substitutes a signal that would
+        # then surface without a qualifying trigger. Not a provider failure
+        # -- an honest "STRATUS cannot make this comparison".
+        assessment = assess_eps_comparability(raw_signal, ticker)
+        if not eps_surprise_is_comparable(assessment):
+            print(
+                f"[live-stocks] {ticker}: real report fetched but the EPS "
+                f"comparison is not established ({assessment.state}: "
+                f"{', '.join(assessment.reason_codes)}), no earnings-surprise "
+                f"signal; {fallback_note}"
+            )
+            return None, False
+
     print(
         f"[live-stocks] {ticker}: using real FMP earnings report dated "
         f"{report.report_timestamp.date()} (source={report.source_id}, "
         f"beat_pct={beat_pct:.2f})"
     )
-    return earnings_report_to_raw_signal(report), False
+    return raw_signal, False
 
 
 def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
@@ -1038,6 +1128,82 @@ def _live_price_move_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
         f"(source={quote.source_id}, change_pct={change_pct:.2f})"
     )
     return quote_to_raw_signal(quote)
+
+
+_sec_filings_provider: SecEdgarFilingsProvider | None = None
+_sec_filings_provider_lock = threading.Lock()
+
+
+def _get_sec_filings_provider() -> SecEdgarFilingsProvider | None:
+    """One process-wide provider (its cache and pacing clock are per
+    instance). None when the path is off or no User-Agent is configured --
+    in which case no request to the SEC is ever made."""
+    global _sec_filings_provider
+    if not sec_filing_catalysts_enabled():
+        return None
+    with _sec_filings_provider_lock:
+        if _sec_filings_provider is None:
+            try:
+                _sec_filings_provider = SecEdgarFilingsProvider(
+                    user_agent=sec_user_agent()
+                )
+            except SecProviderError as exc:
+                print(f"[live-stocks] company-filing catalysts unavailable: {exc}")
+                return None
+        return _sec_filings_provider
+
+
+def sec_filings_last_successful_fetch_age_seconds(ticker: str) -> float | None:
+    provider = _sec_filings_provider
+    return (
+        None if provider is None else provider.last_successful_fetch_age_seconds(ticker)
+    )
+
+
+def _live_company_filing_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
+    """ADR-084: the most recent SEC Form 8-K for `ticker` on which a
+    governed rule validly fires, as an *additional* raw signal alongside
+    earnings / price / analyst -- never a replacement, and None on any
+    provider failure or when nothing qualifies. One filing per company per
+    poll: the newest qualified one. Older qualified filings inside the
+    window are not separate opportunities.
+
+    Every filing looked at is logged with its governed state and reason
+    codes, so "why did this 8-K not surface" is answerable from the log.
+    """
+    provider = _get_sec_filings_provider()
+    if provider is None:
+        return None
+    try:
+        filings = provider.fetch_recent_filings(ticker)
+    except SecProviderError as exc:
+        print(f"[live-stocks] {ticker}: SEC filings unavailable, skipping: {exc}")
+        return None
+
+    for filing in recent_window(filings, now, FILING_MAX_AGE_AT_DETECTION.days):
+        qualification = qualify_filing(
+            form=filing.form,
+            items=filing.items,
+            accession_number=filing.accession_number,
+            accepted_at=filing.accepted_at,
+            now=now,
+            source_id=filing.source_id,
+            expected_issuer=ticker,
+            filing_issuer=filing.issuer_ticker,
+        )
+        if qualification.is_qualified:
+            print(
+                f"[live-stocks] {ticker}: using SEC {filing.form} "
+                f"{filing.accession_number} (items={filing.items}, "
+                f"primary={qualification.primary_item})"
+            )
+            return filing_to_raw_signal(filing, qualification)
+        print(
+            f"[live-stocks] {ticker}: SEC {filing.form} {filing.accession_number} "
+            f"not surfaced ({qualification.state}: "
+            f"{', '.join(qualification.reason_codes)})"
+        )
+    return None
 
 
 def _live_analyst_grade_raw_signal(ticker: str, now: datetime) -> RawSignal | None:
@@ -1208,7 +1374,10 @@ def reset_pipeline_state() -> None:
     """
     global _orchestrator, _lifecycle_tracker, _lifecycle_store, _earnings_cache_store
     global _revision_store, _user_knowledge_store, _user_knowledge_cache
-    global _live_provider_scheduler
+    global _live_provider_scheduler, _notification_ledger_store
+    global _sec_filings_provider
+
+    _sec_filings_provider = None
     with _state_lock:
         if _orchestrator is not None:
             # Sprint 3.6.7 Block 3: releases the SQLite connection cleanly
@@ -1226,6 +1395,8 @@ def reset_pipeline_state() -> None:
             _revision_store.close()
         if _user_knowledge_store is not None:
             _user_knowledge_store.close()
+        if _notification_ledger_store is not None:
+            _notification_ledger_store.close()
         _orchestrator = None
         _lifecycle_tracker = None
         _lifecycle_store = None
@@ -1234,6 +1405,7 @@ def reset_pipeline_state() -> None:
         _user_knowledge_store = None
         _user_knowledge_cache = {}
         _live_provider_scheduler = None
+        _notification_ledger_store = None
         _baseline_established.clear()
         _user_models.clear()
         _opportunity_context_caches.clear()
@@ -1264,6 +1436,8 @@ def purge_user(user_id: str) -> None:
             _user_knowledge_store.delete_user(user_id)
         for key in [k for k in _user_knowledge_cache if k[0] == user_id]:
             del _user_knowledge_cache[key]
+        if _notification_ledger_store is not None:
+            _notification_ledger_store.delete_user(user_id)
         _baseline_established.discard(user_id)
         _user_models.pop(user_id, None)
         _opportunity_context_caches.pop(user_id, None)
@@ -1626,6 +1800,14 @@ class FeedItem(BaseModel):
     # intent, not current live-data availability.
     is_watched: bool = False
 
+    # ADR-083 (Beta 1). The signal families whose triggers qualified for
+    # this opportunity, primary first ("earnings", "analyst_grade",
+    # "price") -- real trigger-derived data, the same values the
+    # diversity pass already uses. More than one family means several
+    # evidence dimensions support the opportunity; it does not mean
+    # independent corroboration, which is a separate condition.
+    signal_families: list[str] = []
+
     # Universe Manager V1a Plan-Conformance Closeout, Item 1 (Runtime
     # Freshness Integration) -- FRESH/RECENTLY_OBSERVED/STALE_WITHIN_GRACE/
     # UNAVAILABLE (logan_core/receptors/providers/freshness.py), computed
@@ -1847,6 +2029,10 @@ def _run_feed_pipeline(
         live_grade_signal = _live_analyst_grade_raw_signal(ticker, now)
         if live_grade_signal is not None:
             signals_this_ticker.append(live_grade_signal)
+
+        live_filing_signal = _live_company_filing_raw_signal(ticker, now)
+        if live_filing_signal is not None:
+            signals_this_ticker.append(live_filing_signal)
 
         if signals_this_ticker:
             live_signals_by_ticker[ticker] = signals_this_ticker
@@ -2189,6 +2375,14 @@ def _run_feed_pipeline(
             "earnings_signal": "earnings",
             "price_change": "quote",
             "analyst_change": "analyst_grade",
+            "company_filing": "company_filing",
+        }
+        # The FmpResponseCache endpoint each freshness family is fetched
+        # through (see FmpEarningsProvider / FmpMarketDataProvider).
+        _FRESHNESS_FAMILY_TO_FMP_ENDPOINT = {
+            "earnings": "earnings",
+            "quote": "quote",
+            "analyst_grade": "grades",
         }
         result_by_event_id = {r.event.event_id: r for _, r in results}
         item_by_event_id = {item.event_id: item for item in items}
@@ -2197,27 +2391,60 @@ def _run_feed_pipeline(
         for item in items:
             r = result_by_event_id[item.event_id]
 
-            # Item 1 (Runtime Freshness Integration): classified from this
-            # item's own primary signal's real captured_at age against that
+            # Item 1 (Runtime Freshness Integration): classified against that
             # signal family's existing TTL/grace contract (freshness.py) --
             # never a second, independently-invented freshness concept.
             # Provider degradation is checked first and takes priority over
-            # a merely-aged signal -- distinct from "no qualifying
+            # a merely-aged fetch -- distinct from "no qualifying
             # opportunity" (a healthy, empty result never reaches this
             # per-item loop at all).
+            #
+            # Freshness clock (ADR-075, decided 2026-10-05): the age of
+            # STRATUS's latest successful fetch of this evidence, never the
+            # age of the market event itself. A live signal's `captured_at`
+            # is the provider's event time (the earnings report date, the
+            # quote timestamp, the grade date) -- event age is owned by
+            # lifecycle aging and EvidenceTrust's recency score, and
+            # comparing it to a cache lifetime marked every thesis older
+            # than ~30 hours UNAVAILABLE however recently it was fetched.
+            #   - live-substituted entity: the shared FMP cache's own
+            #     last-successful-fetch age for this family's endpoint. No
+            #     fetch record at all means STRATUS cannot show when it last
+            #     observed this evidence -> UNAVAILABLE (fail closed), and
+            #     no ratio is recorded.
+            #   - simulated entity: its signal is captured this poll, so
+            #     `captured_at` already is the observation time (unchanged).
             family = _SIGNAL_TYPE_TO_FRESHNESS_FAMILY.get(
                 r.normalized_signals[0].signal_type
             )
             if family is not None:
+                fetch_age_seconds: float | None
+                if family == "company_filing":
+                    # ADR-084: the SEC index has its own fetch record.
+                    fetch_age_seconds = sec_filings_last_successful_fetch_age_seconds(
+                        item.entity_id
+                    )
+                elif item.entity_id in live_substituted:
+                    fetch_age_seconds = fmp_last_successful_fetch_age_seconds(
+                        _FRESHNESS_FAMILY_TO_FMP_ENDPOINT[family], item.entity_id
+                    )
+                else:
+                    fetch_age_seconds = max(
+                        (now - r.normalized_signals[0].captured_at).total_seconds(),
+                        0.0,
+                    )
                 if family == "earnings" and ticker_provider_failed.get(
                     item.entity_id, False
                 ):
                     item.freshness_state = "UNAVAILABLE"
-                else:
-                    age_seconds = max(
-                        (now - r.normalized_signals[0].captured_at).total_seconds(),
-                        0.0,
+                elif fetch_age_seconds is None:
+                    item.freshness_state = classify_freshness(
+                        has_value=False,
+                        age_seconds=None,
+                        contract=signal_family_contract(family),
                     )
+                else:
+                    age_seconds = fetch_age_seconds
                     contract = signal_family_contract(family)
                     item.freshness_state = classify_freshness(
                         has_value=True,
@@ -2240,6 +2467,38 @@ def _run_feed_pipeline(
             # (a demo/simulated signal type outside the three live stock
             # families) -- item.freshness_state stays the honest None
             # default, never a fabricated state.
+
+            # ADR-083: evidence strength, re-assessed here with the one
+            # condition the confidence layer cannot know -- runtime
+            # freshness -- using the same pure function and the same
+            # named conditions. No freshness contract for this signal
+            # type (family is None) is "not evaluated", distinct from a
+            # state that was evaluated and could not be established.
+            strength = assess_evidence_strength(
+                corroboration=r.trust.corroboration,
+                completeness=r.trust.completeness,
+                contradiction_flag=r.trust.contradiction_flag,
+                manipulation_risk=r.trust.manipulation_risk,
+                freshness_state=(
+                    item.freshness_state
+                    if family is not None
+                    else FRESHNESS_NOT_EVALUATED
+                ),
+            )
+            item.delivered_item = item.delivered_item.model_copy(
+                update={
+                    "evidence_strength": strength.strength,
+                    "evidence_label": evidence_label_for(strength.strength),
+                    "evidence_conditions": list(strength.conditions),
+                }
+            )
+            item_trigger_codes = sorted(
+                {t.trigger_code for t in r.event.trigger_events}
+            )
+            primary = primary_signal_family(item_trigger_codes)
+            item.signal_families = ([primary] if primary else []) + (
+                secondary_signal_families(item_trigger_codes)
+            )
 
             # V1a Final Proof-Readiness Closeout: the approved evidence-
             # completeness definition, computed from this item's own
@@ -2372,14 +2631,43 @@ def _run_feed_pipeline(
         # suppressed, and why) is recorded in _notification_decisions_cache
         # purely for observability/testing -- never itself a gate on
         # anything.
+        #
+        # ADR-080 (fail closed): an interruption is suppressed, never
+        # guessed, when the operator pause is on, when this entity's
+        # freshness cannot be established or is known stale, or when -- in
+        # live-data-only mode -- there is no revision to attribute the send
+        # to. The feed itself is unaffected by any of these.
         alert_event_ids = []
         notification_decisions: list[NotificationDecision] = []
+        paused = notifications_paused()
+        live_only = live_data_only_mode()
         for entity_id, r in results:
             if r.prioritized_item.interruption != "alert":
                 continue
             if r.lifecycle_delta is None:
+                if paused or live_only:
+                    unattributable = NotificationDecision(
+                        entity_id=entity_id,
+                        user_id=user_id,
+                        should_notify=False,
+                        reason=(
+                            "beta_notifications_paused"
+                            if paused
+                            else "revision_unattributable_suppressed"
+                        ),
+                        evaluated_at=now,
+                    )
+                    notification_decisions.append(unattributable)
+                    print(
+                        f"[notifications] {user_id}/{entity_id}: "
+                        f"{unattributable.reason} (should_notify=False, "
+                        "revision=None)"
+                    )
+                    continue
                 alert_event_ids.append(r.event.event_id)
                 continue
+            alert_item = item_by_event_id.get(r.event.event_id)
+            item_freshness = alert_item.freshness_state if alert_item else None
             decision = decide_notification(
                 entity_id=entity_id,
                 user_id=user_id,
@@ -2389,6 +2677,15 @@ def _run_feed_pipeline(
                 knowledge=_get_user_knowledge(user_id, entity_id),
                 provider_degraded=ticker_provider_failed.get(entity_id, False),
                 now=now,
+                notifications_paused=paused,
+                # Simulated (demo-mode) entities outside the live families
+                # have no freshness contract; the rule applies wherever a
+                # state exists, and always in live-data-only mode.
+                freshness_state=(
+                    item_freshness
+                    if (live_only or item_freshness is not None)
+                    else FRESHNESS_NOT_CHECKED
+                ),
             )
             notification_decisions.append(decision)
             print(
@@ -2416,6 +2713,98 @@ def _run_feed_pipeline(
             freshness_states=[item.freshness_state for item in items],
             thesis_completeness=thesis_completeness,
         )
+
+        # STRATUS 3.6.12 (Notification Candidate + Decision Ledger V1): pure
+        # observation of this poll's own already-computed decision-time
+        # facts -- mirrors record_pipeline_observation()'s own "recorded
+        # after everything above is finished, never influences items/
+        # alert_event_ids, a recording failure can never affect this
+        # response" discipline exactly. Scoped to lifecycle-tracked entities
+        # only (r.lifecycle_delta is not None) -- the identical set
+        # decide_notification() already evaluates in production above; a
+        # demo/simulated entity has no real revision concept to record a
+        # notification decision against. Shadow-mode: written to
+        # notification_ledger_store.py only, never read by any send/
+        # suppress path anywhere in this codebase.
+        if _notification_ledger_store is not None:
+            decision_by_entity_id = {d.entity_id: d for d in notification_decisions}
+            for entity_id, r in results:
+                if r.lifecycle_delta is None:
+                    continue
+                try:
+                    item = item_by_event_id[r.event.event_id]
+                    in_cooldown = (
+                        r.prioritized_item.cooldown_until is not None
+                        and not r.prioritized_item.changed_since_view
+                    )
+                    ledger_candidate = build_notification_candidate(
+                        candidate_id=candidate_id_for(
+                            user_id,
+                            r.event.event_id,
+                            r.lifecycle_delta.new_revision,
+                        ),
+                        event_id=r.event.event_id,
+                        user_id=user_id,
+                        entity_id=entity_id,
+                        ticker=item.ticker,
+                        signal_family=item.signal_type,
+                        now=now,
+                        source_captured_at=(
+                            r.normalized_signals[0].captured_at
+                            if r.normalized_signals
+                            else None
+                        ),
+                        is_watched=is_watched(user_id, entity_id),
+                        watch_route=r.policy_result.watch_route,
+                        communication_mode=r.policy_result.communication_mode,
+                        personal_relevance=(
+                            r.recommendation.dimensions.personal_relevance
+                        ),
+                        connection_strength=(
+                            r.recommendation.dimensions.connection_strength
+                        ),
+                        visibility=r.prioritized_item.visibility,
+                        interruption=r.prioritized_item.interruption,
+                        in_cooldown=in_cooldown,
+                        domain_fatigued=r.prioritized_item.domain_fatigued,
+                        thesis_revision=r.lifecycle_delta.new_revision,
+                        is_notification_worthy=(
+                            r.lifecycle_delta.is_notification_worthy
+                        ),
+                        change_type=r.lifecycle_delta.change_type,
+                        knowledge=_get_user_knowledge(user_id, entity_id),
+                        confidence_score=r.confidence.confidence_score,
+                        classification=r.confidence.classification,
+                        provider_degraded=ticker_provider_failed.get(entity_id, False),
+                        freshness_state=item.freshness_state,
+                        market_evidence=item.evidence,
+                        earned_notification_inputs=(
+                            build_earned_notification_inputs(r)
+                        ),
+                        model_version=EVIDENCE_MODEL_VERSION,
+                        trigger_codes=list(r.lifecycle_delta.new_trigger_codes),
+                    )
+                    ledger_decision = build_ledger_decision(
+                        decision_id=uuid4(),
+                        candidate=ledger_candidate,
+                        policy_permitted=r.policy_result.permitted,
+                        now=now,
+                        material_delta_decision=decision_by_entity_id.get(entity_id),
+                    )
+                    _notification_ledger_store.maybe_purge(
+                        now, notification_ledger_retention_days()
+                    )
+                    _notification_ledger_store.save_candidate(ledger_candidate)
+                    _notification_ledger_store.save_decision(
+                        ledger_decision,
+                        thesis_revision=r.lifecycle_delta.new_revision,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- shadow
+                    # instrumentation must never affect the real response.
+                    print(
+                        f"[notification-ledger] recording failed for "
+                        f"{user_id}/{entity_id}, skipping: {exc}"
+                    )
 
     return items, now, alert_event_ids, provider_degraded
 

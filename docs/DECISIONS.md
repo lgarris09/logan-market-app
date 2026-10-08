@@ -3569,6 +3569,109 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   real-data mapping and are explicitly listed as blocked (`universe_telemetry.BLOCKED_METRICS`,
   `expansion_review.UNCONFIRMED_REQUIRED_FIELDS`) rather than guessed at.
 
+---
+
+## ADR-071: Notification Candidate + Decision Ledger V1 (shadow-mode Earned Interruption foundation)
+
+- Date: 2026-09-10
+- Status: Accepted — **instrumentation/decision-provenance only; does not change any real notification
+  behavior, threshold, or policy**. Note on numbering: ADRs 71 and later were not recorded for several
+  intervening blocks (Operational Beta Hardening Blocks 1-8, Universe Manager V1a Commits 1-6, Attention
+  Field/Consumer Learning Controls, the two STRATUS 3.6.12 reliability corrections) — this entry does not
+  claim those are ADR-070's direct successor in time, only in sequence number; backfilling the gap is a
+  separate, future documentation task, not attempted here.
+- Context: an overnight autonomous block (explicitly authorized: implement/test/document/commit without
+  stopping for routine decisions, no deploy/push/merge) asked for a durable, user-scoped record of every
+  notification *candidate* STRATUS evaluates and the real SEND/SUPPRESS decision + reason for each — so a
+  question like "why has STRATUS only ever sent Logan one push notification" is answerable from data, not
+  anecdote, before any future Earned Interruption policy is built. The core instruction was explicit that
+  this must never become a second, competing notification-policy: no new composite score, no invented
+  production thresholds, additive/shadow-only where "richer" dimensions are evaluated.
+- Decision:
+  1. **Reuse over invention.** Before designing anything, found that Operational Beta Hardening Block 8
+     had already built exactly the "richer future notification dimensions" input this block needed:
+     `EarnedNotificationInputs` (`logan_core/contracts/policy.py`) + `build_earned_notification_inputs()`
+     (`backend/app/earned_notification_inputs.py`), computed from real pipeline fields
+     (`EvidenceTrust.trust_score`, `Dimensions.urgency`, `PersonalRelevanceResult`) but never wired into
+     any decision. The ledger embeds this contract wholesale rather than re-deriving credible-evidence/
+     time-sensitivity proxies of its own.
+  2. **Two small, additive contract fields**, both values already computed internally but never exposed:
+     `PolicyResult.watch_route` (`logan_core/contracts/policy.py`, populated by
+     `PolicyEngine.evaluate()`) and `PrioritizedItem.domain_fatigued` (`logan_core/contracts/
+     prioritization.py`, populated by `PrioritizationEngine.prioritize()`). Both default to their honest
+     off-state for any pre-existing direct construction — byte-identical for every existing caller/test
+     (confirmed: full logan_core suite unchanged). `in_cooldown` needed no new field at all — it's already
+     exactly `cooldown_until is not None and not changed_since_view`, both pre-existing fields.
+  3. **Real decision model, never invented policy**
+     (`logan_core/opportunity_lifecycle/notification_ledger.py::determine_ledger_outcome()`): reuses
+     `notification_gate.decide_notification()`'s own verdict/reason whenever production actually reaches
+     it (`interruption == "alert"`); for every other case, derives the suppression reason directly from
+     the exact booleans that already decided `interruption != "alert"` in
+     `PrioritizationEngine.prioritize()` (`policy_suppressed`, `view_cooldown_active`,
+     `interruption_budget_exhausted`, `insufficient_personal_relevance_or_urgency`) — never a second,
+     independent evaluation of any threshold.
+  4. **Shadow evaluation** (`evaluate_shadow()`): the five Earned-Interruption dimensions (material delta,
+     credible evidence, personal relevance, time sensitivity, interruption budget), recorded
+     independently, never collapsed into one score. Three dimensions mirror a real existing gate exactly
+     (material_delta, personal_relevance via `watch_route`, interruption_budget via
+     `domain_fatigued`/`in_cooldown`). The two with no current production gate (credible_evidence,
+     time_sensitivity) reuse `EarnedNotificationInputs`' own fields, thresholded against PolicyEngine's
+     *existing* `EXCEPTIONAL_CONFIDENCE_FLOOR`/`PERSONAL_INFERRED_URGENCY_FLOOR` constants (imported
+     directly, never a new number), explicitly labeled provisional in each dimension's own `basis` string.
+     `would_earn_interruption` is a transparent three-valued combination (any UNFAVORABLE wins regardless
+     of other dimensions' NOT_EVALUATED status; NOT_EVALUATED only when nothing is UNFAVORABLE but
+     something couldn't be evaluated; FAVORABLE only when all five are). Written to the ledger only —
+     proven structurally unreachable from any send/suppress path (nothing in `notifications.py` or
+     `logan_feed.py`'s dispatch-adjacent code ever reads a `ShadowEvaluation`), and proven behaviorally
+     (`test_shadow_evaluation_never_changes_real_dispatch_count`: breaking candidate construction entirely
+     still dispatches the identical count).
+  5. **Scope boundary, explicit and documented, not silent**: a candidate is recorded only for entities
+     with active lifecycle tracking this poll (`PipelineResult.lifecycle_delta is not None`) — the
+     identical set `decide_notification()` already evaluates in production. A demo/simulated entity, or a
+     live ticker with zero signal firing at all this poll ("ticker honestly absent"), has no real revision
+     concept to evaluate a decision against and is correctly recorded as *nothing*, never a fabricated
+     `no_material_delta` for an entity that was never actually observed.
+  6. **Persistence** (`backend/app/notification_ledger_store.py`, gated behind
+     `memory_persistence_enabled()`, same SQLite-sibling-file convention as every other Sprint 3.6.9+
+     store): `notification_candidates` is current-state (`INSERT OR REPLACE` keyed on a deterministic
+     `candidate_id_for(user_id, event_id, thesis_revision)` — a uuid5, never uuid4, so re-polling an
+     unchanged revision is provably idempotent). `notification_decisions` is append-only, but only ever
+     appends on a genuine transition — a new `(outcome, reason)` for the same `(user_id, event_id,
+     thesis_revision)` key differing from the most recently recorded one; an identical re-evaluation
+     (a retry, a duplicate poll) is a proven no-op (`test_identical_redecision_is_a_noop_not_a_duplicate`).
+     A real transition (e.g. `cooldown_suppressed` → `SEND` once a cooldown lifts) is proven to still
+     create a new row (`test_genuine_transition_creates_a_new_row`). Bounded retention (a row-count cap or
+     time-window prune) is explicitly documented as *not implemented* in this pass — flagged in the
+     store's own module docstring as a required follow-up before this ledger reaches more than a handful
+     of users, not silently deferred.
+  7. **Developer report** (`backend/app/notification_ledger_report.py`,
+     `GET /v1/dev/notification-ledger`): aggregate counts only (candidates/sends/suppressions/reasons/
+     Watch-vs-not/signal-family/interruption/shadow breakdowns) — same unauthenticated, process-wide-
+     operational-data posture as every sibling `/v1/dev/*` route, deliberately never a per-user listing
+     (`test_report_never_lists_per_user_rows` asserts no `user_id` value ever appears in the formatted
+     text), matching the explicit "do not expose private cross-user data" instruction.
+  8. **Historical duplicate-account read-only investigation** (requested alongside this block, performed
+     via read-only SQL against the production volume, no writes): the two Aug-28 accounts flagged in the
+     prior device-validation session (`43be9391...` created 00:17:02, `fbf98b82...` created 00:37:49, 20
+     minutes apart) are confirmed to be two genuinely distinct Clerk external subjects
+     (`user_3IWNAIUBKm3J5A98J4U8beAP20t` vs `user_3IWPghD5ly0MbyjPXefiNihG6J4`) sharing the identical
+     physical Expo push token — the same physical device, two separate sign-in events that each took the
+     `_provision_or_lookup_account()`/`link_account()` "first link" path instead of the second resolving
+     back to the first. `43be9391` is the actively-used identity (68 MemoryStore records, a real Watch on
+     CAT, ongoing activity); `fbf98b82` is confirmed fully dormant (zero MemoryStore records, zero
+     Watches, its only footprint is the accounts-table row and one shared push-token registration). No
+     merge/delete performed — that remains a separate, explicitly governed identity/data decision per the
+     standing instruction.
+- Consequences: STRATUS can now answer "what could we have notified this user about, what did we decide,
+  and why" from durable data for every lifecycle-tracked entity, without having changed a single existing
+  notification threshold, gate, or the actual dispatch path in `notifications.py`. Real production
+  behavior is unaffected (confirmed: full backend — 715+45 — and logan_core — 663 — suites pass unchanged
+  beyond the new tests themselves; Ruff/Black/mypy clean on every touched file). This ADR does **not**
+  activate anything — the Watch-first Earned Notification Pilot, any bounded-retention pruning
+  implementation, and the dormant-account merge/delete decision all remain explicitly separate, future,
+  governed choices. Not deployed and not pushed as part of this block, per its own explicit instruction —
+  local commit only, pending Logan/Chuck review.
+
 ## ADR-072: Universe Scheduler restart-safety — due time derived from durable state, not process start
 - Date: 2026-10-05
 - Status: Proposed — implemented and tested locally on `fix/universe-scheduler-restart-safety` (based on
@@ -3674,3 +3777,355 @@ code lands. Every non-obvious technical, product, or process choice belongs here
   history older than 2,000 entries is no longer inspectable in process; nothing durable is affected
   (daily telemetry, revisions, lifecycle, membership and operational observations are untouched and
   tested to be).
+
+## ADR-075: Freshness is the age of the latest successful fetch, not the age of the market event
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05) — implemented and tested locally on
+  `fix/freshness-fetch-age` (based on deployed commit `8ffe2f4`); **not pushed, not deployed**, and not to
+  be bundled with the Operational Integrity deploys without explicit authorization. Numbered 075 because
+  ADR-071 through ADR-074 exist on other branches.
+- Context: The V1a evidence reconstruction (ADR-073) found 99.8% of 2.75M freshness classifications
+  reading `UNAVAILABLE`, which also drove the evidence-completeness measure to 0.3%. The cause:
+  `logan_feed.py` classified each item from `now - captured_at` of its primary signal, and the live stock
+  receptors set `captured_at` to the provider's *event* time (earnings report date, quote timestamp, grade
+  date). That age was compared against a *cache lifetime* contract (earnings 6h + 24h grace), so any
+  thesis older than about 30 hours read `UNAVAILABLE` however recently its data had been fetched.
+  Simulated receptors set `captured_at` to now, so demo mode and most tests never showed the difference.
+  The freshness module's own language ("observed within its target refresh cadence", "matching
+  FmpResponseCache's own stale_grace_seconds mechanism", `UNAVAILABLE` = "STRATUS could not reliably
+  evaluate this security"), the gate wording (ratios to TTL, "stale-grace reads"), and the lifecycle design
+  (ADR-066 keeps an earnings thesis for days to weeks) all point the other way.
+- Decision: Freshness is the age of STRATUS's latest successfully fetched evidence for the item,
+  compared against the applicable refresh/cache lifetime. Event age is not the freshness clock; it stays
+  owned by lifecycle aging and EvidenceTrust's recency weighting.
+  1. `FmpResponseCache.last_successful_fetch_age_seconds(endpoint, entity_id)` (and the module-level
+     `fmp_last_successful_fetch_age_seconds`) — a read-only accessor over the cache's existing `cached_at`.
+     It never fetches, mutates, or counts as a cache hit. An entry served from stale grace keeps its
+     original fetch time; an entry recovered from durable storage carries its real wall-clock age.
+  2. `logan_feed.py` passes that age to `classify_freshness()` for live-substituted entities, using the
+     endpoint each family is fetched through (earnings → `earnings`, quote → `quote`, analyst grade →
+     `grades`). A live item with no fetch record at all is `UNAVAILABLE` (fail closed) and records no
+     ratio. Simulated entities are unchanged: their `captured_at` already is the observation time.
+  3. `captured_at` itself is untouched, so dedup, lifecycle and recency behave exactly as before.
+  4. No schema, threshold, contract, qualification, lifecycle or cache-policy change.
+- Consequences: A recently fetched six-week-old earnings thesis now reads `FRESH`; a fetch that has gone
+  stale reads `RECENTLY_OBSERVED` / `STALE_WITHIN_GRACE` / `UNAVAILABLE` on the existing boundaries, which
+  is what the state was defined to report. `freshness_state` on `FeedItem` changes value in the API
+  response (the mobile client does not read the field today). Freshness remains an annotation: tests
+  prove ranking, confidence, lifecycle, revisions, diversity and exploration are identical whatever the
+  freshness clock says. One existing end-to-end assertion that encoded the old reading ("an
+  aged-but-successfully-fetched report must never be FRESH") was reversed, deliberately.
+  **History is not rewritten.** Last-successful-fetch times were never durably persisted, so the
+  2026-09-04 → 2026-10-04 record's freshness-dependent gates (critical freshness P95/P99, stale-grace
+  read rate, user-visible stale beyond grace, complete evidence chains) stay classified invalid for that
+  period, and the V1a disposition stays "valid evidence with invalidated dimensions — ITERATE". The
+  corrected measurement applies only to telemetry recorded after this change is deployed. The V1a
+  evidence assembler (ADR-073) is on another branch and still marks these gates structurally invalid; it
+  must be taught the deploy date of this change before it is used for the forward re-proof, so that
+  pre-change days stay invalid and post-change days can be read. A process restart empties the cache, so
+  the first poll after a restart reads `FRESH`; that is correct under this definition.
+
+## ADR-076: A source cannot corroborate itself
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05, as a correctness fix) — implemented and tested
+  locally on `feat/evidence-strength-presentation` (based on deployed commit `8ffe2f4`); **not pushed, not
+  deployed**. Numbered 076 because ADR-071 through ADR-075 exist on other branches.
+- Context: `WorldModel.process()` appended a signal to an event's `supporting` list whenever it was not an
+  exact repeat of the last observation, and `EvidenceTrustEngine` reads the length of that list as the
+  corroboration count (worth up to 0.25 of the trust score). So one source re-reporting *changed* content —
+  a quote that moved, a corrected report — was counted as independent corroboration of itself. In
+  production this is what lifted TSLA's price opportunity to 0.563 against 0.475 for the same kind of
+  evidence elsewhere. An earlier test asserted this behaviour deliberately
+  (`test_changed_content_from_same_source_still_counts_as_corroboration`).
+- Decision: `WorldModel` remembers the distinct `source_id`s that have contributed to each event.
+  `supporting` grows only when a source not yet in that set reports. The same source reporting different
+  content is still absorbed (its signal is recorded; a corrected trigger still replaces the prior one) but
+  is not counted. Corroboration keeps its meaning: independent sources.
+- Consequences: Scores can only go down or stay the same for the same evidence; no score rises. Tested
+  through the real pipeline: the same opportunities qualify, event ids are stable, lifecycle states are
+  identical, and entities that were never self-corroborated are untouched. `supporting` is now bounded by
+  the number of distinct sources, which also removes the last unbounded list noted in ADR-074.
+  Two effects to know about:
+  1. **A stronger corrected report no longer creates a revision.** One existing test
+     (`test_multiple_revisions_since_last_view_reports_only_the_latest`) expected a larger earnings beat
+     from the same source to produce a `confidence_increased` revision. It only ever did so through
+     self-corroboration, because trigger contributions do not depend on magnitude. That test is marked
+     `xfail(strict=True)` with this explanation. Magnitude is not part of evidence strength (ADR-078), so the
+     fix is for the lifecycle to record a same-source correction as a revision in its own right; the test
+     must pass again when that exists.
+  2. **On deploy, affected opportunities step down once.** A price opportunity whose score included
+     self-corroboration will record one `confidence_decreased` revision. Nothing about the underlying
+     evidence weakened; this is a correction. How to present that one-time step needs a decision before
+     deploy.
+
+## ADR-077: Confidence is presented as evidence strength, never as a percentage
+- Date: 2026-10-05
+- Status: Accepted (decided by Logan and Chuck, 2026-10-05) — implemented and tested locally on
+  `feat/evidence-strength-presentation`; **not pushed, not deployed**; the mobile part needs a new build.
+- Context: `confidence_score` is an internal measure of how well supported an observation is. Shown as
+  "60%" it reads as a likelihood, which it is not. The main card stopped showing it on 2026-08-29, but a
+  percentage or raw score still reached users in four places: the notification list row and its
+  accessibility label, two legacy/demo cards, revision explanations ("Confidence strengthened from 0.59 to
+  0.62"), and the Ask STRATUS model context (which passed the raw score to the LLM).
+- Decision: No user-facing surface shows the score as a number. The label is shown as evidence strength
+  ("Moderate evidence"). Revision explanations say the evidence strengthened or weakened, without numbers.
+  The Ask STRATUS context carries the label and classification only, with an explicit instruction never to
+  express it as a percentage or probability. `confidence_score` itself is unchanged and stays on the data
+  contract for ranking, lifecycle and audit.
+- Consequences: Nothing about scoring, ranking or qualification changes. The Low / Moderate / High labels
+  are kept for now with their existing thresholds; "High" is unreachable for single-provider evidence
+  today, so the thresholds should be re-examined when the magnitude-aware trigger contribution is decided.
+  Not changed, and noted for cleanup: `mobile/components/ConfidenceRing.tsx` still renders a percentage but
+  is imported nowhere, and `mobile/lib/attentionLayout.ts` still sizes a label from a percentage string
+  that is no longer displayed.
+
+## ADR-078: Qualification, evidence strength and materiality are separate; EPS comparability is a hard gate (shadow)
+- Date: 2026-10-05
+- Status: Accepted as direction (Logan and Chuck, after red-team review, 2026-10-05) — **shadow only**. The
+  rules exist as an unwired module with tests and a replay; nothing in the pipeline uses them. Not pushed,
+  not deployed. Supersedes the magnitude-aware trigger contribution proposed earlier the same day.
+- Context: The confidence score clusters because, for single-provider evidence, it reduces to a constant
+  per trigger type. The first proposal was to scale each trigger's contribution by its magnitude. Review
+  rejected that: it would make a large event look like better evidence, and it would have built on EPS
+  figures that are not comparable. The provider's `epsActual` is GAAP diluted for some issuers (including
+  non-operating gains larger than operating income) and adjusted for others, with no basis stated for the
+  estimate.
+- Decision:
+  1. Six concepts stay separate and are never collapsed into one scalar: qualification, evidence
+     strength, event materiality, trajectory, personal relevance, priority. Evidence strength answers
+     "how well-supported and usable is the evidence"; it is not probability, expected return, direction,
+     importance, relevance or event magnitude. `docs/CONFIDENCE_SEMANTICS.md` is the contract.
+  2. Qualification has five states: `qualified`, `not_qualified`, `blocked_invalid_input`,
+     `blocked_incomparable_basis`, `blocked_stale_or_missing_required_fields`, each with stable reason
+     codes decided before any transformation. A blocked observation emits no trigger, earns no discount
+     and gets no label.
+  3. EPS comparability is a hard gate: same issuer, same fiscal period, a pre-release estimate timestamp,
+     compatible accounting and share basis, same currency, no unadjusted split, no unresolved restatement,
+     provenance retained. Anything not established blocks with `earnings_eps_comparability_unresolved`.
+     Other signal families qualify independently.
+  4. No percentage is computed on a zero, near-zero or negative denominator, and a pathological percentage
+     is never capped into a valid value.
+  5. Materiality is a deterministic band per trigger family (`barely_qualified`, `meaningful`, `large`,
+     `capped_exceptional`), from validated comparable inputs only. Proposed first for price movement and
+     revenue surprise. EPS magnitude stays blocked; analyst actions stay magnitude-neutral.
+  6. Corroboration means an independent evidence origin. Same-source revisions and multiple signal
+     families are not corroboration (ADR-076 stands).
+  7. Model changes are migration-neutral: no user-facing "strengthened/weakened", notification or timeline
+     event unless external evidence changed; prior and current assessment, model version, evidence
+     snapshot and reason are retained.
+  8. Labels are recalibrated later, by named conditions, after shadow replay. Current thresholds are not
+     preserved automatically and no percentile-only labels are used.
+- Consequences: Replayed against the 20 current earnings opportunities, the hard gate blocks all 20 with
+  the provider data available today, and blocks revenue surprise for the same missing facts. Switched on
+  as-is, the feed would lose its earnings opportunities. So the gate cannot ship before a decision on how
+  comparability will be established: the provider cannot prove the consensus basis on the current plan.
+  Fiscal period, currency, release time and split status can be established from endpoints already
+  available; a pre-release estimate timestamp can be established by STRATUS snapshotting upcoming
+  estimates itself (a new durable store, not decided here); the consensus basis needs a provider that
+  states it. Not decided here: a revenue-surprise trigger and its threshold, the EPS denominator floor, the
+  audit-record store for migrations, and the label names.
+
+## ADR-079: Beta 1 EPS-safe fallback — no earnings-surprise trigger without proven comparability
+- Date: 2026-10-05
+- Status: Accepted as direction (Logan and Chuck, 2026-10-05). Implemented locally on `beta1/candidate`
+  behind `STRATUS_EPS_COMPARABILITY_GATE` (default off). Not pushed, not deployed.
+- Context: ADR-078 established that an EPS beat or miss is only true when the reported and consensus
+  figures are on the same basis. The current provider states no basis, and its actual EPS is GAAP for some
+  issuers and adjusted for others. The provider investigation was time-boxed; the one alternate source
+  that documents a single basis is enterprise-only. Beta 1 must not wait for it and must not state a
+  comparison STRATUS cannot substantiate.
+- Decision:
+  1. When the gate is on, `StocksTriggerEvaluator` emits `STOCK_EARNINGS_BEAT`, `STOCK_EARNINGS_MISS` or
+     `STOCK_EARNINGS_IN_LINE` only if the raw signal itself proves comparability: accounting basis and
+     share basis for both figures, matching fiscal period and currency, a consensus captured before the
+     release, and no unresolved split or restatement. The proof must come from the provider in the signal;
+     an absent field is unknown, and unknown blocks.
+  2. A blocked comparison produces no trigger of any direction, no confidence contribution, no magnitude
+     and no materiality. It is not downgraded into a weaker claim. The governed state and reason codes
+     (ADR-078) are returned by `assess_eps_comparability()` and logged.
+  3. The same check runs before the live feed substitutes an earnings signal, so an unproven comparison
+     never surfaces as an opportunity without a qualifying trigger.
+  4. Price, analyst and every other signal family are unaffected, as are revisions, trajectory, Watch, Ask
+     and notifications for opportunities that qualify on other evidence.
+  5. What remains usable from an earnings release without the comparison is listed in
+     the internal Beta 1 release notes (kept outside this repository). Nothing is shown in place of the comparison in
+     Beta 1; a neutral "results reported" fact would be a new trigger code and is not decided here.
+- Consequences: With the current provider and the gate on, no earnings-surprise opportunity fires. In the
+  2026-10-05 production snapshot that removes 20 of the earnings-driven opportunities; the feed then rests
+  on price and analyst signals. The gate defaults to off so the existing suites and current behaviour are
+  byte-identical; turning it on is a production flag change and belongs to the Beta 1 deployment sequence.
+  The rest of ADR-078 (price and revenue qualification, materiality bands) stays shadow; a test asserts
+  that only the EPS gate is wired.
+
+## ADR-080: Notifications fail closed, and can be paused
+- Date: 2026-10-05
+- Status: Accepted as direction (Master Plan REV4 2A.11; pause approved for design 2026-10-05).
+  Implemented locally on `beta1/candidate`. Not pushed, not deployed.
+- Context: The governing rule is that when freshness, provider state, decision attribution or required
+  evidence truth cannot be established, STRATUS suppresses the interruption rather than guesses. An audit
+  of the path found three places where uncertainty could become a send: an entity with no lifecycle
+  revision was sent on prioritisation alone; freshness was never consulted; and nothing could stop pushes
+  short of a deploy or stopping the application.
+- Decision:
+  1. `decide_notification()` gains two inputs. `freshness_state`: only `FRESH` and `RECENTLY_OBSERVED`
+     allow an interruption; `STALE_WITHIN_GRACE` suppresses as `stale_evidence_suppressed`; anything else,
+     including no state, suppresses as `freshness_unestablished_suppressed`. `notifications_paused`:
+     suppresses as `beta_notifications_paused`, checked first so the recorded reason is the pause.
+  2. In live-data-only mode an alert-level item with no lifecycle revision is suppressed as
+     `revision_unattributable_suppressed`. Demo mode keeps its prior behaviour for simulated entities.
+  3. The pause is `STRATUS_NOTIFICATIONS_PAUSED`, read on every poll through the existing flag mechanism.
+     It is enforced twice: in the decision (so the ledger records the reason) and at the send boundary in
+     `dispatch_eligible_notifications()`. It does not touch the feed, Watch, Ask, lifecycle state or any
+     durable store, and needs no mobile release.
+  4. Lifting the pause does not release a backlog: a revision is notification-worthy only on the poll that
+     produced it.
+- Consequences: Activation requires setting a Fly secret, which restarts the machine (seconds). That is
+  acceptable for a safety control but is not instantaneous; a runtime switch without restart would need a
+  durable flag store and is not built. A model-version deploy can still create "strengthened" revisions
+  from recalibration alone; until the lifecycle snapshot records the model version (a schema change, not
+  made here) the procedure is to deploy model changes with the pause on and lift it after one full poll.
+
+## ADR-081: Decision Ledger for Beta 1 — bounded retention, dispatch states, model version
+- Date: 2026-10-05
+- Status: `b10c100` (ADR-071) approved as the post-Operational-Integrity basis (Logan and Chuck,
+  2026-10-05), with conditions. Applied to the production commit on `beta1/candidate` and extended
+  locally. Not pushed, not deployed. **Creates tables; needs explicit schema approval before deployment.**
+- Context: ADR-071 records every notification candidate and its SEND / SUPPRESS decision. It had no
+  retention bound, recorded nothing about what happened after a SEND, and nothing identified the rules in
+  force. The dispatch code recorded a push as sent whenever the HTTP call returned, without reading the
+  response.
+- Decision:
+  1. Retention: rows older than `STRATUS_NOTIFICATION_LEDGER_RETENTION_DAYS` (default 120, minimum 7) are
+     deleted at startup and at most once a day thereafter.
+  2. A third table, `notification_dispatches`, holds one row per dispatch attempt per opportunity:
+     `dispatch_attempted` (2xx, no per-message ticket readable), `dispatch_accepted` (at least one ticket
+     ok), `dispatch_rejected` (every ticket an error), `dispatch_failed` (request error or non-2xx).
+     `delivery_state` is always `unknown`: no delivery receipt is read, and acceptance by the push provider
+     is not delivery to a device.
+  3. Behaviour follows the state: failed is retried and never recorded as notified; rejected is not
+     retried and never recorded as notified; accepted and attempted count as notified for de-duplication,
+     so an unreadable response can never cause a second push.
+  4. `EVIDENCE_MODEL_VERSION` (`logan_core/contracts/model_version.py`) is recorded on every candidate with
+     the qualifying trigger codes. It is a label; nothing branches on it.
+- Consequences: Candidates carry `qualification_state = "qualified"` by construction, because a blocked
+  observation never becomes an opportunity. Blocked observations are logged, not stored per entity; a
+  per-observation qualification record is not built. Delivery receipts are not read, so "did it arrive"
+  remains unknown by design. Schema: `notification_candidates` and `notification_decisions` (ADR-071) plus
+  `notification_dispatches`, all in `notification_ledger.db`, which exists in production today as an
+  empty file.
+
+## ADR-082: Opportunity-linked beta feedback through the existing telemetry path
+- Date: 2026-10-05
+- Status: Approved to build locally (Logan and Chuck, 2026-10-05). Implemented on `beta1/candidate`,
+  backend and mobile. Not pushed, not deployed.
+- Context: Beta users need a way to flag a bad opportunity that can be investigated rather than taken as
+  anecdote (REV4 2A.10). The server already accepted a boolean usefulness event that no screen sent.
+- Decision:
+  1. One new telemetry event, `opportunity_feedback_submitted`, with five governed reasons:
+     `seems_wrong`, `stale`, `not_useful`, `unclear_why`, `expected_else`, and an optional note of at most
+     500 characters. No new store: the context is held in the existing JSON column.
+  2. Each report records the opportunity id, the stable entity id, the revision, what was displayed
+     (headline, evidence label, trajectory, freshness state, as-of time), the app build, and the evidence
+     model version. The model version is set by the server and a client value is discarded.
+  3. A report is an observation. The telemetry module neither imports nor calls anything that scores,
+     learns or changes the user model, and a test asserts it. Nothing reads feedback to alter
+     qualification, evidence strength, ranking or Watch.
+  4. Ask events may carry the entity and revision of the opportunity they were opened from.
+  5. Telemetry is now removed with the account. It previously was not; with free-text notes in it that
+     could not stand.
+  6. On mobile, one control on the opportunity detail opens a small sheet. It is absent for items without
+     a revision, and it tells the user when a report did not go through.
+- Consequences: The `opportunity_id` in a report is regenerated when the backend restarts, so entity id
+  plus revision is the durable join key. `usefulness_feedback_submitted` stays in the schema with no
+  screen. Telemetry has no retention bound of its own; volume is a handful of rows per user per day, and a
+  bound should be set before any wider release.
+
+## ADR-083: Evidence strength is condition-based; detail sections say only what is real
+- Date: 2026-10-06
+- Status: Decided (Logan and Chuck, 2026-10-06: build the quality-condition labels before Beta 1; do not
+  carry forward High / Moderate / Low / Speculative). Implemented locally on `beta1/candidate`, backend and
+  mobile. Not pushed, not deployed.
+- Context: The user-facing evidence label was a threshold on the confidence score. For single-provider
+  evidence that score is a constant per trigger type (ADR-078), so the label encoded the trigger type, not
+  the quality of the evidence. Separately, the opportunity detail repeated the headline under "what
+  changed", explained "why now" in terms of whether a notification would be sent, and filled the personal
+  panel with a sentence saying nothing was connected.
+- Decision:
+  1. Evidence strength is derived by one pure function
+     (`logan_core/conclusion_confidence/evidence_strength.py`) from named conditions only: qualification,
+     independent corroboration, completeness of details, absence of conflict, manipulation risk, and
+     runtime freshness. It takes no score and compares against no threshold other than the two condition
+     definitions (at least two independent origins; all expected details present). No population
+     percentile is used.
+  2. States: **Strong** — corroborated by an independent origin, complete, no conflict, freshness
+     established. **Supported** — a single origin, complete, no conflict. **Limited** — at least one
+     defined non-critical limitation: details incomplete, elevated manipulation risk, freshness within
+     grace, freshness unconfirmed. **Conflicting** — a critical condition holds (contradicting evidence or
+     high manipulation risk); no strength tier is claimed. A blocked observation receives no label: it
+     never becomes an opportunity.
+  3. Every assessment carries its condition codes. They are stable, recorded with the opportunity, and the
+     limiting ones are shown to the user as sentences.
+  4. The confidence layer evaluates the conditions it knows; the feed re-evaluates with runtime freshness
+     using the same function. The wording lives in one place and every surface uses it, including Ask.
+     `confidence_label` stays on the contract so older builds keep parsing, and is no longer displayed.
+  5. On the detail view: "what changed" is the lifecycle tracker's own reason for the current state and is
+     omitted when there is only the headline to repeat; "why it matters now" is when the opportunity was
+     first detected and where it is in its lifecycle, never notification mechanics; the personal panel is
+     omitted when the backend found no personal basis; supporting signals list the qualifying signal
+     families when there is more than one and are never called corroboration.
+  6. `FeedItem.signal_families` exposes the families whose triggers qualified. It is existing
+     trigger-derived data, already used by the diversity pass; nothing is invented for presentation.
+- Consequences: The distribution is whatever the conditions produce. With one provider every live
+  opportunity has a single origin, so the expected distribution is Supported when freshness is established
+  and Limited when it is not; Strong will not appear until an independent origin exists. That is the
+  honest result and is not to be adjusted. In production today freshness is reported unavailable for every
+  item (the pre-ADR-075 clock), so before the freshness release every item would read Limited; the
+  freshness release must precede or accompany this one. "Conflicting" is a fourth state added to the three
+  named in the decision, because a critical conflict is neither a non-critical limitation nor a blocked
+  qualification; its wording can be changed in one place. The score still exists internally and still
+  orders the feed; separating priority from the score is not done here.
+
+## ADR-084: Narrow SEC Form 8-K catalyst path for Beta 1
+- Date: 2026-10-07
+- Status: Directed by Logan and Chuck on 2026-10-07 after the gated-feed result. Implemented locally on
+  `beta1/candidate` behind `STRATUS_SEC_FILING_CATALYSTS` (default off). Not pushed, not deployed.
+- Context: With the EPS comparability gate on (ADR-079), the feed falls from 21 opportunities to 3. That
+  is too thin to evaluate the product and was accepted as a Beta Cut Line blocker under core usability.
+  The smallest trustworthy addition was wanted: structured, attributable, timestamped, company-specific
+  and bounded, with no generalized news system.
+- Decision:
+  1. One source: the SEC EDGAR submissions index. Only structured index fields are used — form, item
+     numbers, accession number, acceptance timestamp, dates. No filing text is fetched or read.
+  2. A filing qualifies only when a governed rule fires on those fields
+     (`logan_core/trigger_detection/filings.py`). Fourteen item numbers are governed, mapping to eleven
+     trigger codes. Items 8.01 and 7.01 are deliberately not governed, because an issuer may file anything
+     under them. A material agreement filed together with a new financial obligation is declined as a
+     routine financing.
+  3. Every candidate resolves to one of the governed qualification states with stable reason codes, and
+     carries source, issuer, form, items, accession, timestamps and URL. The qualification runs at the
+     feed boundary and again in trigger detection from the signal's own fields.
+  4. There is no catalyst materiality score. Every filing category has the same contribution to the
+     internal ordering score, neutral direction and no magnitude. The issuer's own item designation is
+     the only materiality used.
+  5. One filing is one trigger. One company is one opportunity: the newest qualified filing in a 14-day
+     window, joining any existing opportunity as an additional signal family. An amendment qualifies and
+     is worded as one. Lifecycle windows for all filing codes are 48 hours monitored, 7 days to stale, 14
+     days to expiry.
+  6. Item 2.02 is the earnings-result fact that survives without EPS surprise: results were furnished, on
+     a date, in a citable filing. It is its own signal family, `earnings_result`.
+  7. The provider fails closed: no configured User-Agent means it cannot be constructed; an unmapped
+     ticker is never fetched; a response for a different issuer is refused; a failed fetch yields no
+     signal and does not degrade the feed. Freshness is the age of the last successful fetch.
+  8. `company_filing` is added to the stocks signal-type registry.
+- Consequences: On the real cohort sample (48 filings, 2026-08-01 to 2026-10-06) 20 qualify — 11 results
+  and 9 leadership changes — and 28 are declined. The replayed feed moves from 3 opportunities to 7 at the
+  window start and 9 two days later, in three families of equal size. That is varied and still modest,
+  and it depends on the calendar: results filings cluster in reporting seasons. The remaining
+  company-specific news sits under items 8.01 and 7.01 and cannot be reached without reading text, which
+  is out of scope. Guidance changes and the size of an agreement or financing are likewise out of reach.
+  This adds a second external provider and outbound requests to the SEC; the User-Agent contact is an
+  operator decision. The fixed CIK table covers the 30-company cohort and must be extended and re-verified
+  with the Universe. The headline wording is mechanical. A second filing in the same category updates the
+  card without a new lifecycle revision number. All numeric choices here (14-day window, 30-minute cache,
+  lifecycle windows, the shared contribution) are provisional under REV4 2A.8 and need an owner and a
+  review date.

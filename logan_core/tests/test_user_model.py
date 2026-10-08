@@ -213,7 +213,9 @@ def test_build_preserves_explicit_holdings_and_interests():
         _feedback_record(entity_id="NVDA"),  # already an explicit interest
         _feedback_record(entity_id="NVDA"),
     ]
-    updated = builder.build(user_id="demo_user", memory_records=records, base=base)
+    updated = builder.build(
+        user_id="demo_user", memory_records=records, base=base, now=NOW
+    )
 
     assert updated.holdings == base.holdings
     explicit = [i for i in updated.interests if i.source == "explicit"]

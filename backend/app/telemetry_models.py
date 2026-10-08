@@ -35,7 +35,33 @@ TelemetryEventName = Literal[
     "ask_started",
     "ask_follow_up",
     "usefulness_feedback_submitted",
+    # ADR-082 (Beta 1): one contextual report against one opportunity.
+    "opportunity_feedback_submitted",
 ]
+
+# ADR-082 -- the five governed beta feedback reasons. A closed set: adding
+# one is a product decision, never something a client can do by sending a
+# new string.
+OpportunityFeedbackReason = Literal[
+    "seems_wrong",
+    "stale",
+    "not_useful",
+    "unclear_why",
+    "expected_else",
+]
+
+# Context fields that belong only to opportunity_feedback_submitted.
+_FEEDBACK_ONLY_CONTEXT_FIELDS = (
+    "feedback_reason",
+    "feedback_note",
+    "displayed_headline",
+    "displayed_evidence_label",
+    "displayed_trajectory",
+    "displayed_freshness_state",
+    "displayed_at",
+    "displayed_trigger_codes",
+    "app_build",
+)
 
 # Mirrors logan_core.contracts.presentation.DeliveredItem's own surface
 # vocabulary (wheel/feed_card/alert/digest/background -- no named export
@@ -78,6 +104,33 @@ class TelemetryContext(BaseModel):
     # for that event, forbidden for every other (see the cross-field
     # validator on TelemetryEventRequest below).
     useful: Optional[bool] = None
+
+    # --- ADR-082: opportunity-linked context -------------------------------
+    # The stable entity the event is about. `opportunity_id` (event_id) is
+    # regenerated when the backend process restarts; entity_id + revision is
+    # the join key that survives. Allowed on opportunity_feedback_submitted
+    # (required) and on ask_started / ask_follow_up (when Ask was opened
+    # from an opportunity).
+    entity_id: Optional[str] = Field(default=None, max_length=64)
+    # Always server-set (see telemetry.py's record_event) -- the evidence
+    # model in force when the event was recorded. A client value is
+    # overwritten, never trusted.
+    model_version: Optional[str] = Field(default=None, max_length=32)
+
+    # opportunity_feedback_submitted only. What the user chose, and what
+    # the screen was showing them when they chose it -- captured at
+    # submission, never reconstructed later.
+    feedback_reason: Optional[OpportunityFeedbackReason] = None
+    feedback_note: Optional[str] = Field(default=None, max_length=500)
+    displayed_headline: Optional[str] = Field(default=None, max_length=300)
+    displayed_evidence_label: Optional[str] = Field(default=None, max_length=64)
+    displayed_trajectory: Optional[str] = Field(default=None, max_length=64)
+    displayed_freshness_state: Optional[str] = Field(default=None, max_length=32)
+    # The feed response's own generated_at -- "as of when" the user was
+    # looking at this data.
+    displayed_at: Optional[datetime] = None
+    displayed_trigger_codes: Optional[list[str]] = Field(default=None, max_length=8)
+    app_build: Optional[str] = Field(default=None, max_length=32)
 
 
 class TelemetryEventRequest(BaseModel):
@@ -135,11 +188,41 @@ class TelemetryEventRequest(BaseModel):
                 "context.ask_session_id is only valid for ask_started/ask_follow_up"
             )
 
+        if self.event_name == "opportunity_feedback_submitted":
+            if ctx is None or ctx.feedback_reason is None:
+                raise ValueError(
+                    "opportunity_feedback_submitted requires context.feedback_reason"
+                )
+            if not ctx.entity_id:
+                raise ValueError(
+                    "opportunity_feedback_submitted requires context.entity_id"
+                )
+            if self.opportunity_revision is None:
+                raise ValueError(
+                    "opportunity_feedback_submitted requires opportunity_revision"
+                )
+        elif ctx is not None:
+            for field_name in _FEEDBACK_ONLY_CONTEXT_FIELDS:
+                if getattr(ctx, field_name) is not None:
+                    raise ValueError(
+                        f"context.{field_name} is only valid for "
+                        "opportunity_feedback_submitted"
+                    )
+            if ctx.entity_id is not None and self.event_name not in (
+                "ask_started",
+                "ask_follow_up",
+            ):
+                raise ValueError(
+                    "context.entity_id is only valid for ask_started/"
+                    "ask_follow_up/opportunity_feedback_submitted"
+                )
+
         opportunity_scoped = (
             "opportunity_opened",
             "opportunity_returned_to",
             "watch_created",
             "watch_removed",
+            "opportunity_feedback_submitted",
         )
         if self.event_name in opportunity_scoped and self.opportunity_id is None:
             raise ValueError(f"{self.event_name} requires opportunity_id")

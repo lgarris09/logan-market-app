@@ -11,6 +11,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { theme } from "../constants/theme";
 import { DeliveredItem } from "../types/loganDemo";
+import { evidenceLabelFor } from "../lib/opportunityPresentation";
 
 const surfaceLabels: Record<DeliveredItem["surface"], string> = {
   wheel: "WHEEL",
@@ -27,9 +28,9 @@ export function OpportunityCard({ item }: { item: DeliveredItem }) {
         <Text style={styles.surface}>
           {surfaceLabels[item.surface] ?? item.surface.toUpperCase()}
         </Text>
-        <Text style={styles.confidence}>
-          {item.confidence_label} · {Math.round(item.confidence_score * 100)}%
-        </Text>
+        {!!evidenceLabelFor(item) && (
+          <Text style={styles.confidence}>{evidenceLabelFor(item)}</Text>
+        )}
       </View>
 
       <Text style={styles.headline}>{item.headline}</Text>

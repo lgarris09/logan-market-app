@@ -43,6 +43,19 @@ class PrioritizedItem(BaseModel):
             "EXPLORATION_OBJECTIVE_STRENGTH",
         ]
     ] = None
+    # STRATUS 3.6.12 (Notification Ledger V1): PrioritizationEngine.
+    # prioritize() already computes this locally but, before this field
+    # existed, only ever exposed it embedded in one decision_trace rule
+    # string. Additive, defaults to False for any pre-existing direct
+    # construction that doesn't supply it -- there is no real decision to
+    # preserve byte-for-byte (False is also the honest default: no fatigue
+    # veto applied). Lets a reader (e.g. the notification ledger)
+    # distinguish "interruption budget exhausted" from every other reason
+    # interruption != "alert" without parsing a formatted string.
+    # `in_cooldown` deliberately isn't a new field alongside this one --
+    # it's already exactly `cooldown_until is not None and not
+    # changed_since_view`, both pre-existing fields on this same model.
+    domain_fatigued: bool = False
 
 
 class SurfaceRecord(BaseModel):

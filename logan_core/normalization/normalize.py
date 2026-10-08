@@ -11,6 +11,8 @@ SIGNAL_TYPE_REGISTRY: dict[str, set[str]] = {
         "earnings_signal",
         "analyst_change",
         "technical_breakout",
+        # ADR-084: a structured regulatory filing (SEC Form 8-K).
+        "company_filing",
     },
     "sports": {
         "odds_move",

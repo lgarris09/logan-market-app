@@ -4,6 +4,12 @@ from .notification_gate import (
     NotificationDecisionReason,
     decide_notification,
 )
+from .notification_ledger import (
+    build_ledger_decision,
+    build_notification_candidate,
+    determine_ledger_outcome,
+    evaluate_shadow,
+)
 from .sync import (
     SinceLastLookedStatus,
     SinceLastLookedSummary,
@@ -40,4 +46,8 @@ __all__ = [
     "NotificationDecision",
     "NotificationDecisionReason",
     "decide_notification",
+    "build_notification_candidate",
+    "determine_ledger_outcome",
+    "evaluate_shadow",
+    "build_ledger_decision",
 ]

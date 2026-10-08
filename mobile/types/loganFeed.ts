@@ -48,6 +48,14 @@ export type DeliveredItem = {
   why_now: string;
   confidence_label: "High" | "Moderate" | "Low" | "Speculative";
   confidence_score: number;
+  // ADR-083: condition-based evidence strength, its user-facing label and
+  // the named conditions behind it. This is what every surface shows;
+  // confidence_label above is the older score-based label and is no
+  // longer displayed. Optional: a backend that predates ADR-083 omits
+  // them, and the label is then simply not shown.
+  evidence_strength?: "strong" | "supported" | "limited" | "conflicting" | null;
+  evidence_label?: string | null;
+  evidence_conditions?: string[];
   personal_relevance_result?: PersonalRelevanceResult | null;
   connected_items: string[];
   required_disclaimers: string[];
@@ -215,6 +223,17 @@ export type FeedItem = {
   // behind lifecycle tracking the way the fields above are (a user can
   // watch any opportunity they can see, live-tracked or not).
   is_watched: boolean;
+
+  // The backend's runtime freshness classification for this item's
+  // evidence ("FRESH", "RECENTLY_OBSERVED", "STALE_WITHIN_GRACE",
+  // "UNAVAILABLE"), or null when no freshness contract applies. Optional:
+  // older cached or mocked responses omit it.
+  freshness_state?: string | null;
+
+  // ADR-083: the signal families whose triggers qualified, primary
+  // first ("earnings", "analyst_grade", "price"). Optional for the same
+  // reason as above.
+  signal_families?: string[];
 };
 
 export type DemoFeedResponse = {

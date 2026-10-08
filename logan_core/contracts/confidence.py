@@ -12,6 +12,13 @@ class ConclusionConfidence(BaseModel):
     classification: Literal["fact", "inference", "hypothesis", "speculation"]
     alternatives: list[str] = Field(default_factory=list)
     limiting_factors: list[str] = Field(default_factory=list)
+    # ADR-083: condition-based evidence strength ("strong", "supported",
+    # "limited", "conflicting") and the named conditions behind it, as
+    # known at this layer -- before the runtime freshness pass. Derived
+    # from conditions only, never from confidence_score. Optional so a
+    # direct construction that predates it still validates.
+    evidence_strength: Optional[str] = None
+    evidence_conditions: list[str] = Field(default_factory=list)
     # Reserved, non-functional metadata (ADR-032, MODEL_CONTRACTS.md). No trained
     # model exists this release — confidence_score above is computed exactly as
     # before (trust_score/mental_model_weight blend). calibrated_at stays null
