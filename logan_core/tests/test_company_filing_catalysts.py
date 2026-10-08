@@ -373,8 +373,8 @@ def test_provider_makes_no_request_without_a_user_agent():
         "",
         "   ",
         "STRATUS",  # no contact
-        "STRATUS Beta 1 / Garris Engineering LLC",  # no contact
-        "STRATUS Beta 1 / Garris Engineering LLC; contact=<COMPANY_CONTROLLED_EMAIL>",
+        "STRATUS Beta 1 / Example LLC",  # no contact
+        "STRATUS Beta 1 / Example LLC; contact=<COMPANY_CONTROLLED_EMAIL>",
         "STRATUS Beta 1; contact=not-an-address",
         "contact=ops@example.invalid",  # no operator named
     ):
@@ -384,7 +384,7 @@ def test_provider_makes_no_request_without_a_user_agent():
 
 
 def test_the_governed_user_agent_format_is_accepted():
-    value = "STRATUS Beta 1 / Garris Engineering LLC; contact=ops@example.invalid"
+    value = "STRATUS Beta 1 / Example LLC; contact=ops@example.invalid"
     assert validate_sec_user_agent(value) == value
     assert validate_sec_user_agent("  " + value + "  ") == value
 

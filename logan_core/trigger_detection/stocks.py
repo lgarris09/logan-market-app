@@ -63,7 +63,7 @@ _ANALYST_DOWNGRADE_CONFIDENCE_CONTRIBUTION = 0.08
 # ADR-084: one constant for every governed filing category. A filing has
 # no magnitude and the categories are not ranked against each other; a
 # per-category number would be precision STRATUS does not have. Equal to
-# the price-move contribution. Provisional (REV4 2A.8).
+# the price-move contribution. Provisional (ADR-084).
 _FILING_CONFIDENCE_CONTRIBUTION = 0.10
 
 

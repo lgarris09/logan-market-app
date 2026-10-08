@@ -140,7 +140,7 @@ UNGOVERNED_ITEMS: dict[str, str] = {
 GOVERNED_FORMS = frozenset({"8-K", "8-K/A"})
 
 # A filing older than this at detection does not start an opportunity. Aging
-# after detection belongs to the lifecycle tracker. Provisional (REV4 2A.8):
+# after detection belongs to the lifecycle tracker. Provisional (ADR-084):
 # owner and review date to be assigned.
 FILING_MAX_AGE_AT_DETECTION = timedelta(days=14)
 

@@ -75,7 +75,7 @@ _EXPIRE_WINDOW_HOURS: dict[str, float] = {
 # A filing is a dated disclosure: it stays actively monitored for two
 # days, is stale after a week without new evidence, and expires after
 # two. The categories are not given different shelf lives because
-# nothing STRATUS knows distinguishes them. Provisional (REV4 2A.8).
+# nothing STRATUS knows distinguishes them. Provisional (ADR-084).
 for _filing_code in sorted(FILING_TRIGGER_CODES):
     _MONITORING_WINDOW_HOURS[_filing_code] = 48.0
     _STALE_WINDOW_HOURS[_filing_code] = 168.0

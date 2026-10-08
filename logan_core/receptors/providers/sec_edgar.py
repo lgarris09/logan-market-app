@@ -31,7 +31,7 @@ SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{document}"
 
 # Filings change a few times a quarter per company; the index is fetched at
-# most this often per company. Provisional (REV4 2A.8).
+# most this often per company. Provisional (ADR-084).
 SEC_FILINGS_CACHE_TTL_SECONDS = 30 * 60
 # The SEC's fair-access limit is 10 requests per second across all clients
 # of one operator. This stays far below it.
@@ -88,7 +88,7 @@ def validate_sec_user_agent(value: Optional[str]) -> str:
     """The SEC asks automated clients to identify the operator and give a
     contact address. A valid value names the operator and carries
     `contact=<address>`, for example
-    `STRATUS Beta 1 / Garris Engineering LLC; contact=ops@example.com`.
+    `STRATUS Beta 1 / Example LLC; contact=ops@example.com`.
     Anything else -- empty, no contact, or a placeholder left unfilled --
     is refused, and the provider then makes no request at all.
     """

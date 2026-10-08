@@ -1,11 +1,11 @@
 # Beta 1 catalyst path — structured SEC Form 8-K events
 
-2026-10-07. Local on `beta1/candidate`, behind `STRATUS_SEC_FILING_CATALYSTS` (default off). Not pushed,
-not deployed, never run against production. Decision record: ADR-084.
+Technical design for the company-filing catalyst path. Behind `STRATUS_SEC_FILING_CATALYSTS` (default
+off). Decision record: ADR-084.
 
-Why it exists: with the EPS comparability gate on, the feed falls from 21 opportunities to 3
-(`GATED_FEED_DEPTH.md`). That is a core-usability blocker under the Beta Cut Line. This path adds one
-narrow, attributable source. It is an opportunity input, not a news feed.
+Why it exists: with the EPS comparability gate on (ADR-079), earnings-surprise opportunities no longer
+qualify and the feed becomes too thin to evaluate. This path adds one narrow, attributable source. It is
+an opportunity input, not a news feed.
 
 ## 1. Source
 
@@ -143,63 +143,19 @@ Other candidates examined and not available:
 | Revenue result | Needs an actual and a comparable estimate; comparability is unproven |
 | Reported EPS as a bare figure | Basis not stated by the market-data provider |
 
-## 8. Feed after catalysts (replay)
+## 8. What is deliberately out of scope
 
-Method: the 48 real 8-K and 8-K/A index rows for the cohort filed 2026-08-01 to 2026-10-06, fetched once
-on 2026-10-07, run through `qualify_filing()`. Script `docs/sessions/2026-10-07-catalyst_feed_replay.py`;
-output `docs/baselines/2026-10-07-catalyst-feed/`. A replay, not a live run.
-
-Of 48 filings, 20 qualify (11 results, 9 leadership) and 28 are declined (22 with no governed item, 6
-routine financings). No filing in the sample carried any of the other governed items.
-
-| | EPS gate only | With catalysts, at window start (10-05) | With catalysts, at sample time (10-07) |
-|---|---|---|---|
-| Opportunities | 3 | 7 | 9 |
-| Unique companies | 3 | 7 | 9 |
-| Analyst action | 3 | 3 | 3 |
-| Results reported | 0 | 2 (ACN, COST) | 3 (ABBV, ACN, COST) |
-| Company filing | 0 | 2 (CVX, DUK) | 3 (CVX, DUK, SLB) |
-| Price move | 0 | 0 | 0 |
-| Largest family's share | 100% | 43% | 33% |
-| In first 48 hours / 2–7 days / 7–14 days | — | 1 / 1 / 2 | 3 / 1 / 2 |
-
-Over 33 days (2026-09-04 to 2026-10-06): 9 filings newly qualified, on 8 of the days; one was a revision
-of a standing opportunity and 8 were new. Standing filing opportunities ranged from 1 to 5, median 3.
-
-Caveat on the three analyst opportunities: two (CAT, DE) were carried under an earnings trigger whose
-window is longer than an analyst action's. Whether they stand on the analyst action alone depends on the
-date of that action, which the replay does not have.
-
-## 9. Is it enough?
-
-Better, and still modest.
-
-- **Variety: yes.** Three families in equal thirds instead of one. A participant would see analyst
-  actions, results filings and leadership changes ranked against each other, which is what a
-  prioritisation product has to demonstrate.
-- **Volume: thin in a quiet month.** Seven to nine cards across 30 companies, about two new filings a
-  week, plus the one to three analyst or price revisions a day measured earlier. The replay period falls
-  between reporting seasons.
-- **Timing changes it.** Each company furnishes results once a quarter, and most of this cohort reports
-  within the same few weeks. A beta that overlaps a reporting season would carry results filings for
-  most of the cohort inside the 14-day window. That is a property of the calendar, not a tuned number.
-
-My reading: sufficient to test comprehension, trust, Watch, Ask, feedback and ranking across categories;
-sufficient to test monitoring effort only for participants whose interests overlap the cohort, and
-clearly better if the beta overlaps a reporting season. It is not a rich feed.
-
-## 10. What would need a broader architecture
-
-SEC 8-K alone cannot go further without reading text. Items 8.01 and 7.01 appear in 29 of the 48
-filings and are exactly where the remaining company-specific news sits (product announcements,
+SEC 8-K alone cannot go further without reading text. In a sample of real filings, items 8.01 and 7.01
+appear in most of them and are exactly where the remaining company-specific news sits (product announcements,
 litigation, regulatory decisions, guidance). Classifying them means reading the exhibit, which is
 NLP-based materiality classification — a stop condition. So are guidance changes, and the size of a
 financing or an agreement. Nothing in that direction has been started.
 
-## 11. To turn it on (post-window, with approval)
+## 9. Configuration
 
-1. Set `STRATUS_SEC_USER_AGENT` to an operator name and contact address. This is a decision for Logan:
-   the SEC asks for a real contact.
-2. Set `STRATUS_SEC_FILING_CATALYSTS`.
-3. It makes outbound requests to a new external service, about 30 companies every 30 minutes.
-4. No schema change. No new store.
+| Variable | Default | Meaning |
+|---|---|---|
+| `STRATUS_SEC_FILING_CATALYSTS` | off | Enables the path |
+| `STRATUS_SEC_USER_AGENT` | unset | Operator name and `contact=<address>`, as the SEC asks of automated clients. Operator configuration, never in source. Without a valid value no request is made |
+
+No schema change and no new store.
