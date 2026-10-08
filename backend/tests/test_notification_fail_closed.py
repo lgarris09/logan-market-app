@@ -4,6 +4,7 @@ claim more about delivery than the push provider's response established.
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -30,7 +31,7 @@ NOW = datetime(2026, 10, 5, 21, 0, tzinfo=timezone.utc)
 
 
 def _decide(**overrides):
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         entity_id="NVDA",
         user_id="u1",
         current_revision=3,
@@ -136,7 +137,8 @@ def test_non_2xx_is_failed():
 
 
 def test_2xx_without_tickets_is_attempted_not_accepted():
-    for body in ({"data": []}, {}, {"data": "nope"}, None):
+    empty_bodies: list[Any] = [{"data": []}, {}, {"data": "nope"}, None]
+    for body in empty_bodies:
         outcomes = classify_dispatch_response(_response(200, body), 2, 1)
         assert [o[0] for o in outcomes] == ["dispatch_attempted"] * 2
 
@@ -157,7 +159,7 @@ def test_tickets_are_read_per_item_across_tokens():
 
 
 def test_every_classified_state_is_in_the_bounded_model():
-    bodies = [
+    bodies: list[tuple[int, Any]] = [
         (500, None),
         (200, {"data": []}),
         (200, {"data": [{"status": "ok"}]}),

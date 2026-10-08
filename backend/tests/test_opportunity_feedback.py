@@ -249,6 +249,7 @@ def test_feedback_module_has_no_path_to_learning_or_scoring():
         "MemoryStore",
     }
     for module in (telemetry, telemetry_models):
+        assert module.__file__ is not None
         with open(module.__file__, encoding="utf-8") as handle:
             tree = ast.parse(handle.read())
         used: set[str] = set()
