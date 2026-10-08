@@ -1,0 +1,71 @@
+{
+ "captured_at": "2026-10-05T20:57:10.084831+00:00",
+ "rss_kb": 112272,
+ "pid": 652,
+ "machine_uptime_s": 8593.52,
+ "scheduler_state": [
+  {
+   "job_name": "universe_reevaluation",
+   "last_started_at": "2026-10-05T18:34:01.435946+00:00",
+   "last_completed_at": "2026-10-05T18:35:13.222070+00:00",
+   "last_succeeded_at": "2026-10-05T18:35:13.222070+00:00",
+   "last_outcome": "success"
+  }
+ ],
+ "membership_rows": 30,
+ "monitored_now": [
+  "AAPL",
+  "ABBV",
+  "ABT",
+  "ACN",
+  "ADBE",
+  "AMGN",
+  "AMT",
+  "AMZN",
+  "AXP",
+  "BA",
+  "BAC",
+  "BKNG",
+  "BLK",
+  "CAT",
+  "CL",
+  "CMCSA",
+  "COP",
+  "COST",
+  "CVX",
+  "DE",
+  "DIS",
+  "DUK",
+  "GM",
+  "GOOGL",
+  "KO",
+  "LIN",
+  "NEE",
+  "PLD",
+  "SHW",
+  "SLB"
+ ],
+ "membership_changes_since": [],
+ "unexplained_universe_changes": 0,
+ "scheduler_runs_total": 2,
+ "scheduler_runs_since": [],
+ "coalescing_since": [
+  0,
+  0
+ ],
+ "wait_samples_since": [
+  0,
+  null,
+  null
+ ],
+ "faults_since": {},
+ "provider_calls_since": 0,
+ "busiest_minutes_since": [],
+ "purge_state": [
+  [
+   1,
+   "2026-10-05T12:48:36.391179+00:00"
+  ]
+ ],
+ "oldest_observation": "2026-09-04T00:49:24.481849+00:00"
+}

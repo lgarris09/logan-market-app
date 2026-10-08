@@ -1,0 +1,10 @@
+[1mApp[0m
+ Name     │ stratus-api                   
+ Owner    │ personal                      
+ Hostname │ stratus-api.fly.dev           
+ Image    │ stratus-api:scheduler-f105a0a 
+
+[1mMachines[0m
+ PROCESS │ ID             │ VERSION │ REGION │ STATE   │ ROLE │ CHECKS             │ LAST UPDATED         
+ app     │ 891ed02be31738 │ 33      │ iad    │ started │      │ 1 total, 1 passing │ 2026-10-05T18:33:57Z 
+

@@ -1,0 +1,194 @@
+{
+ "window": {
+  "start": "2026-10-05 20:57:06",
+  "end": "2026-10-08 20:57:06",
+  "last_sample": "2026-10-08 20:52:41",
+  "hours_covered": 71.9,
+  "complete": true
+ },
+ "samples": {
+  "all": 859,
+  "with_rss": 142
+ },
+ "process": {
+  "pid": "652",
+  "uptime_monotonic": true,
+  "restarted": false
+ },
+ "memory_mb": {
+  "at_start": 109.6,
+  "latest": 127.5,
+  "max": 132.0,
+  "first_24h_baseline_mean": 114.6,
+  "final_24h_mean": 127.0,
+  "final_24h_max": 132.0,
+  "delta_final_vs_first_mean": 12.5,
+  "post_warmup_slope_mb_per_min": 0.0043,
+  "post_warmup_slope_mb_per_day": 6.2,
+  "slope_by_day": {
+   "0-24h (after warm-up)": 0.00989,
+   "24-48h": 0.00127,
+   "48h-end": 0.00687
+  }
+ },
+ "market_open_steps_mb": {
+  "2026-10-06": {
+   "before_open_mean": 112.8,
+   "after_open_mean": 121.2,
+   "step": 8.4
+  },
+  "2026-10-07": {
+   "before_open_mean": 123.5,
+   "after_open_mean": 121.9,
+   "step": -1.6
+  },
+  "2026-10-08": {
+   "before_open_mean": 129.3,
+   "after_open_mean": 130.7,
+   "step": 1.4
+  }
+ },
+ "health": {
+  "non_200_or_unreachable_samples": 6,
+  "detail": [
+   [
+    "2026-10-06T05:14:57Z",
+    "h | health=curl: (6) Could not resolve host: stratus-api.fly.dev"
+   ],
+   [
+    "2026-10-06T05:30:46Z",
+    "| Error: get app: failed to run query ($appName: String!) { appcompac"
+   ],
+   [
+    "2026-10-06T22:36:39Z",
+    "| pid=645 rss_kb=1748 pid=652 rss_kb=124764 pid=7142 rss_kb=1828 upti"
+   ],
+   [
+    "2026-10-07T18:53:22Z",
+    "h | health=curl: (6) Could not resolve host: stratus-api.fly.dev"
+   ],
+   [
+    "2026-10-07T19:08:45Z",
+    "h | health=curl: (6) Could not resolve host: stratus-api.fly.dev"
+   ],
+   [
+    "2026-10-07T19:14:13Z",
+    "| Error: get app: failed to run query ($appName: String!) { appcompac"
+   ]
+  ],
+  "sampling_gaps_over_7_min": []
+ },
+ "feed": {
+  "item_counts_seen": [
+   "21",
+   "22"
+  ],
+  "provider_degraded_seen": [
+   "False"
+  ],
+  "fingerprint_changes": [
+   [
+    "2026-10-05 20:57:23",
+    "21",
+    "False",
+    "38a327379599"
+   ],
+   [
+    "2026-10-06 13:33:15",
+    "21",
+    "False",
+    "a85f4ecdc7d1"
+   ],
+   [
+    "2026-10-06 14:03:24",
+    "21",
+    "False",
+    "faa0212f2a26"
+   ],
+   [
+    "2026-10-06 15:33:53",
+    "21",
+    "False",
+    "0c194c3ea427"
+   ],
+   [
+    "2026-10-07 13:41:47",
+    "21",
+    "False",
+    "c4f06317ea59"
+   ],
+   [
+    "2026-10-07 14:11:56",
+    "21",
+    "False",
+    "c9cf0e5b33e5"
+   ],
+   [
+    "2026-10-07 14:42:05",
+    "21",
+    "False",
+    "7cc713092337"
+   ],
+   [
+    "2026-10-07 15:12:15",
+    "21",
+    "False",
+    "05545e8df80a"
+   ],
+   [
+    "2026-10-07 15:42:24",
+    "21",
+    "False",
+    "b82d68b23671"
+   ],
+   [
+    "2026-10-08 13:50:23",
+    "21",
+    "False",
+    "7670ac60eddc"
+   ],
+   [
+    "2026-10-08 14:20:33",
+    "21",
+    "False",
+    "1413c17a2ab8"
+   ],
+   [
+    "2026-10-08 14:50:44",
+    "21",
+    "False",
+    "4e86e0cf38d8"
+   ],
+   [
+    "2026-10-08 17:21:34",
+    "21",
+    "False",
+    "7e17bab5651b"
+   ],
+   [
+    "2026-10-08 19:52:22",
+    "22",
+    "False",
+    "7ba5083b20b9"
+   ],
+   [
+    "2026-10-08 20:22:31",
+    "22",
+    "False",
+    "f33d3a9890f6"
+   ],
+   [
+    "2026-10-08 20:52:41",
+    "22",
+    "False",
+    "29e966be0b69"
+   ]
+  ]
+ },
+ "criteria_as_locked": {
+  "slope_under_limit": true,
+  "final_24h_within_15mb_of_first_24h": true,
+  "single_process_no_restart": true
+ },
+ "status": "PASS on the log-derived criteria"
+}

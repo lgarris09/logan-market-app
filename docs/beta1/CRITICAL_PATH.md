@@ -1,6 +1,6 @@
 # Beta 1 critical path
 
-As of 2026-10-08 13:45 UTC. Governing statement: Master Plan REV4, Section 2A. The Beta Cut Line is
+As of 2026-10-08 21:15 UTC. Governing statement: Master Plan REV4, Section 2A. The Beta Cut Line is
 applied: an item is a blocker only if Beta 1 would otherwise be unreliable, untruthful, unusable at its
 core, or unmeasurable.
 
@@ -8,7 +8,7 @@ core, or unmeasurable.
 
 | # | Work item | State | Next action | Depends on | Blocker | Evidence that closes it |
 |---|---|---|---|---|---|---|
-| 1 | 72-hour Operational Integrity window | Running, 64 hours in. One process, health clean, no faults. Memory inside the locked criteria but still creeping (109.6 MB at start, about 130 MB now). Six samples missed to workstation DNS across three episodes, not interpolated | Final review after 2026-10-08 20:57 UTC, against the criteria as locked | Nothing touching production | **YES** | Final review with the ten items Logan listed on 2026-10-08 |
+| 1 | 72-hour Operational Integrity window | **PASS, 2026-10-08 20:57 UTC, by the locked criteria.** One process, no restart; slope 0.0043 MB/min (limit 0.02); final 24 hours 12.5 MB above the first 24 (limit 15); no faults; scheduler state unchanged; feed changes all reconciled. Memory did not plateau: it drifted about 6 MB a day | Closed. Watch memory on the candidate build (deployment step 6) | — | NO (closed) | `docs/baselines/2026-10-08-oi72-final/` |
 | 2 | Feed depth with the EPS gate on | **Closed as a blocker 2026-10-08:** a 7 to 9 item feed in three families is accepted for the Beta 1 candidate. Category scope stops here | See the gated feed with catalysts on a device during acceptance | Release steps 7 to 9 | NO (decided); verified at device acceptance | Device acceptance section 2 |
 | 3 | Release A: ledger, fail-closed notifications, pause, dispatch states, feedback event | Built and tested. Schema approved 2026-10-06 | Deploy after 1 | 1 | **YES** | Checklist in `LEDGER_SCHEMA_APPROVAL.md` |
 | 4 | Rollback and pause rehearsal | Runbook written; not rehearsed | Rehearse after the window | 1, 3 | **YES** | Runbook section R checked and timed |
@@ -31,6 +31,8 @@ core, or unmeasurable.
 | WHAT CHANGED repeats the headline | Detail now shows the lifecycle delta, or omits the section |
 | Supporting-signals list lacked an API field | `signal_families` added to the feed item from existing trigger data |
 | Vendor inquiry | Drafted for Logan to send; non-blocking by rule |
+| Operational Integrity | PASS 2026-10-08 |
+| Deployment shape | One build, staged flags (decided 2026-10-08) |
 | Feed-depth decision | Narrow SEC 8-K path built; 7 to 9 item feed accepted 2026-10-08 |
 | Provisional catalyst parameters | Owners assigned, register written, review after about two weeks of beta (`PROVISIONAL_PARAMETERS.md`) |
 | SEC User-Agent | Format fixed and enforced in code; value pending |
@@ -39,9 +41,8 @@ core, or unmeasurable.
 
 | Decision | Options | Needed by |
 |---|---|---|
-| Deployment shape | One build with staged flags (recommended) / re-cut into separate releases (`DEPLOYMENT_SEQUENCE.md` section 1) | Before the first post-window deploy |
 | SEC User-Agent contact address | A company-controlled address, in the fixed format | Deployment step 8 |
-| Approval to push the candidate and open the PR | — | After the window closes |
+| Deployment authorization for the candidate build | Staged flags, per `DEPLOYMENT_SEQUENCE.md` | Now |
 | Owner names on the safety card | — | Beta Entry Review |
 
 Experiment-design preferences, not engineering gates (2026-10-08): run Beta 1 across a period with
