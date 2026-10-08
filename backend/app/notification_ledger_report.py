@@ -89,9 +89,7 @@ def build_notification_ledger_report(
     for row in decisions:
         try:
             payload = json.loads(row["payload"])
-            shadow_breakdown[
-                payload["shadow"]["would_earn_interruption"]
-            ] += 1
+            shadow_breakdown[payload["shadow"]["would_earn_interruption"]] += 1
         except (KeyError, ValueError):
             # Malformed/legacy payload -- counted as unknown rather than
             # silently dropped or crashing the whole report.

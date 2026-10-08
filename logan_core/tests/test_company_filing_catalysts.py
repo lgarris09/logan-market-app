@@ -391,12 +391,19 @@ def test_the_governed_user_agent_format_is_accepted():
 
 def test_no_contact_address_is_committed_to_source():
     """The contact is operator configuration. No address appears in the
-    provider module or in the configuration module."""
-    import backend.app.config as config
+    provider module or in the backend configuration module. The files are
+    read from disk, not imported: logan_core's tests do not depend on the
+    backend package being installed."""
     import logan_core.receptors.providers.sec_edgar as provider_module
 
-    for module in (config, provider_module):
-        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    paths = [
+        pathlib.Path(provider_module.__file__),
+        repo_root / "backend" / "app" / "config.py",
+    ]
+    for path in paths:
+        assert path.is_file(), path
+        source = path.read_text(encoding="utf-8")
         addresses = re.findall(
             r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", source
         )
