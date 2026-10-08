@@ -16,6 +16,7 @@ EvidenceTrustEngine -> ConclusionConfidenceEngine). Two kinds of test:
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
@@ -123,6 +124,7 @@ def evaluate(raw_signals, *, now=NOW):
                     "trigger_events": event.trigger_events + signal_event.trigger_events
                 }
             )
+    assert event is not None
     trust = EvidenceTrustEngine().evaluate(event, normalized, now=now)
     reasoning = ReasoningResult(
         event_id=event.event_id,
@@ -382,7 +384,10 @@ def test_an_unregistered_source_gets_the_neutral_default():
 
 
 def test_a_more_reputable_source_scores_at_least_as_high():
-    ordered = sorted(SOURCE_REPUTATION_REGISTRY, key=SOURCE_REPUTATION_REGISTRY.get)
+    ordered = sorted(
+        SOURCE_REPUTATION_REGISTRY,
+        key=lambda source: SOURCE_REPUTATION_REGISTRY[source],
+    )
     scores = [score([beat(12, source=source)]) for source in ordered]
     assert scores == sorted(scores)
     assert scores[-1] > scores[0]
@@ -438,7 +443,7 @@ def test_signal_families_are_not_counted_as_corroboration():
 
 
 def _trust(**overrides) -> EvidenceTrust:
-    values = dict(
+    values: dict[str, Any] = dict(
         event_id="00000000-0000-0000-0000-000000000001",
         source_score=0.5,
         corroboration=0,

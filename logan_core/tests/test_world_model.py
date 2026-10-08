@@ -281,6 +281,7 @@ def test_a_source_reporting_ever_changing_content_never_corroborates_itself(now)
                 )
             )
         )
+    assert event is not None
     assert event.supporting == []
 
 
@@ -303,6 +304,7 @@ def test_supporting_counts_each_independent_source_once(now):
                 )
             )
         )
+    assert event is not None
     assert len(event.supporting) == 2  # one per independent source, not 40
 
 
@@ -345,6 +347,7 @@ def test_same_source_updates_do_not_raise_the_trust_score(now):
         )
         signals.append(signal)
         event = repeated_model.process(signal)
+    assert event is not None
     repeated = engine.evaluate(event, signals, now=evaluated_at)
 
     assert single.corroboration == repeated.corroboration == 0
