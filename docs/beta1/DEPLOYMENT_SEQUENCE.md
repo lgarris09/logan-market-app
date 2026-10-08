@@ -13,7 +13,10 @@ The candidate cannot be split into separate release branches by cherry-pick. I t
 adds the pause switch and fail-closed rules also adds the EPS gate, which depends on the qualification
 module from the evidence branch. The pieces were built and tested together.
 
-So there are two ways to deploy. Both are safe; they differ in what can be attributed afterwards.
+**Decided 2026-10-08 (Logan and Chuck): option 1 — one candidate build with staged flags. The candidate is
+not re-cut.** The comparison below is kept as the record of why.
+
+There were two ways to deploy. Both are safe; they differ in what can be attributed afterwards.
 
 | | Option 1 — one build, staged flags (recommended) | Option 2 — re-cut into separate releases |
 |---|---|---|
@@ -27,7 +30,7 @@ Unflagged changes that arrive together under option 1: Decision Ledger, notifica
 dispatch states, the freshness clock, the self-corroboration fix, condition-based evidence labels, the
 feedback event, demo routes closed, new feed fields.
 
-Recommendation: option 1. What is deployed is exactly what was tested. The cost is that an unexpected
+Reasoning for option 1: what is deployed is exactly what was tested. The cost is that an unexpected
 change in freshness ratios or confidence values after the deploy could come from either the freshness
 clock or the self-corroboration fix; the ledger and logs record enough to tell them apart after the
 fact, but not at a glance. If you want that separation up front, choose option 2 and accept the day.
@@ -120,15 +123,17 @@ No step requires a data rollback. Do not delete `/data` files.
 | 2026-10-07 | Narrow SEC 8-K catalyst path, taxonomy and fail-closed behaviour accepted |
 | 2026-10-08 | A 7 to 9 item feed is sufficient for the Beta 1 candidate; category scope stops here |
 | 2026-10-08 | SEC User-Agent format fixed; contact value to come from Logan |
+| 2026-10-08 | Deployment shape: one build, staged flags; no re-cut. Notifications paused across every step that changes qualification or scoring |
+| 2026-10-08 | Push and PR authorized only if the 72-hour final review passes the locked criteria; no automatic deployment |
 | 2026-10-08 | Catalyst parameters stay provisional; review after about two weeks of beta evidence (`PROVISIONAL_PARAMETERS.md`) |
 
 ## 9. What this package still needs from Logan and Chuck
 
-1. Option 1 or option 2 (section 1).
-2. The company-controlled contact address for the SEC User-Agent.
-3. Approval to push the branch and open the PR (step 2), after the window closes.
-4. Whether steps 7 and 8 share a restart.
-5. Owner names on the safety card.
+1. Deployment authorization, after the 72-hour verdict and the PR.
+2. The company-controlled contact address for the SEC User-Agent. An explicit Beta Entry dependency; the
+   provider stays fail-closed until it is configured.
+3. Whether steps 7 and 8 share a restart.
+4. Owner names on the safety card.
 
 ## 10. Not verified by anything in this package
 
