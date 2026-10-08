@@ -1,110 +1,140 @@
-# Beta 1 post-window deployment sequence
+# Beta 1 post-window deployment package
 
-For approval by Logan and Chuck. Nothing here is executed. Every production step needs its own explicit
-go-ahead; this document is the proposed order and the reasons for it.
+Final draft, 2026-10-08. For approval by Logan and Chuck. Nothing here is executed, and every
+production step needs its own explicit go-ahead. Supersedes the earlier drafts of this file.
 
-Starting point: production is Fly v33 (`f105a0a`). The candidate is local branch `beta1/candidate`.
+- Production today: Fly v33, commit `f105a0a`.
+- Candidate: local branch `beta1/candidate` (unpushed). 1,890 Python tests and 263 mobile tests pass.
+- Decisions already made are listed in section 8 and are not re-opened here.
 
-## Order
+## 1. One fact that shapes the plan
 
-| # | Step | Kind | Why here |
+The candidate cannot be split into separate release branches by cherry-pick. I tried: the commit that
+adds the pause switch and fail-closed rules also adds the EPS gate, which depends on the qualification
+module from the evidence branch. The pieces were built and tested together.
+
+So there are two ways to deploy. Both are safe; they differ in what can be attributed afterwards.
+
+| | Option 1 — one build, staged flags (recommended) | Option 2 — re-cut into separate releases |
+|---|---|---|
+| What deploys first | The whole candidate, with the EPS gate off, catalysts off, notifications paused | Safety and instrumentation only |
+| Then | Flags turned on one at a time, with a check between each | Freshness, then evidence, then flags, each its own release |
+| Work before the first deploy | None beyond approval | Re-cut the commits into three branches and re-run every suite on each. Roughly a day, and it produces code that has not been tested in that shape before |
+| Attribution | The flagged changes (EPS gate, catalysts) are attributable. The unflagged ones arrive together | Each change attributable |
+| Rollback | One step to v33 | One step per release |
+
+Unflagged changes that arrive together under option 1: Decision Ledger, notification fail-closed rules,
+dispatch states, the freshness clock, the self-corroboration fix, condition-based evidence labels, the
+feedback event, demo routes closed, new feed fields.
+
+Recommendation: option 1. What is deployed is exactly what was tested. The cost is that an unexpected
+change in freshness ratios or confidence values after the deploy could come from either the freshness
+clock or the self-corroboration fix; the ledger and logs record enough to tell them apart after the
+fact, but not at a glance. If you want that separation up front, choose option 2 and accept the day.
+
+## 2. Sequence (option 1)
+
+| # | Step | Kind | Check before moving on |
 |---|---|---|---|
-| 0 | Close Operational Integrity: 72-hour final check, verdict recorded in REV4 | Evidence | Nothing else may touch production first |
-| 1 | Rehearse pause and rollback is **not** possible yet (the pause is not deployed). Rehearse rollback v33 → v32 → v33 | Production, restart | Proves rollback before anything new depends on it |
-| 2 | **Release A — safety and instrumentation.** Decision Ledger (three tables), notification fail-closed rules, pause switch, dispatch states, telemetry feedback event and account deletion fix, demo routes closed in live mode | Backend deploy, schema | Additive and behaviour-narrowing only. Gives every later step a pause and an audit trail. Requires schema approval |
-| 3 | Verify A: ledger rows appear; a suppression reason is recorded; pause on / off works; rollback checklist passes | Production check | The pause must be proven before step 5 relies on it |
-| 4 | **Release B — freshness clock (ADR-075).** Set `FRESHNESS_CLOCK_CORRECTED_FROM` to the deploy date in the same change | Backend deploy | Separate so its effect on freshness ratios and on the new freshness suppression rule is observable alone |
-| 5 | **Release C — evidence truth.** Pause notifications **first**. Deploy self-corroboration fix (ADR-076), no-percentage copy (ADR-077), EPS gate on (ADR-079, `STRATUS_EPS_COMPARABILITY_GATE`). Wait one full poll cycle. Unpause | Backend deploy, flag | Recalibration changes stored confidence; see "Must not ship together" |
-| 6 | Full test suites on the exact deployed commit | Local | |
-| 7 | Internal mobile build from the same commit | Mobile build | After the backend it depends on |
-| 8 | Physical-device acceptance (`DEVICE_ACCEPTANCE_SCRIPT.md`) | Acceptance | Includes the telemetry round trip and the pause |
-| 9 | Beta Entry Review: GO / HOLD | Decision | |
+| 0 | Close Operational Integrity: final review recorded in REV4 | Evidence | Verdict is PASS by the locked criteria |
+| 1 | Rehearse rollback: v33 → v32 → v33 | Production, restarts | Runbook section 4 after each; scheduler does not rerun |
+| 2 | Push `beta1/candidate`; open the PR | Git | Approved explicitly |
+| 3 | **Deploy the candidate build** with `STRATUS_NOTIFICATIONS_PAUSED=true`, EPS gate unset, catalysts unset | Backend deploy; creates three ledger tables | Health; feed returns; ledger has three tables and rows; every would-be push recorded as `beta_notifications_paused`; no SEND |
+| 4 | Let one full poll complete. Validate the recalculation | Observation | Confidence fell only where a source was counted more than once; revisions are explained; freshness states are sane for old events; labels read Supported or Limited |
+| 5 | Lift the pause. Confirm no backlog | Flag (restart) | No SEND for any revision created while paused |
+| 6 | Watch memory for the same warm-up period as Phase A (about three hours) | Observation | Plateau comparable to v33 |
+| 7 | Pause. Turn the EPS gate on (`STRATUS_EPS_COMPARABILITY_GATE=true`) | Flag (restart) | Earnings-surprise opportunities leave the feed; no beat / miss wording anywhere |
+| 8 | Set `STRATUS_SEC_USER_AGENT`, then `STRATUS_SEC_FILING_CATALYSTS=true` | Flags (restart); new outbound provider | Filing opportunities appear with provenance; log shows declined filings with reason codes; feed is 7 to 9 items in three families, or an explained difference |
+| 9 | Let one full poll complete, then lift the pause | Flag (restart) | No first-poll push for the filings that appeared at once |
+| 10 | Rehearse the pause and rollback (runbook section R) | Production | Timed and recorded |
+| 11 | Set `FRESHNESS_CLOCK_CORRECTED_FROM` to the step-3 date on the V1a evaluator branch | Local | Evaluator recognises the boundary |
+| 12 | Internal mobile build from the deployed commit | Mobile build | Builds |
+| 13 | Physical-device acceptance (`DEVICE_ACCEPTANCE_SCRIPT.md`) | Acceptance | Signed, no open evidence-integrity finding |
+| 14 | Beta Entry Review | Decision | GO / HOLD |
 
-Releases A, B and C can each be cut as a branch from `beta1/candidate`'s commits; the candidate branch
-contains all three merged and tested together.
+Steps 7 and 8 can share one restart if you prefer fewer restarts to finer attribution.
 
-## Schema changes (all additive, all need explicit approval)
+Each flag change is a Fly secret and restarts the machine. Steps 3 to 9 involve about five restarts over
+a day; the restart-safety work of Phase B is what makes that routine.
+
+## 3. Schema (approved 2026-10-06)
 
 | Store | Change | Retention |
 |---|---|---|
-| `notification_ledger.db` (exists today, 0 bytes) | Creates `notification_candidates`, `notification_decisions`, `notification_dispatches` | 120 days, purged at startup and daily |
-| `telemetry_events.db` | No table change. New event name and new keys inside the existing JSON `context` column | None today; a bound should be set before wider release |
-| Everything else | None | |
+| `notification_ledger.db` (0 bytes today) | Creates `notification_candidates`, `notification_decisions`, `notification_dispatches` | 120 days; purged at startup and daily |
+| `telemetry_events.db` | No table change; one new event name and new keys in the existing JSON column | None today |
 
-No migration step is needed: tables are created on first open, and nothing rewrites existing rows.
+Reference and execution checklist: `LEDGER_SCHEMA_APPROVAL.md`. No migration step; nothing rewrites
+existing rows. The catalyst path adds no schema and no store.
 
-## Backward compatibility
+## 4. Configuration introduced
+
+| Variable | Default | Set at | Meaning |
+|---|---|---|---|
+| `STRATUS_NOTIFICATIONS_PAUSED` | off | Step 3 on, 5 off, 7 on, 9 off | Suppresses every new push; recorded reason `beta_notifications_paused` |
+| `STRATUS_EPS_COMPARABILITY_GATE` | off | Step 7 | No earnings beat / miss / in-line without proven comparability |
+| `STRATUS_SEC_FILING_CATALYSTS` | off | Step 8 | SEC Form 8-K catalyst path |
+| `STRATUS_SEC_USER_AGENT` | unset | Step 8 | `STRATUS Beta 1 / Garris Engineering LLC; contact=<company-controlled address>`. Without a valid value no SEC request is made. Never in source |
+| `STRATUS_NOTIFICATION_LEDGER_RETENTION_DAYS` | 120 | Not set | Leave at the approved default |
+
+## 5. Compatibility
 
 | Pairing | Result |
 |---|---|
-| New backend, current mobile build | Works. Nothing the current app sends is refused |
-| New mobile build, current backend (v33) | **Do not ship.** Feedback is refused and Ask telemetry from an opportunity is dropped, because v33 rejects the new fields. Backend first, always |
-| New backend rolled back to v33 after feedback exists | Degraded telemetry only; see the runbook, section 5 |
+| New backend, current mobile build | Works. New feed fields are additive; the old label field is still served |
+| New mobile build, backend v33 | **Do not ship.** Feedback is refused and Ask telemetry from an opportunity is dropped. Backend first |
+| Rolled back to v33 after feedback rows exist | Telemetry degraded on v33 only; feed, Watch, Ask, notifications unaffected (runbook section 5) |
 
-## Must not ship together, or without the pause
+## 6. Rules that are not optional
 
-1. **The evidence change without the pause.** Removing self-corroboration lowers the stored confidence of
-   affected opportunities. The lifecycle tracker treats a drop of 0.15 or more as a notification-worthy
-   `confidence_decreased` revision. Without the pause, a model change would push to users as if the
-   market had changed. Deploy with the pause on; lift it after one full poll.
-2. **The mobile build before Release A.**
-3. **Freshness and the evidence change in one release.** Both move what users see and what suppresses a
-   push; separately, each effect can be attributed.
-4. **The EPS gate before the ledger.** With the gate on, earnings-driven opportunities disappear from
-   the feed. That should be visible in the audit trail when it happens.
+1. **Notifications are paused across every step that changes what qualifies or how evidence is scored**
+   (steps 3 to 5 and 7 to 9). The evidence transition can lower stored confidence by enough to count as
+   a notification-worthy revision, and the catalyst path makes up to two weeks of filings appear at
+   once. Neither is market news. Procedure: pause, deploy or flip, let one poll recalculate, verify no
+   SEND and no backlog, validate feed and revision state, re-enable.
+2. **Backend before mobile.**
+3. **The EPS gate is not turned on without the catalyst path following in the same session.** Between
+   steps 7 and 9 the feed is about three items; that state should last minutes, not days.
+4. **No SEC request without a configured, valid User-Agent.** Enforced in code.
 
-## Rollback boundaries
+## 7. Rollback boundaries
 
-- After A: roll back to v33 freely. New tables are ignored.
-- After B: roll back to A freely.
-- After C: roll back to B restores self-corroboration and unsupported EPS claims. Treat as a
-  truthfulness regression; prefer pausing notifications and fixing forward.
-- After feedback rows exist: rolling back past A degrades telemetry on the old build (not the feed).
+| After step | Roll back by | Note |
+|---|---|---|
+| 3 to 6 | Redeploy the v33 image | New tables are ignored by v33. Restores self-corroboration and the old freshness clock |
+| 7 | Unset the EPS gate | Restores unsupported beat / miss claims. A truthfulness regression; prefer pausing and fixing forward |
+| 8 to 9 | Unset the catalyst flag | Filing signals stop on the next poll; opportunities resting only on a filing age out |
+| Any | Pause notifications first | Always available once step 3 is live |
 
-## Expected visible effect on the feed
+No step requires a data rollback. Do not delete `/data` files.
 
-- EPS gate on: with the current provider, no earnings-surprise opportunity qualifies. In the 2026-10-05
-  production snapshot the earnings family accounted for 20 opportunities. The feed then rests on price
-  and analyst signals. **This is the largest user-visible change in the sequence and should be looked at
-  on a device before Beta Entry**: a thin feed is a core-usability question, and row 11 of the scorecard
-  ("enough to judge") depends on it.
-- Freshness: items fetched recently stop being marked unavailable merely because the event is old.
-- Evidence: confidence values fall where the same source was counted more than once.
+## 8. Decisions already made
 
-## Decisions made 2026-10-06
+| Date | Decision |
+|---|---|
+| 2026-10-05 | Unsupported EPS-surprise is disabled for Beta 1; a vendor answer does not block |
+| 2026-10-05 | Notifications fail closed and can be paused |
+| 2026-10-06 | Ledger schema approved: three additive tables, 120-day retention |
+| 2026-10-06 | Recalibration handled by the pause procedure; no lifecycle model-version field |
+| 2026-10-06 | Evidence labels are condition-based |
+| 2026-10-07 | Narrow SEC 8-K catalyst path, taxonomy and fail-closed behaviour accepted |
+| 2026-10-08 | A 7 to 9 item feed is sufficient for the Beta 1 candidate; category scope stops here |
+| 2026-10-08 | SEC User-Agent format fixed; contact value to come from Logan |
+| 2026-10-08 | Catalyst parameters stay provisional; review after about two weeks of beta evidence (`PROVISIONAL_PARAMETERS.md`) |
 
-1. Ledger schema approved as built, with 120-day retention: `LEDGER_SCHEMA_APPROVAL.md`.
-2. Recalibration is handled by the pause procedure for Beta 1. No lifecycle model-version column. Release C
-   runs as: pause notifications; deploy the evidence transition; let one full poll recalculate; verify the
-   ledger shows no SEND and that `beta_notifications_paused` was the recorded reason for any would-be
-   interruption; validate feed and revision state; re-enable notifications.
-3. Condition-based evidence labels are built (ADR-083) and ship in Release C. They depend on the freshness
-   release: before it, production reports freshness unavailable for every item, and every label would read
-   Limited. **Release B must precede Release C.**
-4. No SEC 8-K or news path is built. Feed depth is measured first: `GATED_FEED_DEPTH.md`.
+## 9. What this package still needs from Logan and Chuck
 
-## Decided 2026-10-07: the catalyst path
+1. Option 1 or option 2 (section 1).
+2. The company-controlled contact address for the SEC User-Agent.
+3. Approval to push the branch and open the PR (step 2), after the window closes.
+4. Whether steps 7 and 8 share a restart.
+5. Owner names on the safety card.
 
-The gated feed (3 of 21) was accepted as a core-usability blocker and the narrow SEC 8-K path was built
-locally (ADR-084, `CATALYST_PATH.md`). It becomes **Release D**, after Release C:
+## 10. Not verified by anything in this package
 
-| # | Step | Kind | Why here |
-|---|---|---|---|
-| 6a | **Release D — company-filing catalysts.** Set `STRATUS_SEC_USER_AGENT`, then `STRATUS_SEC_FILING_CATALYSTS`. Notifications paused for the first poll | Backend deploy, flags, new outbound provider | After the EPS gate, so the feed is never shown gated and empty for longer than needed; separate from C so its effect is attributable |
-
-Release D adds no schema and no store. It starts outbound requests to the SEC (about 30 companies every
-30 minutes). First-poll behaviour: every qualifying filing in the last 14 days appears as a new
-opportunity at once, each notification-worthy; deploy with the pause on and lift it after one poll, as
-for Release C. C and D may be deployed in one maintenance window but as two releases.
-
-Rollback: turning the flag off removes filing signals on the next poll; opportunities that rested only
-on a filing age out through the lifecycle. Nothing stored needs undoing.
-
-## Open decisions this sequence needs
-
-1. **The SEC User-Agent contact.** The SEC asks automated clients for an operator name and a real contact
-   address. Logan to supply the value; it is configuration, not source.
-2. **Whether the resulting feed is enough**, and whether Beta 1 should be timed to overlap a reporting
-   season (`CATALYST_PATH.md`, section 9).
-3. Owner, rationale and review date for the provisional catalyst parameters (REV4 2A.8).
-4. Owner names on the safety card.
+- Nothing has run on a device.
+- The candidate has not run against live providers: not the market-data provider with the gate on, and
+  not the SEC. The feed composition in `CATALYST_PATH.md` is a replay.
+- Memory behaviour of the candidate build in production is unknown. It adds ledger writes and a second
+  provider client; step 6 exists to look.
+- The pause and rollback have not been rehearsed.

@@ -71,7 +71,8 @@ def _setup(monkeypatch, *, sec_payload, catalysts=True, user_agent=True):
         monkeypatch.delenv("STRATUS_SEC_FILING_CATALYSTS", raising=False)
     if user_agent:
         monkeypatch.setenv(
-            "STRATUS_SEC_USER_AGENT", "STRATUS test contact@example.invalid"
+            "STRATUS_SEC_USER_AGENT",
+            "STRATUS test / Example LLC; contact=ops@example.invalid",
         )
     else:
         monkeypatch.delenv("STRATUS_SEC_USER_AGENT", raising=False)
@@ -117,7 +118,10 @@ def test_results_filing_surfaces_as_a_truthful_earnings_result(monkeypatch):
     for claim in ("beat", "miss", "consensus", "EPS of", "%"):
         assert claim not in headline
     assert len(calls) == 1
-    assert calls[0].headers["user-agent"] == "STRATUS test contact@example.invalid"
+    assert (
+        calls[0].headers["user-agent"]
+        == "STRATUS test / Example LLC; contact=ops@example.invalid"
+    )
     reset_pipeline_state()
 
 

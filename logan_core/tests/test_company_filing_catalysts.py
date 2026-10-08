@@ -8,6 +8,7 @@ several items in one filing are one opportunity; the provider fails closed.
 
 import json
 import pathlib
+import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -26,6 +27,7 @@ from logan_core.receptors.providers.sec_edgar import (
     SecProviderError,
     parse_submissions,
     recent_window,
+    validate_sec_user_agent,
 )
 from logan_core.thesis.market_driver import (
     primary_signal_family,
@@ -366,15 +368,44 @@ def test_provider_makes_no_request_without_a_user_agent():
         return httpx.Response(200, json=_payload())
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    for missing in (None, "", "   "):
+    for invalid in (
+        None,
+        "",
+        "   ",
+        "STRATUS",  # no contact
+        "STRATUS Beta 1 / Garris Engineering LLC",  # no contact
+        "STRATUS Beta 1 / Garris Engineering LLC; contact=<COMPANY_CONTROLLED_EMAIL>",
+        "STRATUS Beta 1; contact=not-an-address",
+        "contact=ops@example.invalid",  # no operator named
+    ):
         with pytest.raises(SecProviderError):
-            SecEdgarFilingsProvider(user_agent=missing, client=client)
+            SecEdgarFilingsProvider(user_agent=invalid, client=client)
     assert calls == []
+
+
+def test_the_governed_user_agent_format_is_accepted():
+    value = "STRATUS Beta 1 / Garris Engineering LLC; contact=ops@example.invalid"
+    assert validate_sec_user_agent(value) == value
+    assert validate_sec_user_agent("  " + value + "  ") == value
+
+
+def test_no_contact_address_is_committed_to_source():
+    """The contact is operator configuration. No address appears in the
+    provider module or in the configuration module."""
+    import backend.app.config as config
+    import logan_core.receptors.providers.sec_edgar as provider_module
+
+    for module in (config, provider_module):
+        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+        addresses = re.findall(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", source
+        )
+        assert [a for a in addresses if not a.endswith("example.com")] == []
 
 
 def _provider(handler, clock):
     return SecEdgarFilingsProvider(
-        user_agent="STRATUS test contact@example.invalid",
+        user_agent="STRATUS test / Example LLC; contact=ops@example.invalid",
         client=httpx.Client(transport=httpx.MockTransport(handler)),
         clock=lambda: clock["t"],
         sleep=lambda seconds: clock.__setitem__(
@@ -395,7 +426,10 @@ def test_provider_sends_the_configured_user_agent_and_caches():
     assert provider.last_successful_fetch_age_seconds("ABBV") is None
     first = provider.fetch_recent_filings("ABBV")
     assert len(first) == 2
-    assert seen[0].headers["user-agent"] == "STRATUS test contact@example.invalid"
+    assert (
+        seen[0].headers["user-agent"]
+        == "STRATUS test / Example LLC; contact=ops@example.invalid"
+    )
     assert str(seen[0].url).endswith("/CIK0001551152.json")
 
     clock["t"] += 60

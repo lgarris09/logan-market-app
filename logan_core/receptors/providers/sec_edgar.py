@@ -15,6 +15,7 @@ Fail closed:
   contain the requested ticker yields nothing.
 """
 
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -78,6 +79,33 @@ CIK_BY_TICKER: dict[str, str] = {
 class SecProviderError(Exception):
     """Any failure to obtain a usable filings index. Callers treat it as
     "no filing signal this poll", never as a reason to fail the feed."""
+
+
+_CONTACT_PATTERN = re.compile(r"contact=([^\s;<>@]+@[^\s;<>@]+\.[^\s;<>@]+)")
+
+
+def validate_sec_user_agent(value: Optional[str]) -> str:
+    """The SEC asks automated clients to identify the operator and give a
+    contact address. A valid value names the operator and carries
+    `contact=<address>`, for example
+    `STRATUS Beta 1 / Garris Engineering LLC; contact=ops@example.com`.
+    Anything else -- empty, no contact, or a placeholder left unfilled --
+    is refused, and the provider then makes no request at all.
+    """
+    text = (value or "").strip()
+    if not text:
+        raise SecProviderError(
+            "no SEC User-Agent configured; the SEC filings provider is disabled"
+        )
+    if "<" in text or ">" in text:
+        raise SecProviderError("SEC User-Agent still contains a placeholder")
+    match = _CONTACT_PATTERN.search(text)
+    if match is None:
+        raise SecProviderError("SEC User-Agent has no contact=<address>")
+    operator = text[: match.start()].strip(" ;/")
+    if len(operator) < 3:
+        raise SecProviderError("SEC User-Agent does not name the operator")
+    return text
 
 
 def _parse_accepted(value: object) -> Optional[datetime]:
@@ -159,11 +187,7 @@ class SecEdgarFilingsProvider:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not user_agent or not user_agent.strip():
-            raise SecProviderError(
-                "no SEC User-Agent configured; the SEC filings provider is disabled"
-            )
-        self._user_agent = user_agent.strip()
+        self._user_agent = validate_sec_user_agent(user_agent)
         self._client = client or httpx.Client(timeout=SEC_REQUEST_TIMEOUT_SECONDS)
         self._clock = clock
         self._sleep = sleep

@@ -10,6 +10,11 @@ what STRATUS is and is not needs the legal / compliance read that REV4 already r
 People who already keep an eye on at least a few stocks or company events, and who would like to spend
 less time checking.
 
+*Internal selection note, not participant-facing:* prefer people whose interests overlap the governed
+30-company cohort, so they receive enough real opportunity moments to judge whether STRATUS reduces
+monitoring effort; and prefer a beta period with meaningful reporting activity. The universe is not
+expanded to fit a participant. Remove this note before sending.
+
 ## What STRATUS is
 
 STRATUS watches for meaningful changes in the companies you care about and tells you what changed, why
