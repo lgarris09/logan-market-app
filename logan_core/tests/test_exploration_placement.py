@@ -84,6 +84,7 @@ def test_only_the_weakest_non_watch_candidate_can_be_displaced():
     eligible = [_candidate("MSFT", objective_strength=0.5)]
     result = apply_exploration_placement(top, eligible)
     assert result.placed_event_id == eligible[0].event_id
+    assert result.opportunity_cost is not None
     assert (
         result.opportunity_cost.displaced_thesis_id == top[1].event_id
     )  # GOOGL, weakest non-Watch
@@ -119,6 +120,7 @@ def test_opportunity_cost_trace_records_the_policy_version_and_timestamp():
     top = [_candidate("AAPL", objective_strength=0.5)]
     eligible = [_candidate("MSFT", objective_strength=0.6)]
     result = apply_exploration_placement(top, eligible)
+    assert result.opportunity_cost is not None
     assert result.opportunity_cost.exploration_policy_version == result.policy_version
     assert result.opportunity_cost.recorded_at is not None
 

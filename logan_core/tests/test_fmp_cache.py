@@ -15,6 +15,9 @@ test_config_live_stocks.py continue to exercise the unmodified
 trigger/qualification behavior above it.
 """
 
+from datetime import datetime
+from typing import Any
+
 import httpx
 import pytest
 
@@ -535,7 +538,7 @@ def test_a_successful_refetch_within_the_grace_window_still_updates_the_cache():
     """The grace window is a fallback for *failures*, not a reason to stop
     trying -- once FMP recovers, the next real success must replace the
     stale value and reset the TTL clock, not keep serving the old one."""
-    responses_served = []
+    responses_served: list[Any] = []
 
     def handler(request):
         response = _earnings_response(eps_actual=1.05 if not responses_served else 2.22)
@@ -547,11 +550,13 @@ def test_a_successful_refetch_within_the_grace_window_still_updates_the_cache():
     provider = _earnings_provider(handler, cache)
 
     first = provider.fetch_latest_earnings("NVDA")
+    assert first is not None
     assert first.actual_eps == 1.05
 
     clock.advance(EARNINGS_CACHE_TTL_SECONDS + 60)
     second = provider.fetch_latest_earnings("NVDA")
 
+    assert second is not None
     assert second.actual_eps == 2.22  # the real, newer report -- not stale 1.05
 
 
@@ -614,7 +619,7 @@ def test_seed_stale_entry_lets_a_refetch_failure_fall_back_immediately():
         consensus_eps=0.98,
         source_id="fmp",
         source_name="Financial Modeling Prep",
-        report_timestamp="2026-08-26T00:00:00+00:00",
+        report_timestamp=datetime.fromisoformat("2026-08-26T00:00:00+00:00"),
     )
     # Seeded as though observed 1 hour ago -- well within both the 6h TTL and
     # the 24h grace window on top of it.
@@ -648,7 +653,7 @@ def test_seeded_entry_within_ttl_is_served_without_any_fetch_attempt():
         consensus_eps=2.09,
         source_id="fmp",
         source_name="Financial Modeling Prep",
-        report_timestamp="2026-08-26T00:00:00+00:00",
+        report_timestamp=datetime.fromisoformat("2026-08-26T00:00:00+00:00"),
     )
     cache.seed_stale_entry("earnings", "NVDA", report, age_seconds=60)
 
@@ -674,7 +679,7 @@ def test_seeded_entry_outside_ttl_but_within_grace_is_served_on_failure():
         consensus_eps=0.98,
         source_id="fmp",
         source_name="Financial Modeling Prep",
-        report_timestamp="2026-08-26T00:00:00+00:00",
+        report_timestamp=datetime.fromisoformat("2026-08-26T00:00:00+00:00"),
     )
     # Past the 6h TTL (a real refetch is attempted) but nowhere near the
     # additional 24h grace window -- the same shape as
@@ -706,7 +711,7 @@ def test_seeded_entry_outside_ttl_and_grace_is_rejected():
         consensus_eps=0.98,
         source_id="fmp",
         source_name="Financial Modeling Prep",
-        report_timestamp="2026-08-26T00:00:00+00:00",
+        report_timestamp=datetime.fromisoformat("2026-08-26T00:00:00+00:00"),
     )
     # A durably-recovered observation this old is no longer safe to present
     # as current, exactly like a same-process entry that aged past grace --
@@ -740,7 +745,7 @@ def test_a_successful_fetch_replaces_a_recovered_seeded_value():
         consensus_eps=0.98,
         source_id="fmp",
         source_name="Financial Modeling Prep",
-        report_timestamp="2026-05-28T00:00:00+00:00",
+        report_timestamp=datetime.fromisoformat("2026-05-28T00:00:00+00:00"),
     )
     cache.seed_stale_entry(
         "earnings", "NVDA", old_report, age_seconds=EARNINGS_CACHE_TTL_SECONDS + 60
@@ -748,6 +753,7 @@ def test_a_successful_fetch_replaces_a_recovered_seeded_value():
 
     result = provider.fetch_latest_earnings("NVDA")
 
+    assert result is not None
     assert result.actual_eps == 2.22  # the real, fresh report -- not the seeded 1.05
 
 

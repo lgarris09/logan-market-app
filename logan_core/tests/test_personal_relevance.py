@@ -3,6 +3,7 @@ compute_personal_relevance() (logan_core/opportunity/personal_relevance.py)
 and its integration into OpportunityEngine.evaluate()."""
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from logan_core.contracts import CommunitySignal, ConclusionConfidence, ReasoningResult
@@ -147,7 +148,7 @@ def test_suppressed_entity_presents_as_none_not_a_special_case():
 
 def _reasoning(**overrides) -> ReasoningResult:
     now = datetime.now(timezone.utc)
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         event_id=uuid4(),
         significance="Test event",
         personal_relevance_narrative="Test narrative.",

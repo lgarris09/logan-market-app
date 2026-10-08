@@ -11,7 +11,15 @@
 // more robust is handling it here -- see the isClerkConfigured() guard
 // below, mirroring app/account.tsx's own).
 import { useEffect } from "react";
-import { KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
@@ -77,7 +85,11 @@ function ConfiguredOnboardingAccount() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <MakeStratusYoursCard showGuestOption onGuestContinue={goToInterests} onAuthComplete={goToInterests} />
+          <MakeStratusYoursCard
+            showGuestOption
+            onGuestContinue={goToInterests}
+            onAuthComplete={goToInterests}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

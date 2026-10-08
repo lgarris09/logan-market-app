@@ -13,6 +13,8 @@ network call, real parsing/qualification logic exercised end-to-end through
 real signal genuinely fired this poll.
 """
 
+from typing import Any
+
 import httpx
 
 from backend.app.logan_feed import reset_pipeline_state, run_demo_feed
@@ -52,7 +54,7 @@ NON_QUALIFYING_EARNINGS = {
         }
     ]
 }
-NO_EARNINGS = {}
+NO_EARNINGS: dict[str, Any] = {}
 
 QUALIFYING_PRICE_MOVE = {
     "NVDA": [

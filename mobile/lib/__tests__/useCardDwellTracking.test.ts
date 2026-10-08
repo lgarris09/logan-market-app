@@ -62,10 +62,9 @@ describe("useCardDwellTracking", () => {
   });
 
   it("records a single view interaction with the measured duration on close", () => {
-    const { rerender } = renderHook(
-      ({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t),
-      { initialProps: { t: target as DwellTarget | null } }
-    );
+    const { rerender } = renderHook(({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t), {
+      initialProps: { t: target as DwellTarget | null },
+    });
 
     jest.setSystemTime(5000);
     rerender({ t: null });
@@ -81,10 +80,9 @@ describe("useCardDwellTracking", () => {
   });
 
   it("flushes exactly once when the open card is replaced by a different one", () => {
-    const { rerender } = renderHook(
-      ({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t),
-      { initialProps: { t: target } }
-    );
+    const { rerender } = renderHook(({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t), {
+      initialProps: { t: target },
+    });
 
     jest.setSystemTime(3000);
     const other: DwellTarget = { eventId: "evt-2", entityId: "TSLA", domain: "stocks" };
@@ -109,10 +107,9 @@ describe("useCardDwellTracking", () => {
   });
 
   it("does not fabricate a new open on repeated polling with the same event_id", () => {
-    const { rerender } = renderHook(
-      ({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t),
-      { initialProps: { t: target } }
-    );
+    const { rerender } = renderHook(({ t }: { t: DwellTarget | null }) => useCardDwellTracking(t), {
+      initialProps: { t: target },
+    });
 
     // A new object reference for the same logical target (e.g. a poll
     // refresh reconstructing `items`) must not retrigger the effect.

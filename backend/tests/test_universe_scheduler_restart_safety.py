@@ -38,6 +38,15 @@ from backend.tests.test_universe_manager import (
 )
 from logan_core.contracts import CohortRebalanceResult
 
+
+def _require_state():
+    """The scheduler state, asserted present -- for tests that read a field
+    straight off it."""
+    state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
+    return state
+
+
 INTERVAL = timedelta(seconds=REEVALUATION_MIN_INTERVAL_SECONDS)
 
 
@@ -172,20 +181,18 @@ def test_persisted_last_success_survives_restart_and_a_later_failure(
     _enable_persistence_with_isolated_dbs(monkeypatch, tmp_path)
     record = _stub_reevaluation(monkeypatch)
     run_scheduled_universe_reevaluation(now=NOW)
-    first_success = get_scheduler_state(UNIVERSE_REEVALUATION_JOB).last_succeeded_at
+    first_success = _require_state().last_succeeded_at
     assert first_success is not None
 
     _simulate_restart()
-    assert (
-        get_scheduler_state(UNIVERSE_REEVALUATION_JOB).last_succeeded_at
-        == first_success
-    )
+    assert _require_state().last_succeeded_at == first_success
 
     record["fail"] = True
     with pytest.raises(RuntimeError):
         run_scheduled_universe_reevaluation(now=NOW + INTERVAL)
     _simulate_restart()
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
     assert state.last_outcome == "failure"
     assert state.last_succeeded_at == first_success  # never fabricated/moved
 
@@ -214,6 +221,7 @@ def test_failed_reevaluation_is_retried_after_the_bounded_delay_then_recovers(
     assert seconds_until_reevaluation_due(now=retry_at) == 0.0
     assert run_scheduled_universe_reevaluation(now=retry_at).executed is True
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
     assert state.last_outcome == "success"
     assert state.last_succeeded_at is not None
 
@@ -399,7 +407,7 @@ def test_loop_does_not_check_before_the_remaining_time_has_passed(monkeypatch):
     monkeypatch.setattr(
         main,
         "run_production_scheduled_reevaluation",
-        lambda *, now=None: calls.append(1) or _skipped(),
+        lambda *, now=None: calls.append(1) or _skipped(),  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(main, "seconds_until_reevaluation_due", lambda: 3600.0)
     _run_loop_for(0.1)
@@ -430,7 +438,7 @@ def test_loop_never_spins_when_state_stays_due_without_a_claim(monkeypatch):
     monkeypatch.setattr(
         main,
         "run_production_scheduled_reevaluation",
-        lambda *, now=None: calls.append(1) or _skipped(),
+        lambda *, now=None: calls.append(1) or _skipped(),  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(main, "seconds_until_reevaluation_due", lambda: 0.0)
     monkeypatch.setattr(main, "UNIVERSE_REEVALUATION_MIN_RECHECK_SECONDS", 0.05)
@@ -460,7 +468,9 @@ def test_real_loop_runs_an_overdue_reevaluation_once_across_restarts(
 
     assert record["count"] == 1
     state = get_scheduler_state(UNIVERSE_REEVALUATION_JOB)
+    assert state is not None
     assert state.last_outcome == "success"
+    assert state.last_succeeded_at is not None
     assert state.last_succeeded_at > long_ago
 
 
@@ -478,7 +488,7 @@ def test_real_loop_does_nothing_at_startup_when_not_yet_due(monkeypatch, tmp_pat
         _run_loop_for(0.1)
 
     assert record["count"] == 0
-    assert get_scheduler_state(UNIVERSE_REEVALUATION_JOB).last_started_at == recent
+    assert _require_state().last_started_at == recent
 
 
 # --- Universe membership / selection semantics are untouched ------------------

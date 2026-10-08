@@ -323,7 +323,9 @@ def test_signal_ids_and_decision_trace_remain_bounded_under_heavy_repeated_polli
     assert event.is_new is False
     # The event identity itself is unaffected by bounding provenance --
     # this is still one continuously-corroborated event throughout.
-    assert event.event_id == world_model.get_event(event.event_id).event_id
+    stored_event = world_model.get_event(event.event_id)
+    assert stored_event is not None
+    assert event.event_id == stored_event.event_id
 
 
 def test_genuine_corroboration_still_recorded_after_bound_is_exceeded(now):

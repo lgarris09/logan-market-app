@@ -4,6 +4,7 @@ network -- just OpportunityContext -> answer_question() -> real, grounded
 text.
 """
 
+from typing import Any
 from uuid import uuid4
 
 from backend.app.ask_context import OpportunityContext
@@ -11,7 +12,7 @@ from backend.app.ask_engine import answer_question
 
 
 def _context(**overrides) -> OpportunityContext:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         event_id=uuid4(),
         entity_id="NVDA",
         display_name="NVIDIA",

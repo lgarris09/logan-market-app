@@ -44,15 +44,11 @@ describe("resolveApiBaseUrl", () => {
     });
 
     test("falls back to the LAN dev default when unset", () => {
-      expect(resolveApiBaseUrl("development", undefined)).toBe(
-        "http://192.168.86.44:8000"
-      );
+      expect(resolveApiBaseUrl("development", undefined)).toBe("http://192.168.86.44:8000");
     });
 
     test("falls back to the LAN dev default for an unrecognized app env", () => {
-      expect(resolveApiBaseUrl("staging", undefined)).toBe(
-        "http://192.168.86.44:8000"
-      );
+      expect(resolveApiBaseUrl("staging", undefined)).toBe("http://192.168.86.44:8000");
     });
   });
 
@@ -64,21 +60,17 @@ describe("resolveApiBaseUrl", () => {
     });
 
     test("throws when EXPO_PUBLIC_API_BASE_URL is blank", () => {
-      expect(() => resolveApiBaseUrl(appEnv, "   ")).toThrow(
-        /EXPO_PUBLIC_API_BASE_URL is not set/
-      );
+      expect(() => resolveApiBaseUrl(appEnv, "   ")).toThrow(/EXPO_PUBLIC_API_BASE_URL is not set/);
     });
 
     test("throws for a LAN-shaped address rather than silently using it", () => {
-      expect(() =>
-        resolveApiBaseUrl(appEnv, "http://192.168.86.44:8000")
-      ).toThrow(/private LAN\/local address/);
+      expect(() => resolveApiBaseUrl(appEnv, "http://192.168.86.44:8000")).toThrow(
+        /private LAN\/local address/
+      );
     });
 
     test("throws for a non-HTTPS externally reachable address", () => {
-      expect(() => resolveApiBaseUrl(appEnv, "http://api.example.com")).toThrow(
-        /must use HTTPS/
-      );
+      expect(() => resolveApiBaseUrl(appEnv, "http://api.example.com")).toThrow(/must use HTTPS/);
     });
 
     test("accepts a real HTTPS externally reachable address", () => {
@@ -99,7 +91,9 @@ describe("eas.json's configured release API URLs", () => {
 
   test.each(["preview", "production"])("%s profile's URL resolves without throwing", (profile) => {
     const env = easConfig.build[profile].env;
-    expect(() => resolveApiBaseUrl(env.EXPO_PUBLIC_APP_ENV, env.EXPO_PUBLIC_API_BASE_URL)).not.toThrow();
+    expect(() =>
+      resolveApiBaseUrl(env.EXPO_PUBLIC_APP_ENV, env.EXPO_PUBLIC_API_BASE_URL)
+    ).not.toThrow();
     expect(isLanOrLocalUrl(env.EXPO_PUBLIC_API_BASE_URL)).toBe(false);
   });
 });

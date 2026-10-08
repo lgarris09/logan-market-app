@@ -10,7 +10,11 @@ import { router } from "expo-router";
 
 import { font, radius, spacing, theme, type } from "../../constants/theme";
 import { markOnboardingComplete } from "../../lib/onboarding";
-import { INTEREST_CATEGORIES, InterestCategoryId, saveDeclaredInterests } from "../../lib/interests";
+import {
+  INTEREST_CATEGORIES,
+  InterestCategoryId,
+  saveDeclaredInterests,
+} from "../../lib/interests";
 
 export default function InterestsScreen() {
   const [selected, setSelected] = useState<Set<InterestCategoryId>>(new Set());
@@ -55,7 +59,9 @@ export default function InterestsScreen() {
         <Text style={styles.heading}>
           What matters to you <Text style={styles.headingAccent}>right now?</Text>
         </Text>
-        <Text style={styles.subhead}>This helps STRATUS focus on what&rsquo;s most important to you.</Text>
+        <Text style={styles.subhead}>
+          This helps STRATUS focus on what&rsquo;s most important to you.
+        </Text>
 
         <View style={styles.grid}>
           {INTEREST_CATEGORIES.map((category) => {
@@ -70,7 +76,11 @@ export default function InterestsScreen() {
                 accessibilityLabel={category.label}
               >
                 <View style={styles.cardTopRow}>
-                  <Ionicons name={category.icon} size={20} color={isSelected ? theme.accent : theme.textSecondary} />
+                  <Ionicons
+                    name={category.icon}
+                    size={20}
+                    color={isSelected ? theme.accent : theme.textSecondary}
+                  />
                   {isSelected && (
                     <View style={styles.checkBadge}>
                       <Ionicons name="checkmark" size={12} color={theme.background} />
@@ -85,7 +95,9 @@ export default function InterestsScreen() {
         </View>
 
         <TouchableOpacity style={styles.continueButton} onPress={finish} disabled={busy}>
-          <Text style={styles.continueButtonText}>{busy ? "Saving..." : "Continue to STRATUS"}</Text>
+          <Text style={styles.continueButtonText}>
+            {busy ? "Saving..." : "Continue to STRATUS"}
+          </Text>
           <Ionicons name="arrow-forward" size={18} color={theme.background} />
         </TouchableOpacity>
         <Text style={styles.footnote}>You can update these anytime later.</Text>
@@ -108,10 +120,25 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   content: { padding: spacing.xl, paddingBottom: spacing.xxl },
-  heading: { fontFamily: font.heading, fontSize: type.title + 4, color: theme.text, marginBottom: spacing.sm },
+  heading: {
+    fontFamily: font.heading,
+    fontSize: type.title + 4,
+    color: theme.text,
+    marginBottom: spacing.sm,
+  },
   headingAccent: { color: theme.accent },
-  subhead: { fontFamily: font.body, fontSize: type.body, color: theme.textSecondary, marginBottom: spacing.xl },
-  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: spacing.sm },
+  subhead: {
+    fontFamily: font.body,
+    fontSize: type.body,
+    color: theme.textSecondary,
+    marginBottom: spacing.xl,
+  },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
   card: {
     width: CARD_WIDTH,
     backgroundColor: theme.surface,
@@ -122,7 +149,12 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   cardSelected: { borderColor: theme.accent, backgroundColor: theme.accentSoft },
-  cardTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm },
+  cardTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
   checkBadge: {
     width: 18,
     height: 18,
@@ -131,8 +163,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cardLabel: { fontFamily: font.bodyMedium, fontSize: type.body, color: theme.text, marginBottom: 2 },
-  cardDescription: { fontFamily: font.body, fontSize: type.micro + 1, color: theme.muted, lineHeight: 15 },
+  cardLabel: {
+    fontFamily: font.bodyMedium,
+    fontSize: type.body,
+    color: theme.text,
+    marginBottom: 2,
+  },
+  cardDescription: {
+    fontFamily: font.body,
+    fontSize: type.micro + 1,
+    color: theme.muted,
+    lineHeight: 15,
+  },
   continueButton: {
     flexDirection: "row",
     gap: spacing.sm,

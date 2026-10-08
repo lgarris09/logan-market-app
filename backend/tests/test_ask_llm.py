@@ -8,6 +8,7 @@ FixtureAskLlmProvider (ask_llm_fixture.py), mirroring FixtureEarningsProvider/
 FixtureMarketDataProvider's own testing discipline.
 """
 
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -34,7 +35,7 @@ client = TestClient(app)
 
 
 def _context(**overrides) -> OpportunityContext:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         event_id=uuid4(),
         entity_id="NVDA",
         display_name="NVIDIA",

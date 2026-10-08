@@ -36,7 +36,9 @@ def test_recent_history_survives_and_the_oldest_expires_first():
     # Deterministic: exactly the two oldest are gone, in insertion order.
     assert store.get(refs[0]) is None
     assert store.get(refs[1]) is None
-    assert [store.get(ref).payload for ref in refs[2:]] == [2, 3, 4]
+    kept_entries = [store.get(ref) for ref in refs[2:]]
+    assert all(entry is not None for entry in kept_entries)
+    assert [entry.payload for entry in kept_entries if entry is not None] == [2, 3, 4]
     assert [entry.payload for entry in store.by_kind("normalized_signal")] == [2, 3, 4]
 
 
@@ -58,7 +60,9 @@ def test_repeated_polls_of_one_event_do_not_grow_without_bound():
     assert len(store) == 50
     assert len(store._by_ref) == 1
     # The ref still resolves, to its newest recording.
-    assert store.get(event_ref).payload == 4_999
+    newest = store.get(event_ref)
+    assert newest is not None
+    assert newest.payload == 4_999
 
 
 def test_a_ref_recorded_again_is_not_forgotten_when_its_older_entry_expires():
@@ -68,7 +72,9 @@ def test_a_ref_recorded_again_is_not_forgotten_when_its_older_entry_expires():
     store.record(filler_a, "normalized_signal", "a")
     store.record(kept, "enriched_event", "new")
     store.record(filler_b, "normalized_signal", "b")  # expires the "old" entry
-    assert store.get(kept).payload == "new"
+    kept_entry = store.get(kept)
+    assert kept_entry is not None
+    assert kept_entry.payload == "new"
     assert len(store) == 3
 
 

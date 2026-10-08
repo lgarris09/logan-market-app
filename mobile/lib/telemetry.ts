@@ -32,12 +32,7 @@ export type TelemetryEventName =
   | "usefulness_feedback_submitted";
 
 export type TelemetrySourceSurface =
-  | "wheel"
-  | "feed_card"
-  | "alert"
-  | "digest"
-  | "background"
-  | "ask";
+  "wheel" | "feed_card" | "alert" | "digest" | "background" | "ask";
 
 export type TelemetryContext = {
   askSessionId?: string;

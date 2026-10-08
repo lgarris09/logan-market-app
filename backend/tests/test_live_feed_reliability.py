@@ -187,7 +187,7 @@ def test_healthy_path_is_unaffected_by_the_new_scheduler():
 
     original = lf.FmpMarketDataProvider
     try:
-        lf.FmpMarketDataProvider = lambda *a, **kw: FmpMarketDataProvider(
+        lf.FmpMarketDataProvider = lambda *a, **kw: FmpMarketDataProvider(  # type: ignore[misc,assignment]
             api_key="test-key-not-real",
             fetch_gate=kw.get("fetch_gate"),
             client=httpx.Client(transport=httpx.MockTransport(handler)),
@@ -200,7 +200,7 @@ def test_healthy_path_is_unaffected_by_the_new_scheduler():
         scheduler = lf._get_live_provider_scheduler()
         assert scheduler.is_circuit_open("quote") is False
     finally:
-        lf.FmpMarketDataProvider = original
+        lf.FmpMarketDataProvider = original  # type: ignore[misc]
 
 
 # The circuit breaker is deliberately per-endpoint-*family* ("does the quote

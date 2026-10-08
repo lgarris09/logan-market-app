@@ -125,7 +125,7 @@ def test_no_universe_manager_function_accepts_a_user_identity():
         "learn",
     )
     for fn in functions:
-        params = inspect.signature(fn).parameters
+        params = inspect.signature(fn).parameters  # type: ignore[arg-type]
         for name in params:
             lowered = name.lower()
             assert not any(bad in lowered for bad in disallowed_substrings), (

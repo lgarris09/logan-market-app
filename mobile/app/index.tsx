@@ -22,10 +22,7 @@ import { fetchJson } from "../lib/apiClient";
 import { isClerkConfigured } from "../lib/clerkConfig";
 import { FieldBias } from "../lib/fieldBias";
 import { InteractionDomain, recordInteraction } from "../lib/interactions";
-import {
-  registerForPushNotificationsAsync,
-  useNotificationTapHandler,
-} from "../lib/notifications";
+import { registerForPushNotificationsAsync, useNotificationTapHandler } from "../lib/notifications";
 import { OpportunitiesResponse } from "../types/loganFeed";
 
 // V2.3A consumer closeout -- the standard account affordance, replacing the
@@ -351,43 +348,40 @@ export default function AttentionFieldScreen() {
   // that event_id, not the whole batch openNotifications() above marks
   // reviewed. Same fire-and-forget reasoning as openNotifications: the
   // optimistic local clear already updated the UI.
-  const openNotificationCard = useCallback(
-    (eventId: string) => {
-      setPanelItems(null);
-      setOpenRequest({ eventId, token: Date.now() });
-      setLocallyReviewedIds((prev) => new Set(prev).add(eventId));
-      fetchJson("/v1/notifications/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_ids: [eventId] }),
-        retries: 0,
-      });
+  const openNotificationCard = useCallback((eventId: string) => {
+    setPanelItems(null);
+    setOpenRequest({ eventId, token: Date.now() });
+    setLocallyReviewedIds((prev) => new Set(prev).add(eventId));
+    fetchJson("/v1/notifications/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_ids: [eventId] }),
+      retries: 0,
+    });
 
-      // Behavioral-personalization foundation: notification-open is a
-      // distinct behavioral signal from notification-review above --
-      // review only clears badge/dedup state (untouched by this), while
-      // this records the truthful "tapped a notification to open it"
-      // interaction, for both a real push tap and an in-app dropdown tap
-      // (openNotificationCard is the single choke point for both -- see
-      // its own comment). Reuses the existing "click" InteractionType
-      // rather than adding a new one. Silently skipped if the item isn't
-      // in the currently-loaded feed (e.g. a stale/dev-only notification)
-      // -- there is no truthful entity_id/domain to attach otherwise.
-      const currentState = stateRef.current;
-      if (currentState.kind === "loaded") {
-        const item = currentState.response.items.find((i) => i.event_id === eventId);
-        if (item) {
-          recordInteraction({
-            eventId: item.event_id,
-            entityId: item.entity_id,
-            domain: item.domain as InteractionDomain,
-            interactionType: "click",
-          });
-        }
+    // Behavioral-personalization foundation: notification-open is a
+    // distinct behavioral signal from notification-review above --
+    // review only clears badge/dedup state (untouched by this), while
+    // this records the truthful "tapped a notification to open it"
+    // interaction, for both a real push tap and an in-app dropdown tap
+    // (openNotificationCard is the single choke point for both -- see
+    // its own comment). Reuses the existing "click" InteractionType
+    // rather than adding a new one. Silently skipped if the item isn't
+    // in the currently-loaded feed (e.g. a stale/dev-only notification)
+    // -- there is no truthful entity_id/domain to attach otherwise.
+    const currentState = stateRef.current;
+    if (currentState.kind === "loaded") {
+      const item = currentState.response.items.find((i) => i.event_id === eventId);
+      if (item) {
+        recordInteraction({
+          eventId: item.event_id,
+          entityId: item.entity_id,
+          domain: item.domain as InteractionDomain,
+          interactionType: "click",
+        });
       }
-    },
-    []
-  );
+    }
+  }, []);
 
   // Sprint 3.6.6F -- STRATUS Watch. Fire-and-forget: a denied permission or
   // failed registration must not block the rest of the app -- the in-app
@@ -515,8 +509,8 @@ export default function AttentionFieldScreen() {
               <>
                 <Text style={styles.errorTitle}>Unable to reach STRATUS</Text>
                 <Text style={styles.errorText}>
-                  Check your connection and try again. Some networks (for example, a
-                  restrictive work Wi-Fi) may block this connection.
+                  Check your connection and try again. Some networks (for example, a restrictive
+                  work Wi-Fi) may block this connection.
                 </Text>
               </>
             )}
@@ -564,8 +558,8 @@ export default function AttentionFieldScreen() {
               <>
                 <Text style={styles.errorTitle}>Live data temporarily unavailable</Text>
                 <Text style={styles.errorText}>
-                  STRATUS couldn&apos;t reach live market data this time. Your feed will
-                  return as soon as it&apos;s back.
+                  STRATUS couldn&apos;t reach live market data this time. Your feed will return as
+                  soon as it&apos;s back.
                 </Text>
               </>
             ) : (

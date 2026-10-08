@@ -61,10 +61,7 @@ export function isLanOrLocalUrl(url: string): boolean {
  * crash with a readable message is the intended failure mode, not a request
  * that silently times out against an address the build could never reach.
  */
-export function resolveApiBaseUrl(
-  appEnv: string,
-  configuredUrl: string | undefined
-): string {
+export function resolveApiBaseUrl(appEnv: string, configuredUrl: string | undefined): string {
   const trimmed = (configuredUrl ?? "").trim();
 
   if (!RELEASE_APP_ENVS.has(appEnv)) {
@@ -101,7 +98,4 @@ export function resolveApiBaseUrl(
   return trimmed;
 }
 
-export const API_BASE_URL = resolveApiBaseUrl(
-  APP_ENV,
-  process.env.EXPO_PUBLIC_API_BASE_URL
-);
+export const API_BASE_URL = resolveApiBaseUrl(APP_ENV, process.env.EXPO_PUBLIC_API_BASE_URL);
