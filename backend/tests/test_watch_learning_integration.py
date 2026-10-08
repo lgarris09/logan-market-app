@@ -42,6 +42,7 @@ def test_watch_creation_writes_a_real_feedback_record():
     after = orchestrator.deps.memory_store.query(user_id=user_id)
     feedback_records = [r for r in after if r.record_type == "feedback_record"]
     assert len(feedback_records) == 1
+    assert isinstance(feedback_records[0].content, dict)
     assert feedback_records[0].content["interaction_type"] == "watch"
     assert feedback_records[0].content["inferred_intent"] == "interested"
 

@@ -90,6 +90,7 @@ def test_trace_and_evidence_lists_stay_bounded_under_repeated_polling():
         assert len(model.decision_trace) <= MAX_RECENT_HYPOTHESIS_HISTORY
         assert len(model.supporting) <= MAX_RECENT_HYPOTHESIS_HISTORY
         assert len(model.opposing) <= MAX_RECENT_HYPOTHESIS_HISTORY
+    assert model is not None
     assert len(model.decision_trace) == MAX_RECENT_HYPOTHESIS_HISTORY
     assert len(model.supporting) == MAX_RECENT_HYPOTHESIS_HISTORY
     assert len(model.opposing) == MAX_RECENT_HYPOTHESIS_HISTORY
@@ -105,6 +106,7 @@ def test_the_most_recent_history_is_what_survives():
         event_ids.append(str(reasoning.event_id))
         _, model = engine.process(reasoning, domain="stocks")
     # Oldest dropped first, newest kept, order preserved.
+    assert model is not None
     assert model.supporting == event_ids[-50:]
     assert model.decision_trace[-1].rule.startswith("trend=")
     timestamps = [entry.timestamp for entry in model.decision_trace]
@@ -119,6 +121,7 @@ def test_history_below_the_bound_is_untouched():
             _reasoning(significance="Tesla: earnings signal", stance="confirms"),
             domain="stocks",
         )
+    assert model is not None
     assert len(model.decision_trace) == 10
     assert len(model.supporting) == 10
     assert model.opposing == []

@@ -117,7 +117,7 @@ def test_recent_history_is_still_available_for_diagnostics():
         entry = history.get(item.event_id)
         assert entry is not None
         assert entry.kind == "enriched_event"
-        assert entry.payload.event_id == item.event_id
+        assert entry.payload.event_id == item.event_id  # type: ignore[attr-defined]
     assert history.by_kind("normalized_signal")
     assert history.by_kind("enriched_event")
 

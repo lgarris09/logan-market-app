@@ -277,6 +277,7 @@ def test_ask_followup_carries_stronger_weight_than_a_short_view():
         and isinstance(r.content, dict)
         and r.content.get("interaction_type") == "ask_followup"
     )
+    assert isinstance(record.content, dict)
     assert record.content["intent_confidence"] == 0.80
     assert record.content["inferred_intent"] == "interested"
 

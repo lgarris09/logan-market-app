@@ -11,7 +11,7 @@ deterministic OpportunityLifecycleTracker remains the sole source of these
 values -- the LLM only ever narrates a delta it was already handed.
 """
 
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 import httpx
@@ -25,7 +25,7 @@ from logan_core.receptors.providers import FmpEarningsProvider, FmpMarketDataPro
 
 
 def _context(**overrides) -> OpportunityContext:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         event_id=uuid4(),
         entity_id="NVDA",
         display_name="NVIDIA",

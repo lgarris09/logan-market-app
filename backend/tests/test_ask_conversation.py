@@ -13,6 +13,7 @@ FixtureAskLlmProvider, or (for wire-shape assertions) AnthropicAskLlmProvider
 constructed with an injected fake client.
 """
 
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -310,7 +311,7 @@ def test_conversation_history_never_leaks_into_the_system_prompt():
 def _build_context_for_prompt_test(**overrides):
     from backend.app.ask_context import OpportunityContext
 
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         event_id=uuid4(),
         entity_id="NVDA",
         display_name="NVIDIA",

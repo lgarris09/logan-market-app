@@ -127,7 +127,12 @@ def test_generate_grounded_answer_provider_failure_records_ask_400():
         connection_basis="explicit",
         is_new_for_user=False,
     )
-    ask_engine.generate_grounded_answer(context, "why?", _FailingProvider(), history=())
+    ask_engine.generate_grounded_answer(
+        context,
+        "why?",
+        _FailingProvider(),  # type: ignore[arg-type]  # a test double
+        history=(),
+    )
     assert any(f.code == "ASK-400" for f in recent_faults())
 
 

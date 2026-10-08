@@ -68,9 +68,9 @@ def test_inputs_reflect_the_real_personal_relevance_result():
         inputs.personal_relevance_result
         == result.recommendation.personal_relevance_result
     )
-    assert (
-        inputs.is_watched == result.recommendation.personal_relevance_result.is_watched
-    )
+    relevance_result = result.recommendation.personal_relevance_result
+    assert relevance_result is not None
+    assert inputs.is_watched == relevance_result.is_watched
 
 
 def test_inputs_reflect_real_evidence_credibility_and_time_sensitivity():
